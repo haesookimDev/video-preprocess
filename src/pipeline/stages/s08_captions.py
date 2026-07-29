@@ -1,10 +1,10 @@
-"""7단계: 경량 VLM(BLIP)으로 씬 키프레임 캡션을 생성한다.
+"""8단계: 경량 VLM(BLIP)으로 씬 키프레임 캡션을 생성한다.
 
 - 이미지 대신 텍스트 캡션을 LLM에 전달하기 위한 "프레임의 텍스트화" 단계.
 - BLIP base는 영어 캡션만 생성한다 (프로토타입 한정, 추후 한국어 VLM 교체 가능).
 
 입력: 03_keyframes/keyframes.json
-출력: 07_captions/captions.json
+출력: 08_captions/captions.json
 """
 
 import time
@@ -14,8 +14,8 @@ from PIL import Image
 from ..context import PipelineContext
 from ..logging_setup import stage_logger
 
-NAME = "07_captions"
-OUTPUT = "07_captions/captions.json"
+NAME = "08_captions"
+OUTPUT = "08_captions/captions.json"
 
 
 def run(ctx: PipelineContext) -> dict:

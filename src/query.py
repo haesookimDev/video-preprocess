@@ -1,6 +1,6 @@
 """중요 구간 검색 + LLM 입력 컨텍스트 조립 CLI.
 
-09_index/index.db 에 대해 하이브리드 검색(FTS5 키워드 + 임베딩 의미)을 수행하고,
+10_index/index.db 에 대해 하이브리드 검색(FTS5 키워드 + 임베딩 의미)을 수행하고,
 RRF로 순위를 융합해 top-k 씬 카드로 컨텍스트 블록을 조립해 출력한다.
 LLM 호출은 하지 않는다 (조립까지가 프로토타입 범위).
 
@@ -84,7 +84,7 @@ def assemble_context(out_root: Path, top_ids: list[int]) -> str:
     import json
 
     timeline = json.loads(
-        (out_root / "08_timeline" / "timeline.json").read_text(encoding="utf-8")
+        (out_root / "09_timeline" / "timeline.json").read_text(encoding="utf-8")
     )["scene_cards"]
     by_id = {c["scene_id"]: c for c in timeline}
 
@@ -109,7 +109,8 @@ def assemble_context(out_root: Path, top_ids: list[int]) -> str:
         if c["caption"]:
             lines.append(f"시각: {c['caption']}")
         for t in c["transcript"]:
-            lines.append(f"[{_fmt_ts(t['start_sec'])}] {t['text']}")
+            who = f" ({t['speaker']})" if t.get("speaker") else ""
+            lines.append(f"[{_fmt_ts(t['start_sec'])}]{who} {t['text']}")
     return "\n".join(lines)
 
 
@@ -122,7 +123,7 @@ def main() -> int:
     args = parser.parse_args()
 
     out_root = args.out_root.resolve()
-    db_path = out_root / "09_index" / "index.db"
+    db_path = out_root / "10_index" / "index.db"
     if not db_path.exists():
         print(f"오류: 인덱스가 없습니다: {db_path} (파이프라인을 먼저 실행)",
               file=sys.stderr)

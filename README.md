@@ -13,9 +13,10 @@
 | 04_audio | 오디오 디먹싱·16kHz mono 정규화 | `audio.json`, `audio_16k.wav` |
 | 05_vad | Silero VAD 음성 구간 검출 | `vad_segments.json` |
 | 06_stt | faster-whisper 전사 (VAD 구간만) | `transcript.json` |
-| 07_captions | BLIP 씬 키프레임 캡셔닝 (영어) | `captions.json` |
-| 08_timeline | 씬 카드 병합 (공통 시간축) | `timeline.json`, `timeline.md` |
-| 09_index | SQLite FTS5 + 임베딩 인덱스 | `index.db`, `index_summary.json` |
+| 07_diarize | pyannote 화자 분리 (HF_TOKEN 필요) | `diarization.json` |
+| 08_captions | BLIP 씬 키프레임 캡셔닝 (영어) | `captions.json` |
+| 09_timeline | 씬 카드 병합 (공통 시간축, 화자 라벨 포함) | `timeline.json`, `timeline.md` |
+| 10_index | SQLite FTS5 + 임베딩 인덱스 | `index.db`, `index_summary.json` |
 
 ## 설치
 
@@ -24,6 +25,13 @@ brew install ffmpeg
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 ```
+
+화자 분리(07_diarize)는 Hugging Face 게이트 모델을 사용한다:
+1. [pyannote/speaker-diarization-community-1](https://huggingface.co/pyannote/speaker-diarization-community-1)
+   페이지에서 약관 동의
+2. 프로젝트 루트 `.env`에 `HF_TOKEN=hf_...` 추가
+
+토큰이 없으면 해당 단계만 자동 스킵되고 나머지 파이프라인은 정상 동작한다.
 
 ## 실행
 

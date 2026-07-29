@@ -1,12 +1,12 @@
-"""9단계: 씬 카드를 SQLite FTS5 + 임베딩으로 인덱싱한다.
+"""10단계: 씬 카드를 SQLite FTS5 + 임베딩으로 인덱싱한다.
 
 - 키워드 검색: FTS5 (unicode61 토크나이저)
 - 의미 검색: sentence-transformers 다국어 임베딩 (정규화 float32 BLOB 저장)
 
-입력: 08_timeline/timeline.json
+입력: 09_timeline/timeline.json
 출력:
-- 09_index/index.db          : scene_cards / cards_fts / embeddings 테이블
-- 09_index/index_summary.json : 인덱스 구성 확인용 요약
+- 10_index/index.db          : scene_cards / cards_fts / embeddings 테이블
+- 10_index/index_summary.json : 인덱스 구성 확인용 요약
 """
 
 import sqlite3
@@ -17,8 +17,8 @@ import numpy as np
 from ..context import PipelineContext
 from ..logging_setup import stage_logger
 
-NAME = "09_index"
-OUTPUT = "09_index/index_summary.json"
+NAME = "10_index"
+OUTPUT = "10_index/index_summary.json"
 
 
 def _card_text(card: dict) -> str:
@@ -35,7 +35,7 @@ def run(ctx: PipelineContext) -> dict:
     out_dir = ctx.stage_dir(NAME)
 
     cards = ctx.load_json(
-        ctx.out_root / "08_timeline" / "timeline.json"
+        ctx.out_root / "09_timeline" / "timeline.json"
     )["scene_cards"]
     texts = [_card_text(c) for c in cards]
 

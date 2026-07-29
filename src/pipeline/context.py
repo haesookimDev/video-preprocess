@@ -22,6 +22,7 @@ class PipelineContext:
     language: str | None = None  # None이면 자동 감지
     caption_model: str = "Salesforce/blip-image-captioning-base"
     embed_model: str = "paraphrase-multilingual-MiniLM-L12-v2"
+    diarize_model: str = "pyannote/speaker-diarization-3.1"
 
     _created: bool = field(default=False, repr=False)
 

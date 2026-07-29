@@ -11,10 +11,10 @@ from datetime import datetime
 from .context import PipelineContext
 from .logging_setup import setup_logging
 from .stages import s01_probe, s02_scenes, s03_keyframes, s04_audio, s05_vad, \
-    s06_stt, s07_captions, s08_timeline, s09_index
+    s06_stt, s07_diarize, s08_captions, s09_timeline, s10_index
 
 STAGES = [s01_probe, s02_scenes, s03_keyframes, s04_audio, s05_vad, s06_stt,
-          s07_captions, s08_timeline, s09_index]
+          s07_diarize, s08_captions, s09_timeline, s10_index]
 
 
 def run_pipeline(ctx: PipelineContext) -> dict:

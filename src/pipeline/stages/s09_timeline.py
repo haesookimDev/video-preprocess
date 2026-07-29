@@ -1,18 +1,31 @@
-"""8단계: 씬·키프레임·캡션·전사문을 공통 시간축으로 병합해 씬 카드를 생성한다.
+"""9단계: 씬·키프레임·캡션·전사문·화자를 공통 시간축으로 병합해 씬 카드를 생성한다.
 
 - 전사 세그먼트는 씬과의 겹침(overlap) 시간 기준으로 귀속한다.
+- 화자 라벨은 전사 세그먼트와 겹침이 가장 큰 화자 턴에서 가져온다.
 
-입력: 02_scenes, 03_keyframes, 06_stt, 07_captions 산출물
+입력: 02_scenes, 03_keyframes, 06_stt, 07_diarize, 08_captions 산출물
 출력:
-- 08_timeline/timeline.json : 씬 카드 목록 (LLM 입력 조립의 기본 단위)
-- 08_timeline/timeline.md   : 사람이 읽는 확인용 뷰
+- 09_timeline/timeline.json : 씬 카드 목록 (LLM 입력 조립의 기본 단위)
+- 09_timeline/timeline.md   : 사람이 읽는 확인용 뷰
 """
 
 from ..context import PipelineContext
 from ..logging_setup import stage_logger
 
-NAME = "08_timeline"
-OUTPUT = "08_timeline/timeline.json"
+NAME = "09_timeline"
+OUTPUT = "09_timeline/timeline.json"
+
+
+def _match_speaker(seg: dict, turns: list) -> str | None:
+    """전사 세그먼트와 겹침이 가장 큰 화자 턴의 화자를 반환한다."""
+    best, best_overlap = None, 0.0
+    for turn in turns:
+        overlap = min(seg["end_sec"], turn["end_sec"]) - max(
+            seg["start_sec"], turn["start_sec"]
+        )
+        if overlap > best_overlap:
+            best, best_overlap = turn["speaker"], overlap
+    return best
 
 
 def _fmt_ts(sec: float) -> str:
@@ -34,15 +47,20 @@ def run(ctx: PipelineContext) -> dict:
     captions = {
         c["scene_id"]: c["caption"]
         for c in ctx.load_json(
-            ctx.out_root / "07_captions" / "captions.json"
+            ctx.out_root / "08_captions" / "captions.json"
         )["captions"]
     }
     transcript = ctx.load_json(
         ctx.out_root / "06_stt" / "transcript.json"
     )["segments"]
+    diarization = ctx.load_json(
+        ctx.out_root / "07_diarize" / "diarization.json"
+    )
+    speaker_turns = diarization.get("turns", [])
 
-    log.info("타임라인 병합 시작: 씬 %d개, 캡션 %d개, 전사 세그먼트 %d개",
-             len(scenes), len(captions), len(transcript))
+    log.info("타임라인 병합 시작: 씬 %d개, 캡션 %d개, 전사 세그먼트 %d개, "
+             "화자 턴 %d개",
+             len(scenes), len(captions), len(transcript), len(speaker_turns))
 
     cards = []
     assigned = set()
@@ -58,6 +76,7 @@ def run(ctx: PipelineContext) -> dict:
                 lines.append({
                     "start_sec": seg["start_sec"],
                     "end_sec": seg["end_sec"],
+                    "speaker": _match_speaker(seg, speaker_turns),
                     "text": seg["text"],
                 })
                 assigned.add(idx)
@@ -97,8 +116,9 @@ def run(ctx: PipelineContext) -> dict:
             md_lines.append(f"- 키프레임: `{card['keyframe']}`")
         if card["transcript"]:
             for line in card["transcript"]:
+                who = f" ({line['speaker']})" if line.get("speaker") else ""
                 md_lines.append(
-                    f"- [{_fmt_ts(line['start_sec'])}] {line['text']}"
+                    f"- [{_fmt_ts(line['start_sec'])}]{who} {line['text']}"
                 )
         else:
             md_lines.append("- (발화 없음)")
