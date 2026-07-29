@@ -17,6 +17,7 @@
 | 08_captions | BLIP 씬 키프레임 캡셔닝 (영어) | `captions.json` |
 | 09_timeline | 씬 카드 병합 (공통 시간축, 화자 라벨 포함) | `timeline.json`, `timeline.md` |
 | 10_index | SQLite FTS5 + 임베딩 인덱스 | `index.db`, `index_summary.json` |
+| 11_context | **LLM 입력 컨텍스트 최종본 조립** | `context.md`, `context.json` |
 
 ## 설치
 
@@ -58,7 +59,10 @@ output/<video_stem>/
 - 콘솔에는 INFO 로그(진행 상황·통계), 파일에는 DEBUG 로그(개별 씬/세그먼트/명령)가 기록된다.
 - 각 단계는 대표 출력 파일이 이미 있으면 스킵된다. 특정 단계만 다시 돌리려면
   해당 단계 디렉토리를 지우고 재실행하거나 `--force`로 전체 재실행.
-- 사람이 결과를 빠르게 확인할 때는 `08_timeline/timeline.md` 를 본다.
+- 사람이 결과를 빠르게 확인할 때는 `09_timeline/timeline.md` 를 본다.
+- **최종 산출물은 `11_context/context.md`** — 포맷 안내 전문(preamble) + 메타데이터 +
+  씬 목차 + 씬 카드 전문으로 구성된 자기완결 문서로, 그대로 LLM 프롬프트에 넣어
+  요약·질의응답·이벤트 분석에 사용한다. `context.json`은 동일 내용의 구조화 버전.
 
 ## 검색 + 컨텍스트 조립
 
@@ -93,8 +97,7 @@ ffmpeg -v error \
 
 ## 아직 없는 것 (다음 단계 후보)
 
-- 화자 분리(diarization) — pyannote는 Hugging Face 게이트 모델 승인 + 토큰 필요
 - 오디오 이벤트 태깅 (박수·음악 등)
 - 한국어 캡셔닝 VLM 교체 (현재 BLIP은 영어 캡션)
-- 조립된 컨텍스트를 로컬 LLM에 실제 투입하는 질의응답 단계
-- 계층 요약 (챕터·전체 요약 map-reduce)
+- 긴 영상 대응: 컨텍스트 최종본의 토큰 예산 관리 (씬 수가 많을 때 목차 + 선별
+  씬 카드로 축약하는 예산 배분 로직)
