@@ -1,18 +1,18 @@
-"""7단계: 씬·키프레임·전사문을 공통 시간축으로 병합해 씬 카드를 생성한다.
+"""8단계: 씬·키프레임·캡션·전사문을 공통 시간축으로 병합해 씬 카드를 생성한다.
 
 - 전사 세그먼트는 씬과의 겹침(overlap) 시간 기준으로 귀속한다.
 
-입력: 02_scenes, 03_keyframes, 06_stt 산출물
+입력: 02_scenes, 03_keyframes, 06_stt, 07_captions 산출물
 출력:
-- 07_timeline/timeline.json : 씬 카드 목록 (LLM 입력 조립의 기본 단위)
-- 07_timeline/timeline.md   : 사람이 읽는 확인용 뷰
+- 08_timeline/timeline.json : 씬 카드 목록 (LLM 입력 조립의 기본 단위)
+- 08_timeline/timeline.md   : 사람이 읽는 확인용 뷰
 """
 
 from ..context import PipelineContext
 from ..logging_setup import stage_logger
 
-NAME = "07_timeline"
-OUTPUT = "07_timeline/timeline.json"
+NAME = "08_timeline"
+OUTPUT = "08_timeline/timeline.json"
 
 
 def _fmt_ts(sec: float) -> str:
@@ -31,12 +31,18 @@ def run(ctx: PipelineContext) -> dict:
             ctx.out_root / "03_keyframes" / "keyframes.json"
         )["keyframes"]
     }
+    captions = {
+        c["scene_id"]: c["caption"]
+        for c in ctx.load_json(
+            ctx.out_root / "07_captions" / "captions.json"
+        )["captions"]
+    }
     transcript = ctx.load_json(
         ctx.out_root / "06_stt" / "transcript.json"
     )["segments"]
 
-    log.info("타임라인 병합 시작: 씬 %d개, 전사 세그먼트 %d개",
-             len(scenes), len(transcript))
+    log.info("타임라인 병합 시작: 씬 %d개, 캡션 %d개, 전사 세그먼트 %d개",
+             len(scenes), len(captions), len(transcript))
 
     cards = []
     assigned = set()
@@ -62,11 +68,13 @@ def run(ctx: PipelineContext) -> dict:
             "end_sec": scene["end_sec"],
             "duration_sec": scene["duration_sec"],
             "keyframe": keyframes.get(scene["scene_id"], {}).get("path"),
-            "caption": None,  # 캡셔닝(VLM) 단계는 프로토타입 범위 밖 — 자리만 확보
+            "caption": captions.get(scene["scene_id"]),
             "transcript": lines,
         }
         cards.append(card)
-        log.debug("씬 %02d 카드: 발화 %d줄", scene["scene_id"], len(lines))
+        log.debug("씬 %02d 카드: 캡션 %s, 발화 %d줄",
+                  scene["scene_id"],
+                  "있음" if card["caption"] else "없음", len(lines))
 
     unassigned = len(transcript) - len(assigned)
     if unassigned:
@@ -83,6 +91,8 @@ def run(ctx: PipelineContext) -> dict:
             f"## 씬 {card['scene_id']:02d} "
             f"[{_fmt_ts(card['start_sec'])} ~ {_fmt_ts(card['end_sec'])}]"
         )
+        if card["caption"]:
+            md_lines.append(f"- 시각: {card['caption']}")
         if card["keyframe"]:
             md_lines.append(f"- 키프레임: `{card['keyframe']}`")
         if card["transcript"]:

@@ -13,7 +13,9 @@
 | 04_audio | 오디오 디먹싱·16kHz mono 정규화 | `audio.json`, `audio_16k.wav` |
 | 05_vad | Silero VAD 음성 구간 검출 | `vad_segments.json` |
 | 06_stt | faster-whisper 전사 (VAD 구간만) | `transcript.json` |
-| 07_timeline | 씬 카드 병합 (공통 시간축) | `timeline.json`, `timeline.md` |
+| 07_captions | BLIP 씬 키프레임 캡셔닝 (영어) | `captions.json` |
+| 08_timeline | 씬 카드 병합 (공통 시간축) | `timeline.json`, `timeline.md` |
+| 09_index | SQLite FTS5 + 임베딩 인덱스 | `index.db`, `index_summary.json` |
 
 ## 설치
 
@@ -48,7 +50,20 @@ output/<video_stem>/
 - 콘솔에는 INFO 로그(진행 상황·통계), 파일에는 DEBUG 로그(개별 씬/세그먼트/명령)가 기록된다.
 - 각 단계는 대표 출력 파일이 이미 있으면 스킵된다. 특정 단계만 다시 돌리려면
   해당 단계 디렉토리를 지우고 재실행하거나 `--force`로 전체 재실행.
-- 사람이 결과를 빠르게 확인할 때는 `07_timeline/timeline.md` 를 본다.
+- 사람이 결과를 빠르게 확인할 때는 `08_timeline/timeline.md` 를 본다.
+
+## 검색 + 컨텍스트 조립
+
+전처리가 끝난 영상에 대해 하이브리드 검색(FTS5 키워드 + 임베딩 의미, RRF 융합)으로
+관련 씬을 찾고 LLM 입력 컨텍스트를 조립해 출력한다 (LLM 호출은 하지 않음):
+
+```bash
+.venv/bin/python src/query.py output/sample "음성 구간 검출 얘기는 어디서 해?" --topk 2
+```
+
+- 검색 순위 근거(FTS bm25, 코사인 유사도, RRF 점수)는 `logs/query_<timestamp>.log`에 DEBUG로 기록된다.
+- 조립 구조: `영상 개요(씬 목차)` + `관련 씬 카드 원문` (최상위 씬을 맨 뒤에 배치해
+  lost-in-the-middle 완화).
 
 ## 테스트 영상 생성 (macOS)
 
@@ -70,6 +85,8 @@ ffmpeg -v error \
 
 ## 아직 없는 것 (다음 단계 후보)
 
-- 씬 캡셔닝(VLM) — 씬 카드의 `caption` 필드는 자리만 확보됨
-- 화자 분리(diarization), 오디오 이벤트 태깅
-- FTS·임베딩 인덱스, 중요 구간 검색, 컨텍스트 조립
+- 화자 분리(diarization) — pyannote는 Hugging Face 게이트 모델 승인 + 토큰 필요
+- 오디오 이벤트 태깅 (박수·음악 등)
+- 한국어 캡셔닝 VLM 교체 (현재 BLIP은 영어 캡션)
+- 조립된 컨텍스트를 로컬 LLM에 실제 투입하는 질의응답 단계
+- 계층 요약 (챕터·전체 요약 map-reduce)

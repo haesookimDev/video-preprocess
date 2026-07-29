@@ -20,6 +20,8 @@ class PipelineContext:
     stt_merge_gap_sec: float = 0.5  # VAD 세그먼트 병합 최대 간격
     whisper_model: str = "base"
     language: str | None = None  # None이면 자동 감지
+    caption_model: str = "Salesforce/blip-image-captioning-base"
+    embed_model: str = "paraphrase-multilingual-MiniLM-L12-v2"
 
     _created: bool = field(default=False, repr=False)
 
