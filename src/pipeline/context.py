@@ -1,0 +1,43 @@
+"""파이프라인 전역 컨텍스트: 경로·설정을 모든 단계가 공유한다."""
+
+import json
+from dataclasses import dataclass, field
+from pathlib import Path
+
+
+@dataclass
+class PipelineContext:
+    video_path: Path
+    out_root: Path  # output/<video_stem>/
+    force: bool = False
+
+    # 단계별 설정
+    scene_threshold: float = 27.0  # ContentDetector 임계값
+    min_scene_len_frames: int = 15
+    keyframes_per_scene: int = 1
+    vad_min_silence_ms: int = 500
+    vad_speech_pad_ms: int = 200
+    stt_merge_gap_sec: float = 0.5  # VAD 세그먼트 병합 최대 간격
+    whisper_model: str = "base"
+    language: str | None = None  # None이면 자동 감지
+
+    _created: bool = field(default=False, repr=False)
+
+    def stage_dir(self, name: str) -> Path:
+        d = self.out_root / name
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    @property
+    def log_dir(self) -> Path:
+        d = self.out_root / "logs"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    def save_json(self, path: Path, data) -> None:
+        path.write_text(
+            json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+
+    def load_json(self, path: Path):
+        return json.loads(path.read_text(encoding="utf-8"))
