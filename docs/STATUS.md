@@ -2,7 +2,7 @@
 
 - 마지막 갱신: **2026-08-06**
 - 현재 단계: **Phase 2 — Local Inference Provider**
-- 다음 작업: **diarization LocalInferenceProvider와 s07 adapter**
+- 다음 작업: **VAD LocalInferenceProvider와 s05 adapter**
 
 이 문서는 개발 진행 상황의 단일 진입점이다. 새로운 세션은 이 문서를 먼저 읽고, 실제 코드와
 Git 상태를 확인한 뒤 작업을 시작한다.
@@ -19,10 +19,10 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - `src/video_preprocess/domain/`: 버전이 있는 Artifact·Stage 공개 계약
 - `src/video_preprocess/storage/`: Artifact·Run Store Port와 로컬 구현
 - 로컬 파일 존재 여부를 기준으로 단계 스킵
-- diarization 단계가 모델을 직접 로드
-- embedding, caption과 STT는 `InferenceGateway`와 각 Local Provider를 통해 실행
-- diarization Local provider, HTTP provider, Executor Port는 아직 구현되지 않음
-- Local Store는 구현됐고 caption/STT compatibility adapter에서 기존 media 등록에 사용하며,
+- VAD 단계가 faster-whisper의 Silero 함수를 직접 호출
+- embedding, caption, STT와 diarization은 `InferenceGateway`와 각 Local Provider를 통해 실행
+- VAD Local provider, HTTP provider, Executor Port는 아직 구현되지 않음
+- Local Store는 구현됐고 caption/STT/diarization compatibility adapter에서 media 등록에 사용하며,
   전체 runner 연결은 Engine 전환 시점까지 보류
 
 기존 샘플 산출물은 `output/` 아래에 있으나 생성물이며 Git에 커밋하지 않는다.
@@ -50,6 +50,8 @@ Git 상태를 확인한 뒤 작업을 시작한다.
   [`ADR-0005`](./adr/0005-artifact-batched-local-caption-provider.md)
 - STT audio ArtifactRef 결정:
   [`ADR-0006`](./adr/0006-audio-artifact-local-stt-provider.md)
+- diarization audio ArtifactRef·credential 결정:
+  [`ADR-0007`](./adr/0007-audio-artifact-local-diarization-provider.md)
 
 ## 3. 완료된 작업
 
@@ -80,6 +82,7 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - [x] Inference 공통 계약·Gateway와 local embedding provider
 - [x] ArtifactRef batch와 local caption provider·s08 adapter
 - [x] audio ArtifactRef와 local STT provider·s06 adapter
+- [x] audio ArtifactRef와 local diarization provider·s07 adapter
 
 ## 4. 아직 구현되지 않은 작업
 
@@ -91,7 +94,8 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - [x] LocalEmbeddingProvider
 - [x] LocalCaptionProvider
 - [x] LocalSTTProvider
-- [ ] Local diarization Provider
+- [x] Local diarization Provider
+- [ ] Local VAD Provider
 - [ ] PipelineEngine과 LocalExecutor
 - [ ] manifest 기반 cache
 - [ ] HTTPInferenceProvider와 모델 서버 계약 구현
@@ -103,21 +107,21 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 문서가 존재한다고 구현된 것으로 간주하지 않는다. 완료 여부는 코드와 자동 테스트를 기준으로
 이 체크리스트에서 갱신한다.
 
-## 5. 다음 작업: Local diarization provider slice
+## 5. 다음 작업: Local VAD provider slice
 
 권장 순서:
 
-1. `speaker_diarization`의 audio ArtifactRef와 speaker turn 출력 규칙 확정
-2. credential을 Provider 설정으로 옮기고 pyannote pipeline을 lazy-load·재사용하는
-   `LocalDiarizationProvider` 구현
-3. fake pipeline/annotation으로 speaker·turn·gate 오류·resolved revision contract test 작성
-4. `s07_diarize`에서 pyannote 직접 import와 model lifecycle 제거
-5. 기존 WAV ArtifactRef registrar를 재사용하고 skip·access denied 오류 정책 연결
-6. sample speaker/turn 구조와 기존 `diarization.json` 호환 검증
+1. `voice_activity_detection`의 audio ArtifactRef, option과 speech segment 출력 규칙 확정
+2. faster-whisper decode와 Silero 함수를 lazy하게 캡슐화하는 `LocalVADProvider` 구현
+3. fake decoder/detector로 시간 변환·option·artifact 오류·model 재사용 contract test 작성
+4. `s05_vad`에서 faster-whisper 직접 import와 audio decode 제거
+5. 기존 WAV ArtifactRef registrar와 `vad.default` binding을 composition root에 추가
+6. sample 3개 segment·speech ratio와 기존 `vad_segments.json` 호환 검증
 
-STT는 WAV ArtifactRef와 inline VAD chunk를 사용하며 `s06_stt`는 더 이상 faster-whisper를
-직접 import하지 않는다. 기존 segment 필드는 유지하고 provider·resolved revision·runtime과
-language probability만 추가했다. 다음 slice는 diarization 하나만 옮기고 VAD는 건드리지 않는다.
+Diarization은 WAV ArtifactRef만 전달하며 credential은 composition root가 Provider 설정으로
+주입한다. `s07_diarize`는 pyannote/Hugging Face를 import하지 않고 기존 credential·gate skip
+정책을 유지한다. VAD까지 Provider로 이동하면 Phase 2의 모든 모델 Stage에서 구체 ML import가
+제거된다.
 
 ## 6. 알려진 중요 문제
 
@@ -138,12 +142,16 @@ language probability만 추가했다. 다음 slice는 diarization 하나만 옮�
 
 ## 7. 기존 검증 기준선
 
-2026-08-06 Phase 0~Phase 2 STT slice 점검 결과:
+2026-08-06 Phase 0~Phase 2 diarization slice 점검 결과:
 
 - 깨끗한 Python 3.13 임시 venv에 `requirements-dev.txt` 설치 성공
 - embedding slice 당시 기존 `.venv`와 깨끗한 venv에서 전체 테스트 85개 성공
 - caption slice 기본 테스트 97개 성공
 - STT slice 기본 테스트 108개 성공
+- diarization slice 기본 테스트 124개 성공
+- `sample.mp4 --force` 오프라인 캐시 실행 `ok`(28.2초), diarization 화자 1명·턴 3개와
+  resolved commit `3533c8cf8e369892e6b79ff1bf80f7b0286a54ee`, downstream 산출물 확인
+- diarization slice 이후 query `음성 구간 검출 --topk 2`도 씬 02를 최상위로 반환
 - `sample.mp4 --force` 11단계 전체 실행 `ok`(28.5초), STT 3개와 downstream 산출물 확인
 - STT slice 이후 query `음성 구간 검출 --topk 2`도 씬 02를 최상위로 반환
 - `sample.mp4 --force` 11단계 전체 실행 `ok`(34.6초), caption 3개와 downstream 산출물 확인
@@ -180,6 +188,23 @@ language probability만 추가했다. 다음 slice는 diarization 하나만 옮�
 
 최신 기록을 위에 추가한다. 긴 구현 설명은 PR이나 ADR에 두고 여기에는 다음 세션이 재개하는 데
 필요한 정보만 적는다.
+
+### 2026-08-06 — Phase 2 local diarization provider
+
+- 목표: WAV를 ArtifactRef로 전달하고 s07에서 pyannote lifecycle·credential 처리 제거
+- 완료: `SpeakerTurn`·`DiarizationBatch`·`DiarizationService`, `LocalDiarizationProvider`,
+  runner composition과 s07 compatibility adapter 구현
+- 주요 결정: `diarization.default`, 단일 16kHz WAV artifact, credential은 Provider 설정,
+  시작 시간순·overlap 허용 speaker turn, snapshot commit 기록; ADR-0007
+- 검증: 기본 pytest 124개 통과; fake pipeline으로 turn 정규화·1회 load·idempotency·artifact·
+  credential/gate/model/inference 오류·warmup 검증; 실제 sample 화자 1명·턴 3개 생성;
+  실제 resolved commit `3533c8cf8e369892e6b79ff1bf80f7b0286a54ee` 기록; 오프라인 캐시
+  전체 11단계 `ok`(28.2초), query top-1 씬 02 확인
+- 호환성: 기존 available/model/speakers/turns와 skip 구조를 유지하고 provider·revision·runtime만
+  additive하게 추가
+- 주의사항: WAV를 임시 workspace에 materialize하고 local thread는 timeout 후 강제 중단할 수
+  없으며 output tree별 composition은 pipeline cache를 공유하지 않음
+- 다음 작업: audio ArtifactRef를 사용하는 LocalVADProvider와 s05 adapter
 
 ### 2026-08-06 — Phase 2 local STT provider
 

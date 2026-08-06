@@ -230,6 +230,11 @@ ArtifactRef batch로 전달한다. 중첩 ArtifactRef 계약과 로컬 provider 
 절대 시간축 segment 계약은
 [`ADR-0006`](./adr/0006-audio-artifact-local-stt-provider.md)에 기록한다.
 
+`diarization.default`는 `LocalDiarizationProvider`에 연결되어 있다. composition root가
+credential을 Provider 설정으로 주입하고, `s07_diarize`는 WAV ArtifactRef만 전달한다.
+speaker turn·gate 오류와 비밀값 경계는
+[`ADR-0007`](./adr/0007-audio-artifact-local-diarization-provider.md)에 기록한다.
+
 ## 9. 산출물 저장 전략
 
 Stage 사이에는 실제 파일 경로가 아니라 `ArtifactRef`를 전달한다.

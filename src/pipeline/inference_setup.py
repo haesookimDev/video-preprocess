@@ -1,14 +1,17 @@
 """Compatibility composition root for provider-backed MVP stages."""
 
 import hashlib
+from pathlib import Path
 
 from video_preprocess.inference.local import (
     create_local_caption_service,
+    create_local_diarization_service,
     create_local_stt_service,
 )
 from video_preprocess.storage import LocalArtifactStore, LegacyOutputAdapter
 
 from .context import PipelineContext
+from .preflight import load_hf_token
 
 
 def configure_local_inference(ctx: PipelineContext) -> None:
@@ -17,13 +20,15 @@ def configure_local_inference(ctx: PipelineContext) -> None:
     dependencies = (
         ctx.caption_service,
         ctx.stt_service,
+        ctx.diarization_service,
         ctx.artifact_registrar,
     )
     if all(dependency is not None for dependency in dependencies):
         return
     if any(dependency is not None for dependency in dependencies):
         raise ValueError(
-            "caption_service, stt_service, and artifact_registrar "
+            "caption_service, stt_service, diarization_service, and "
+            "artifact_registrar "
             "must be configured together"
         )
 
@@ -42,4 +47,10 @@ def configure_local_inference(ctx: PipelineContext) -> None:
     ctx.stt_service = create_local_stt_service(
         ctx.whisper_model,
         artifact_store,
+    )
+    project_root = Path(__file__).resolve().parents[2]
+    ctx.diarization_service = create_local_diarization_service(
+        ctx.diarize_model,
+        artifact_store,
+        token=load_hf_token(project_root),
     )

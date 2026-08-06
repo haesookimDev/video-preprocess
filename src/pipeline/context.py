@@ -8,7 +8,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from video_preprocess.inference import CaptionService, STTService
+    from video_preprocess.inference import (
+        CaptionService,
+        DiarizationService,
+        STTService,
+    )
     from video_preprocess.storage import LegacyArtifactRegistrar
 
 
@@ -36,6 +40,10 @@ class PipelineContext:
         repr=False,
     )
     stt_service: STTService | None = field(
+        default=None,
+        repr=False,
+    )
+    diarization_service: DiarizationService | None = field(
         default=None,
         repr=False,
     )

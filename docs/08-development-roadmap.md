@@ -138,7 +138,7 @@ Stage에서 모델 lifecycle과 구체 라이브러리 의존성을 제거한다
 2. caption provider
 3. STT provider
 4. diarization provider
-5. 필요 시 VAD provider
+5. VAD provider
 
 ### 공통 작업
 
@@ -149,19 +149,22 @@ Stage에서 모델 lifecycle과 구체 라이브러리 의존성을 제거한다
 - [x] embedding provider warmup service hook 구현
 - [x] caption provider의 processor/model cache, batch와 warmup hook 구현
 - [x] STT provider의 model cache, audio decoder와 warmup hook 구현
+- [x] diarization provider의 pipeline cache, credential 설정과 warmup hook 구현
 - [x] device·compute type 설정 검증
 - [x] embedding의 resolved model revision과 runtime metadata 기록
 - [x] caption의 resolved model revision과 runtime metadata 기록
 - [x] STT의 resolved model revision과 runtime metadata 기록
+- [x] diarization의 resolved model revision과 runtime metadata 기록
 - [x] Gateway timeout과 local embedding cancellation 경계 정의
 - [x] Gateway·local embedding provider contract test 작성
 - [x] 중첩 ArtifactRef와 local caption provider contract test 작성
 - [x] audio ArtifactRef와 local STT provider contract test 작성
+- [x] audio ArtifactRef와 local diarization provider contract test 작성
 
 ### Stage 변경
 
 - [x] `s06_stt`: `WhisperModel` 생성 제거, STT request 생성과 응답 정규화만 담당
-- `s07_diarize`: token·모델 로드를 provider로 이동
+- [x] `s07_diarize`: token·모델 로드를 provider로 이동
 - [x] `s08_captions`: BLIP processor/model과 배치 추론을 provider로 이동
 - [x] `s10_index`, query: SentenceTransformer 로드를 embedding provider로 이동
 - Stage가 provider 종류를 조건문으로 분기하지 않도록 한다.

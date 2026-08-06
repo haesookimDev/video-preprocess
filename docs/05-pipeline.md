@@ -64,7 +64,7 @@ flowchart TD
 | 04_audio | 오디오 트랙 분리 후 모든 음성 모델의 공통 입력인 16kHz mono PCM으로 정규화 | ffmpeg | 0.1s |
 | 05_vad | 프레임 단위 음성 확률 계산 → 발화 구간만 추출. 무음 구간을 STT에서 제외해 시간 절약 + Whisper 무음 환각 방지 | Silero VAD (ONNX, faster-whisper 내장) | 0.1s |
 | 06_stt | 인접 VAD 구간 병합(gap ≤ 0.5s) 후 WAV ArtifactRef와 구간을 STT Provider에 전달. Provider가 원본 시간축으로 보정 | Local faster-whisper Provider `base`(기본)/`small` (CTranslate2 int8) | 5.6s / 13.9s |
-| 07_diarize | 음성 구간을 화자 임베딩으로 변환 후 클러스터링 → 발화 턴별 화자 라벨 | pyannote `speaker-diarization-community-1` (HF 게이트) | 27.9s |
+| 07_diarize | WAV ArtifactRef를 Diarization Provider에 전달. Provider가 화자 임베딩·클러스터링 후 발화 턴별 라벨 반환 | Local pyannote Provider `speaker-diarization-community-1` (HF 게이트) | 27.9s |
 | 08_captions | keyframe ArtifactRef batch를 VLM Provider에 입력해 캡션 생성. 이미지(수백~수천 토큰)를 텍스트(수십 토큰)로 압축 | Local BLIP Provider `image-captioning-base` | 3.0s |
 | 09_timeline | 씬을 골격으로 병합. 전사→씬은 겹침 ≥ 50% 기준 귀속, 전사→화자는 최대 겹침 턴의 라벨 채택 | 규칙 기반 | 0.0s |
 | 10_index | 씬 카드 텍스트(캡션+전사)를 ① FTS5 역색인 ② 정규화 384차원 벡터로 이중 저장 | sentence-transformers `paraphrase-multilingual-MiniLM-L12-v2`, SQLite FTS5 | 0.2s |
@@ -84,3 +84,7 @@ flowchart TD
 
 `06_stt/transcript.json`은 기존 segment 구조를 유지하며 실제 `provider`, model `revision`,
 `runtime`, 감지 언어 확률인 `language_probability`를 추가로 기록한다.
+
+`07_diarize/diarization.json`은 기존 speaker·turn 구조를 유지하며 실제 `provider`, model
+`revision`, `runtime`을 추가로 기록한다. HF token은 Provider 설정에만 존재하며 산출물이나
+추론 요청에 포함되지 않는다.
