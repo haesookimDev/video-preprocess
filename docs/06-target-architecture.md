@@ -216,6 +216,10 @@ models:
 manifest에는 요청한 binding과 실제 응답에 포함된 provider·model revision을 모두
 기록한다. 자동 fallback이 발생하면 캐시 키와 실행 요약에도 반영한다.
 
+현재 `embedding.default`는 `LocalEmbeddingProvider`에 연결되어 있으며 `s10_index`와 query가
+Gateway를 통해 호출한다. 비동기 Port와 동기 CLI 호환 방식은
+[`ADR-0004`](./adr/0004-async-inference-gateway-and-local-embedding-provider.md)에 기록한다.
+
 ## 9. 산출물 저장 전략
 
 Stage 사이에는 실제 파일 경로가 아니라 `ArtifactRef`를 전달한다.

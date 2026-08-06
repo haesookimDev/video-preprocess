@@ -13,7 +13,10 @@ Python Protocol, HTTP OpenAPI, 작업 큐 메시지는 모두 이 계약을 동�
 Artifact·Run Store Port와 로컬 구현은
 [`src/video_preprocess/storage/`](../src/video_preprocess/storage/)에 있고 저장 규칙은
 [`ADR-0003`](./adr/0003-local-artifact-and-manifest-storage.md)에 기록한다. Executor와
-Inference 계약은 아직 설계 상태이며 구현 완료로 간주하지 않는다.
+나머지 Provider 계약은 아직 설계 상태이며 구현 완료로 간주하지 않는다. Inference 공통 계약,
+Gateway와 첫 `LocalEmbeddingProvider`는
+[`src/video_preprocess/inference/`](../src/video_preprocess/inference/)에 구현되어 있고 결정은
+[`ADR-0004`](./adr/0004-async-inference-gateway-and-local-embedding-provider.md)에 기록한다.
 
 ## 1. 계약 설계 원칙
 
@@ -277,6 +280,9 @@ pending → queued → running → succeeded
 VAD는 초기에는 Stage 내부 로컬 연산으로 유지할 수 있지만, 동일한 gateway를 통해 원격화할
 수 있도록 task schema를 예약한다.
 
+`inputs`는 `ArtifactRef`와 JSON 값을 함께 허용한다. 오디오·이미지처럼 큰 입력은 반드시
+artifact로 전달하고, text embedding의 `texts`처럼 작은 batch만 inline JSON을 사용한다.
+
 ### 6.2 InferenceResponse
 
 ```json
@@ -308,6 +314,10 @@ VAD는 초기에는 Stage 내부 로컬 연산으로 유지할 수 있지만, �
 
 Gateway는 response의 model 정보를 StageResult와 manifest로 전달한다.
 
+현재 embedding 응답은 `outputs.vectors`에 정규화된 float 배열을 inline으로 반환하고
+`outputs.dimension`, `usage.input_count`, model provider·resolved revision·runtime을 함께
+기록한다. 큰 batch의 artifact 출력은 이후 capability로 추가한다.
+
 ## 7. Provider 계약
 
 ```python
@@ -317,6 +327,11 @@ class InferenceProvider(Protocol):
     async def cancel(self, request_id: str) -> None: ...
     async def health(self) -> HealthStatus: ...
 ```
+
+현재 `InferenceGateway`는 alias binding, capability·batch·artifact 크기 검증, 전체 timeout,
+예외 정규화와 response ID 검증을 구현한다. 첫 binding은 `embedding.default`이며 local
+provider는 lazy model load, process 내 재사용, warmup hook과 idempotent 결과 cache를 제공한다.
+동기 CLI는 `EmbeddingService.embed()`, async service는 `embed_async()`를 사용한다.
 
 ### 7.1 capability 확인
 
@@ -379,6 +394,9 @@ DELETE /v1/inference-jobs/{request_id}
 | `CANCELLED` | 사용자 또는 상위 실행 취소 | 아니요 |
 
 재시도는 exponential backoff와 jitter를 사용하고 최대 횟수와 전체 deadline을 모두 제한한다.
+현재 Gateway는 한 요청의 capability 확인과 inference를 합친 전체 timeout만 구현한다. retry,
+backoff와 circuit breaker는 HTTP Provider 단계에서 추가한다. Local embedding의 실행 thread는
+timeout 후 강제 중단할 수 없어 cancellation 미지원으로 capability에 표시한다.
 
 ## 9. Skip과 Fallback
 

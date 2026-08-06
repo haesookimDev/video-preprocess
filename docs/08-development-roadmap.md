@@ -142,22 +142,22 @@ Stage에서 모델 lifecycle과 구체 라이브러리 의존성을 제거한다
 
 ### 공통 작업
 
-- `InferenceRequest`, `InferenceResponse`, capability 타입 구현
-- `InferenceProvider` Protocol과 Gateway 구현
-- model alias → provider binding 설정 구현
-- provider별 모델 instance cache와 lazy load 구현
-- preload/warmup 명령 또는 서비스 hook 구현
+- [x] `InferenceRequest`, `InferenceResponse`, capability 타입 구현
+- [x] `InferenceProvider` Protocol과 Gateway 구현
+- [x] model alias → provider binding 설정 구현
+- [x] embedding provider의 model instance cache와 lazy load 구현
+- [x] embedding provider warmup service hook 구현
 - device·compute type 설정 검증
-- 모델 revision과 runtime metadata 기록
-- timeout과 cancellation 경계 정의
-- provider contract test suite 작성
+- [x] embedding의 resolved model revision과 runtime metadata 기록
+- [x] Gateway timeout과 local embedding cancellation 경계 정의
+- [x] Gateway·local embedding provider contract test 작성
 
 ### Stage 변경
 
 - `s06_stt`: `WhisperModel` 생성 제거, STT request 생성과 응답 정규화만 담당
 - `s07_diarize`: token·모델 로드를 provider로 이동
 - `s08_captions`: BLIP processor/model과 배치 추론을 provider로 이동
-- `s10_index`, query: SentenceTransformer 로드를 embedding provider로 이동
+- [x] `s10_index`, query: SentenceTransformer 로드를 embedding provider로 이동
 - Stage가 provider 종류를 조건문으로 분기하지 않도록 한다.
 
 ### 완료 조건

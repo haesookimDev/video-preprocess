@@ -2,7 +2,7 @@
 
 - 마지막 갱신: **2026-08-06**
 - 현재 단계: **Phase 2 — Local Inference Provider**
-- 다음 작업: **Inference 계약·Gateway와 embedding provider**
+- 다음 작업: **caption LocalInferenceProvider와 s08 adapter**
 
 이 문서는 개발 진행 상황의 단일 진입점이다. 새로운 세션은 이 문서를 먼저 읽고, 실제 코드와
 Git 상태를 확인한 뒤 작업을 시작한다.
@@ -19,8 +19,9 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - `src/video_preprocess/domain/`: 버전이 있는 Artifact·Stage 공개 계약
 - `src/video_preprocess/storage/`: Artifact·Run Store Port와 로컬 구현
 - 로컬 파일 존재 여부를 기준으로 단계 스킵
-- STT, diarization, caption, embedding 단계가 모델을 직접 로드
-- Local/HTTP provider와 Executor Port는 아직 구현되지 않음
+- STT, diarization, caption 단계가 모델을 직접 로드
+- embedding은 `InferenceGateway`와 `LocalEmbeddingProvider`를 통해 실행
+- 임베딩 외 Local provider, HTTP provider, Executor Port는 아직 구현되지 않음
 - Local Store는 구현됐지만 기존 runner 연결은 Engine 전환 시점까지 보류
 
 기존 샘플 산출물은 `output/` 아래에 있으나 생성물이며 Git에 커밋하지 않는다.
@@ -42,6 +43,8 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - 구조 결정: [`ADR-0001`](./adr/0001-separate-engine-executor-and-inference-providers.md)
 - 계약 구현 결정: [`ADR-0002`](./adr/0002-use-stdlib-dataclasses-for-domain-contracts.md)
 - 로컬 저장 결정: [`ADR-0003`](./adr/0003-local-artifact-and-manifest-storage.md)
+- 추론·embedding 결정:
+  [`ADR-0004`](./adr/0004-async-inference-gateway-and-local-embedding-provider.md)
 
 ## 3. 완료된 작업
 
@@ -69,6 +72,7 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - [x] 깨끗한 환경의 설치·테스트·preflight 기준선 검증
 - [x] Artifact·Stage domain 계약과 직렬화 테스트
 - [x] Local Artifact·Run Store와 legacy output adapter
+- [x] Inference 공통 계약·Gateway와 local embedding provider
 
 ## 4. 아직 구현되지 않은 작업
 
@@ -89,20 +93,20 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 문서가 존재한다고 구현된 것으로 간주하지 않는다. 완료 여부는 코드와 자동 테스트를 기준으로
 이 체크리스트에서 갱신한다.
 
-## 5. 다음 작업: Local embedding provider slice
+## 5. 다음 작업: Local caption provider slice
 
 권장 순서:
 
-1. `InferenceRequest`, `InferenceResponse`, capability와 표준 오류 타입 구현
-2. `InferenceProvider` Protocol과 alias 기반 `InferenceGateway` 구현
-3. fake provider로 정상화·capability·오류 contract test 작성
-4. `SentenceTransformer` lifecycle을 `LocalEmbeddingProvider`로 이동
-5. provider instance cache와 lazy load 동작 테스트
-6. `s10_index`와 query에 compatibility adapter를 연결해 기존 결과 구조 유지
+1. `image_captioning`의 keyframe `ArtifactRef` 입력과 caption 출력 규칙 확정
+2. BLIP processor/model을 lazy-load·재사용하는 `LocalCaptionProvider` 구현
+3. fake image loader와 model로 batch·오류·resolved revision contract test 작성
+4. `s08_captions`에서 transformers 직접 import와 model lifecycle 제거
+5. 기존 keyframe 경로를 ArtifactRef로 등록하는 compatibility adapter 연결
+6. sample caption 구조·개수와 기존 `captions.json` 호환 검증
 
-Phase 1은 공개 계약, SHA-256 Artifact Store, run/stage manifest, 원자적 publish와 legacy
-adapter까지 구현해 완료했다. 새 Store는 독립적으로 검증됐으며 현재 runner의 경로·출력 방식은
-아직 변경하지 않았다. Phase 2도 embedding 한 모델 slot만 먼저 이전한다.
+Inference 공통 envelope, 표준 오류, capability·health, alias Gateway와 embedding provider는
+구현됐다. `s10_index`와 query는 더 이상 SentenceTransformer를 직접 import하지 않으며 기존
+SQLite schema를 유지한다. 다음 slice도 caption 하나만 옮기고 STT·diarization은 건드리지 않는다.
 
 ## 6. 알려진 중요 문제
 
@@ -112,7 +116,7 @@ adapter까지 구현해 완료했다. 새 Store는 독립적으로 검증됐으�
 | P0 | skipped diarization도 marker 생성 | credential 추가 후 자동 재시도되지 않음 |
 | P0 | 씬 50:50 경계에서 전사 중복 가능 | timeline과 검색 내용 왜곡 |
 | P1 | 한국어 `unicode61` 정확 일치 의존 | 조사·어미가 다른 키워드 검색 누락 |
-| P1 | 임베딩 모델을 query마다 로드 | cold query 지연 |
+| P1 | 별도 query CLI 프로세스는 embedding 모델을 매번 로드 | 프로세스 간 cold query 지연 |
 | P1 | 관련도 하한 없음 | 무관 질의도 항상 top-k 반환 |
 | P1 | 모든 씬을 context에 포함 | 긴 영상 token budget 초과 |
 | P1 | `keyframes_per_scene` 미사용 | 설정과 실제 동작 불일치 |
@@ -123,10 +127,10 @@ adapter까지 구현해 완료했다. 새 Store는 독립적으로 검증됐으�
 
 ## 7. 기존 검증 기준선
 
-2026-08-06 Phase 0·Phase 1 점검 결과:
+2026-08-06 Phase 0~Phase 2 embedding slice 점검 결과:
 
 - 깨끗한 Python 3.13 임시 venv에 `requirements-dev.txt` 설치 성공
-- 기존 `.venv`와 깨끗한 venv에서 전체 테스트 63개 성공
+- 기존 `.venv`와 깨끗한 venv에서 전체 테스트 85개 성공
 - 깨끗한 venv에서 `--preflight-only`, `pip check` 성공
 - 기존 SQLite index 3개 integrity check 성공
 - `sample.mp4`: 3개 씬, 3개 STT 세그먼트
@@ -159,6 +163,21 @@ adapter까지 구현해 완료했다. 새 Store는 독립적으로 검증됐으�
 
 최신 기록을 위에 추가한다. 긴 구현 설명은 PR이나 ADR에 두고 여기에는 다음 세션이 재개하는 데
 필요한 정보만 적는다.
+
+### 2026-08-06 — Phase 2 Inference Gateway·local embedding
+
+- 목표: 모델 실행 위치를 Stage에서 분리하고 첫 local provider로 embedding 이전
+- 완료: Inference request/response·capability·health·오류 계약, alias Gateway,
+  `LocalEmbeddingProvider`, 동기/비동기 `EmbeddingService`, s10/query adapter 구현
+- 주요 결정: async Provider Port, inline text/vector, `embedding.default`, lazy model cache,
+  idempotency conflict 거부, total timeout, resolved HF commit 기록; ADR-0004
+- 검증: pytest 85개 통과; fake loader로 model 1회 load·결과 cache·오류·timeout 검증;
+  오프라인 실제 모델로 임시 index 3개 카드·384차원 생성 및 query top-1 씬 02 확인
+- 호환성: 기존 CLI 명령과 embeddings BLOB, `embed_model`, `embed_dim` 유지;
+  provider·revision·runtime meta만 additive하게 추가
+- 주의사항: Local embedding thread는 timeout 후 강제 중단할 수 없고 별도 CLI process끼리는
+  model cache를 공유하지 않음
+- 다음 작업: keyframe ArtifactRef를 사용하는 LocalCaptionProvider와 s08 adapter
 
 ### 2026-08-06 — Phase 1 Local Artifact·Run Store
 
