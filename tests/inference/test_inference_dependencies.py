@@ -52,3 +52,46 @@ def test_sentence_transformer_import_is_lazy_inside_local_loader() -> None:
 
     assert "sentence_transformers" not in top_level_roots
     assert "sentence_transformers" in _imported_roots(provider_path)
+
+
+def test_caption_stage_does_not_import_model_or_image_libraries() -> None:
+    stage_path = (
+        PROJECT_ROOT
+        / "src"
+        / "pipeline"
+        / "stages"
+        / "s08_captions.py"
+    )
+
+    imported = _imported_roots(stage_path)
+
+    assert "transformers" not in imported
+    assert "PIL" not in imported
+
+
+def test_transformers_and_pillow_imports_are_lazy_in_caption_provider() -> None:
+    provider_path = (
+        PROJECT_ROOT
+        / "src"
+        / "video_preprocess"
+        / "inference"
+        / "local"
+        / "caption.py"
+    )
+    tree = ast.parse(
+        provider_path.read_text(encoding="utf-8"),
+        filename=str(provider_path),
+    )
+    top_level_roots = set()
+    for node in tree.body:
+        if isinstance(node, ast.Import):
+            top_level_roots.update(
+                alias.name.split(".", 1)[0] for alias in node.names
+            )
+        elif isinstance(node, ast.ImportFrom) and node.level == 0:
+            top_level_roots.add((node.module or "").split(".", 1)[0])
+
+    assert "transformers" not in top_level_roots
+    assert "PIL" not in top_level_roots
+    assert "transformers" in _imported_roots(provider_path)
+    assert "PIL" in _imported_roots(provider_path)

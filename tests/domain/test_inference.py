@@ -62,6 +62,36 @@ def test_inference_request_round_trip_supports_inline_and_artifact_inputs() -> N
     assert restored.inputs["texts"] == ["첫 번째", "두 번째"]
 
 
+def test_inference_request_round_trip_supports_artifact_batches() -> None:
+    request = make_request()
+    artifact = request.inputs["source"]
+    assert isinstance(artifact, ArtifactRef)
+    request = InferenceRequest(
+        request_id="infer_caption",
+        idempotency_key="idem_caption",
+        run_id="run_123",
+        stage_run_id="stage_caption",
+        task=InferenceTask.IMAGE_CAPTIONING,
+        model=RequestedModel(
+            alias="caption.default",
+            name="example/caption",
+            revision="main",
+        ),
+        inputs={"images": [artifact, artifact]},
+        parameters={"max_new_tokens": 40},
+        timeout_sec=30,
+        trace_id="trace_caption",
+    )
+
+    restored = InferenceRequest.from_dict(
+        json.loads(json.dumps(request.to_dict(), ensure_ascii=False))
+    )
+
+    images = restored.inputs["images"]
+    assert isinstance(images, list)
+    assert images == [artifact, artifact]
+
+
 def test_success_response_round_trip_records_effective_model() -> None:
     response = InferenceResponse(
         request_id="infer_123",
@@ -128,4 +158,3 @@ def test_capabilities_and_health_round_trip() -> None:
 
     assert ProviderCapabilities.from_dict(capabilities.to_dict()) == capabilities
     assert ProviderHealth.from_dict(health.to_dict()) == health
-

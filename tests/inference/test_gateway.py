@@ -4,6 +4,8 @@ import asyncio
 from dataclasses import replace
 
 from video_preprocess.domain import (
+    ArtifactRef,
+    Checksum,
     EffectiveModel,
     HealthState,
     InferenceErrorCode,
@@ -125,6 +127,77 @@ def test_gateway_rejects_batch_larger_than_capability() -> None:
     assert response.error is not None
     assert response.error.code is InferenceErrorCode.UNSUPPORTED_CAPABILITY
     assert response.error.details["max_batch_size"] == 1
+    assert provider.infer_count == 0
+
+
+def test_gateway_checks_artifact_image_batch_limit() -> None:
+    class ImageProvider(FakeProvider):
+        async def capabilities(self) -> ProviderCapabilities:
+            return ProviderCapabilities(
+                provider="fake.caption",
+                tasks=[InferenceTask.IMAGE_CAPTIONING],
+                model_aliases=["caption.default"],
+                max_batch_size=1,
+            )
+
+    artifact = ArtifactRef(
+        artifact_id="image_1",
+        kind="image",
+        uri="artifact://run_123/frames/1.jpg",
+        media_type="image/jpeg",
+        size_bytes=10,
+        checksum=Checksum("sha256", "abc"),
+    )
+    request = make_request(
+        alias="caption.default",
+        task=InferenceTask.IMAGE_CAPTIONING,
+    )
+    request = replace(request, inputs={"images": [artifact, artifact]})
+    provider = ImageProvider()
+
+    response = asyncio.run(
+        InferenceGateway({"caption.default": provider}).infer(request)
+    )
+
+    assert response.error is not None
+    assert response.error.code is InferenceErrorCode.UNSUPPORTED_CAPABILITY
+    assert response.error.details["max_batch_size"] == 1
+    assert provider.infer_count == 0
+
+
+def test_gateway_checks_nested_artifact_size_limit() -> None:
+    class ImageProvider(FakeProvider):
+        async def capabilities(self) -> ProviderCapabilities:
+            return ProviderCapabilities(
+                provider="fake.caption",
+                tasks=[InferenceTask.IMAGE_CAPTIONING],
+                model_aliases=["caption.default"],
+                max_batch_size=2,
+                max_artifact_bytes=5,
+            )
+
+    artifact = ArtifactRef(
+        artifact_id="image_1",
+        kind="image",
+        uri="artifact://run_123/frames/1.jpg",
+        media_type="image/jpeg",
+        size_bytes=10,
+        checksum=Checksum("sha256", "abc"),
+    )
+    request = make_request(
+        alias="caption.default",
+        task=InferenceTask.IMAGE_CAPTIONING,
+    )
+    request = replace(request, inputs={"images": [artifact]})
+    provider = ImageProvider()
+
+    response = asyncio.run(
+        InferenceGateway({"caption.default": provider}).infer(request)
+    )
+
+    assert response.error is not None
+    assert response.error.code is InferenceErrorCode.UNSUPPORTED_CAPABILITY
+    assert "images[0]" in response.error.message
     assert provider.infer_count == 0
 
 
