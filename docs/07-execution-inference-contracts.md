@@ -12,8 +12,10 @@ Python Protocol, HTTP OpenAPI, 작업 큐 메시지는 모두 이 계약을 동�
 [`ADR-0002`](./adr/0002-use-stdlib-dataclasses-for-domain-contracts.md)에 기록한다.
 Artifact·Run Store Port와 로컬 구현은
 [`src/video_preprocess/storage/`](../src/video_preprocess/storage/)에 있고 저장 규칙은
-[`ADR-0003`](./adr/0003-local-artifact-and-manifest-storage.md)에 기록한다. Executor와
-나머지 Provider 계약은 아직 설계 상태이며 구현 완료로 간주하지 않는다. Inference 공통 계약,
+[`ADR-0003`](./adr/0003-local-artifact-and-manifest-storage.md)에 기록한다. Stage registry와
+DAG planner는 [`src/video_preprocess/engine/`](../src/video_preprocess/engine/)에 구현됐지만
+Executor와 HTTP Provider 계약은 아직 설계 상태이며 구현 완료로 간주하지 않는다. Inference
+공통 계약,
 Gateway, `LocalEmbeddingProvider`, `LocalCaptionProvider`, `LocalSTTProvider`,
 `LocalDiarizationProvider`와 `LocalVADProvider`는
 [`src/video_preprocess/inference/`](../src/video_preprocess/inference/)에 구현되어 있고 결정은
@@ -200,6 +202,36 @@ Stage는 `StageTask`에 없는 전역 설정을 몰래 읽지 않는다. 환경�
 - `cancelled`: 취소 신호를 처리하고 종료
 
 Engine 내부 상태인 `pending`, `queued`, `running`은 최종 `StageResult`에 사용하지 않는다.
+
+### 4.4 Stage registry와 ExecutionPlan
+
+현재 `StageRegistry`는 stable Stage name과 logical output owner를 인덱싱하고 다음 구성을 실행
+전에 거부한다.
+
+- duplicate Stage name 또는 logical output
+- external input과 Stage output key 충돌
+- 등록되지 않은 dependency
+- dependency cycle
+- producer가 없거나 해당 Stage의 ancestor가 아닌 required input
+
+`DAGPlanner`는 등록 순서와 무관하게 dependency를 우선하고, 동시에 준비된 Stage는 stable
+name 사전순으로 정렬한다. 현재 11개 숫자 prefix Stage는 기존 01~11 순서로 plan된다.
+
+선택 규칙:
+
+| 입력 | 선택 집합 |
+|---|---|
+| selector 없음 | 전체 DAG |
+| `stage=X` | X만 |
+| `from_stage=X` | X + 모든 descendant |
+| `to_stage=X` | 모든 ancestor + X |
+| from + to | from descendant와 to ancestor의 교집합 |
+
+`ExecutionPlan.stages`는 topological order의 `StageSpec` 배열이다.
+`ExecutionPlan.boundary_inputs`는 선택된 Stage가 요구하지만 plan 내부 Stage가 생성하지 않는
+정렬된 logical input key다. Engine/Executor는 실행 전에 이 key에 해당하는 external 또는 기존
+artifact가 있는지 확인해야 한다. 결정 근거는
+[`ADR-0009`](./adr/0009-deterministic-stage-registry-and-dag-planner.md)에 기록한다.
 
 ## 5. Executor 계약
 

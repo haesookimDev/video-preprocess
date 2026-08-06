@@ -191,8 +191,9 @@ Phase 2는 2026-08-06에 VAD까지 Local Provider로 이동하고 sample 회귀�
 
 ### 작업
 
-- stage registry와 DAG planner 구현
-- 의존성 cycle과 누락된 input 검증
+- [x] stage registry와 DAG planner 구현
+- [x] 의존성 cycle과 누락된 input 검증
+- [x] exact/from/to 선택과 boundary input plan 구현
 - run/stage 상태 머신 구현
 - LocalExecutor 구현
 - stage timeout과 cancellation token 전달

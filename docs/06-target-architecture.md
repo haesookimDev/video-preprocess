@@ -178,6 +178,12 @@ flowchart LR
 초기 `LocalExecutor`는 순차 실행으로 동등성을 확보한다. 이후 비주얼 경로와 오디오
 경로를 병렬화하되, 병렬 정책은 Stage가 아니라 Executor가 소유한다.
 
+현재 `StageRegistry`와 `DAGPlanner`가 이 11개 Stage의 logical input/output과 dependency를
+검증하고 stable name 사전순 tie-break로 deterministic topological plan을 만든다. exact,
+from, to 선택과 plan 밖에서 필요한 `boundary_inputs` 규칙은
+[`ADR-0009`](./adr/0009-deterministic-stage-registry-and-dag-planner.md)에 기록한다. 기존 runner
+연결은 아직 하지 않았으며 다음 LocalExecutor slice에서 같은 plan을 소비한다.
+
 ## 8. 설정과 모델 binding
 
 파이프라인 알고리즘 설정과 모델 배포 설정을 분리한다.

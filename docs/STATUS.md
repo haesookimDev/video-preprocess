@@ -2,7 +2,7 @@
 
 - 마지막 갱신: **2026-08-06**
 - 현재 단계: **Phase 3 — Pipeline Engine과 LocalExecutor**
-- 다음 작업: **stage registry와 DAG planner**
+- 다음 작업: **Executor Port와 순차 LocalExecutor**
 
 이 문서는 개발 진행 상황의 단일 진입점이다. 새로운 세션은 이 문서를 먼저 읽고, 실제 코드와
 Git 상태를 확인한 뒤 작업을 시작한다.
@@ -18,10 +18,12 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - `src/pipeline/stages/s01_*`~`s11_*`: 단계 구현
 - `src/video_preprocess/domain/`: 버전이 있는 Artifact·Stage 공개 계약
 - `src/video_preprocess/storage/`: Artifact·Run Store Port와 로컬 구현
+- `src/video_preprocess/engine/`: 11개 Stage registry와 deterministic DAG planner
 - 로컬 파일 존재 여부를 기준으로 단계 스킵
 - VAD, STT, diarization, caption과 embedding이 `InferenceGateway`와 Local Provider로 실행
 - 모든 모델 Stage에서 구체 ML library import와 model lifecycle 제거 완료
-- Pipeline Engine, Executor Port, HTTP provider는 아직 구현되지 않음
+- Registry/planner는 구현됐지만 기존 runner에 아직 연결되지 않음
+- Pipeline 상태 머신, Executor Port, HTTP provider는 아직 구현되지 않음
 - Local Store는 구현됐고 model Stage compatibility adapter에서 media 등록에 사용하며,
   전체 runner 연결은 Engine 전환 시점까지 보류
 
@@ -54,6 +56,8 @@ Git 상태를 확인한 뒤 작업을 시작한다.
   [`ADR-0007`](./adr/0007-audio-artifact-local-diarization-provider.md)
 - VAD audio ArtifactRef·option 결정:
   [`ADR-0008`](./adr/0008-audio-artifact-local-vad-provider.md)
+- deterministic Stage registry·DAG 결정:
+  [`ADR-0009`](./adr/0009-deterministic-stage-registry-and-dag-planner.md)
 
 ## 3. 완료된 작업
 
@@ -86,6 +90,7 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - [x] audio ArtifactRef와 local STT provider·s06 adapter
 - [x] audio ArtifactRef와 local diarization provider·s07 adapter
 - [x] audio ArtifactRef와 local VAD provider·s05 adapter
+- [x] 11개 Stage registry와 deterministic DAG planner
 
 ## 4. 아직 구현되지 않은 작업
 
@@ -99,6 +104,7 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - [x] LocalSTTProvider
 - [x] Local diarization Provider
 - [x] Local VAD Provider
+- [x] Stage registry와 DAG planner
 - [ ] PipelineEngine과 LocalExecutor
 - [ ] manifest 기반 cache
 - [ ] HTTPInferenceProvider와 모델 서버 계약 구현
@@ -110,20 +116,20 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 문서가 존재한다고 구현된 것으로 간주하지 않는다. 완료 여부는 코드와 자동 테스트를 기준으로
 이 체크리스트에서 갱신한다.
 
-## 5. 다음 작업: Stage registry와 DAG planner slice
+## 5. 다음 작업: Executor Port와 순차 LocalExecutor slice
 
 권장 순서:
 
-1. 현재 11개 Stage의 stable ID, version, logical input/output key를 명시한 registry 구현
-2. registry에서 dependency DAG를 만들고 deterministic topological order를 계산
-3. duplicate ID/output, unknown dependency와 dependency cycle을 실행 전에 거부
-4. 전체·`--stage`·`--from-stage`·`--to-stage` 선택을 위한 순수 plan API 구현
-5. ML·FFmpeg 없이 registry/planner contract test 작성
-6. 기존 runner에는 아직 연결하지 않고 다음 LocalExecutor slice의 입력으로 고정
+1. `StageTask`를 제출·상태 조회·결과 회수·취소하는 Executor Port의 최소 async 계약 확정
+2. stable Stage name → 실행 callable binding을 별도 registry로 구성
+3. worker pool 없이 현재 프로세스에서 한 task씩 실행하는 순차 `LocalExecutor` 구현
+4. unknown Stage, duplicate submission, result type·ID mismatch와 예외를 정규화
+5. fake Stage runner로 submit/status/result/cancel과 idempotency contract test 작성
+6. legacy `run(ctx)` Stage 연결은 다음 compatibility adapter slice로 분리
 
-Phase 2는 모든 현재 모델 task를 Local Provider로 이동하고 sample 회귀를 통과해 완료했다.
-Phase 3 첫 slice는 실행을 바꾸기 전에 DAG와 선택 규칙을 순수 domain/application 코드로
-고정한다.
+Registry/planner는 11개 DAG, logical artifact owner, cycle·누락 input 검증과 exact/from/to
+selection을 구현했다. LocalExecutor는 이 plan을 변경하지 않고 `StageTask` 실행 위치만
+소유해야 한다.
 
 ## 6. 알려진 중요 문제
 
@@ -144,7 +150,7 @@ Phase 3 첫 slice는 실행을 바꾸기 전에 DAG와 선택 규칙을 순수 d
 
 ## 7. 기존 검증 기준선
 
-2026-08-06 Phase 0~Phase 2 완료 점검 결과:
+2026-08-06 Phase 0~Phase 3 registry/planner 점검 결과:
 
 - 깨끗한 Python 3.13 임시 venv에 `requirements-dev.txt` 설치 성공
 - embedding slice 당시 기존 `.venv`와 깨끗한 venv에서 전체 테스트 85개 성공
@@ -152,6 +158,9 @@ Phase 3 첫 slice는 실행을 바꾸기 전에 DAG와 선택 규칙을 순수 d
 - STT slice 기본 테스트 108개 성공
 - diarization slice 기본 테스트 124개 성공
 - VAD slice 기본 테스트 135개 성공
+- registry/planner slice 기본 테스트 157개 성공
+- default 11개 DAG가 기존 01~11 순서이며 cycle·unknown dependency·duplicate output·누락
+  producer와 exact/from/to/boundary input contract 확인
 - VAD asset revision
   `sha256:4cbf549b8326f60f80f2536d9eefeb450a9abe83365a098031c89719f1be17d2` 기록
 - `sample.mp4 --force` 오프라인 캐시 실행 `ok`(29.4초), 기존 VAD 3개·14.8초·0.493과
@@ -196,6 +205,17 @@ Phase 3 첫 slice는 실행을 바꾸기 전에 DAG와 선택 규칙을 순수 d
 
 최신 기록을 위에 추가한다. 긴 구현 설명은 PR이나 ADR에 두고 여기에는 다음 세션이 재개하는 데
 필요한 정보만 적는다.
+
+### 2026-08-06 — Phase 3 Stage registry와 DAG planner
+
+- 목표: module 배열에 암묵적인 실행 순서를 명시적·검증 가능한 DAG plan으로 분리
+- 완료: `StageRegistry`, `DAGPlanner`, `ExecutionPlan`, current 11개 `StageSpec` registry 구현
+- 주요 결정: logical output 단일 owner, external `video`, stable name tie-break, ancestor input
+  검증, exact/from/to selector와 `boundary_inputs`; ADR-0009
+- 검증: 기본 pytest 157개 통과; 등록 순서 독립성, 11개 기존 순서, duplicate/unknown/cycle,
+  producer graph, selector 조합과 engine dependency boundary 확인
+- 호환성: 기존 runner와 CLI에는 연결하지 않아 실행 순서·출력·명령 동작 변경 없음
+- 다음 작업: Executor Port와 fake Stage binding을 사용하는 순차 LocalExecutor
 
 ### 2026-08-06 — Phase 2 local VAD provider / Phase 2 완료
 
