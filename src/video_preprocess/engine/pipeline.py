@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, replace
 from enum import Enum
+from typing import TYPE_CHECKING
 
 from video_preprocess.domain import (
     ArtifactRef,
+    ModelExecution,
+    RunManifest,
     RunStatus,
     StageResult,
     StageSpec,
@@ -18,14 +21,25 @@ from video_preprocess.domain import (
 )
 from video_preprocess.executors.contracts import ExecutionHandle, Executor
 
+from .cache import (
+    CacheDecision,
+    EffectiveModelResolver,
+    ManifestCacheEvaluator,
+    compute_stage_cache_key,
+)
 from .errors import EngineInputError, StateTransitionError
+from .persistence import Clock, RunJournal, utc_now
 from .planner import ExecutionPlan
+
+if TYPE_CHECKING:
+    from video_preprocess.storage.runs import RunStore
 
 
 class StageLifecycle(str, Enum):
     """Engine-owned lifecycle for one planned Stage attempt."""
 
     PENDING = "pending"
+    CACHED = "cached"
     QUEUED = "queued"
     RUNNING = "running"
     SUCCEEDED = "succeeded"
@@ -37,6 +51,7 @@ class StageLifecycle(str, Enum):
     def terminal(self) -> bool:
         return self in {
             self.SUCCEEDED,
+            self.CACHED,
             self.SKIPPED,
             self.FAILED,
             self.CANCELLED,
@@ -45,6 +60,7 @@ class StageLifecycle(str, Enum):
 
 _STAGE_TRANSITIONS = {
     StageLifecycle.PENDING: {
+        StageLifecycle.CACHED,
         StageLifecycle.QUEUED,
         StageLifecycle.FAILED,
         StageLifecycle.CANCELLED,
@@ -133,31 +149,72 @@ class StageExecutionRecord:
     handle: ExecutionHandle | None
     result: StageResult
     transitions: tuple[StageLifecycle, ...]
+    cache_decision: CacheDecision | None = None
 
     @property
     def state(self) -> StageLifecycle:
         return self.transitions[-1]
 
+    @property
+    def from_cache(self) -> bool:
+        return (
+            self.cache_decision is not None
+            and self.cache_decision.hit
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class PipelineRunResult:
-    """Terminal in-memory run result before manifest persistence."""
+    """Terminal Engine result and optional persisted run manifest."""
 
     run_id: str
     status: RunStatus
     stages: tuple[StageExecutionRecord, ...]
     artifacts: dict[str, ArtifactRef]
     transitions: tuple[RunStatus, ...]
+    manifest: RunManifest | None = None
 
 
 class PipelineEngine:
     """Build StageTask attempts and execute one topological plan in order."""
 
-    def __init__(self, executor: Executor) -> None:
+    def __init__(
+        self,
+        executor: Executor,
+        *,
+        run_store: RunStore | None = None,
+        cache_evaluator: ManifestCacheEvaluator | None = None,
+        model_resolver: EffectiveModelResolver | None = None,
+        clock: Clock = utc_now,
+    ) -> None:
         for method_name in ("submit", "status", "result", "cancel"):
             if not callable(getattr(executor, method_name, None)):
                 raise TypeError("executor must implement the Executor Port")
         self.executor = executor
+        if run_store is not None:
+            for method_name in ("save_run", "load_stage", "save_stage"):
+                if not callable(getattr(run_store, method_name, None)):
+                    raise TypeError(
+                        "run_store must implement the RunStore Port"
+                    )
+        if cache_evaluator is not None and not callable(
+            getattr(cache_evaluator, "evaluate", None)
+        ):
+            raise TypeError("cache_evaluator must implement evaluate")
+        if cache_evaluator is not None and run_store is None:
+            raise ValueError("cache_evaluator requires a run_store")
+        if model_resolver is not None and not callable(
+            getattr(model_resolver, "resolve", None)
+        ):
+            raise TypeError("model_resolver must implement resolve")
+        if model_resolver is not None and cache_evaluator is None:
+            raise ValueError("model_resolver requires a cache_evaluator")
+        if not callable(clock):
+            raise TypeError("clock must be callable")
+        self.run_store = run_store
+        self.cache_evaluator = cache_evaluator
+        self.model_resolver = model_resolver
+        self.clock = clock
 
     async def run(
         self,
@@ -169,6 +226,7 @@ class PipelineEngine:
         stage_configs: Mapping[str, Mapping[str, object]] | None = None,
         model_bindings: Mapping[str, Mapping[str, str]] | None = None,
         attempts: Mapping[str, int] | None = None,
+        force_stages: Collection[str] | None = None,
     ) -> PipelineRunResult:
         if not isinstance(plan, ExecutionPlan):
             raise TypeError("plan must be an ExecutionPlan")
@@ -184,12 +242,18 @@ class PipelineEngine:
             "model_bindings",
         )
         normalized_attempts = {} if attempts is None else dict(attempts)
+        forced = self._normalize_force_stages(force_stages)
+        if forced and self.cache_evaluator is None:
+            raise EngineInputError(
+                "force_stages requires a configured cache evaluator"
+            )
         self._validate_plan_options(
             plan,
             available,
             configs,
             bindings,
             normalized_attempts,
+            forced,
         )
         self._validate_task_payloads(
             plan,
@@ -202,6 +266,14 @@ class PipelineEngine:
 
         run_state = RunStateMachine()
         run_state.transition(RunStatus.RUNNING)
+        journal = self._create_journal(
+            run_id=run_id,
+            artifacts=available,
+            configs=configs,
+            bindings=bindings,
+        )
+        if journal is not None:
+            journal.start()
         records = []
         for spec in plan.stages:
             stage_state = StageStateMachine()
@@ -214,6 +286,7 @@ class PipelineEngine:
                 model_bindings=bindings.get(spec.name, {}),
                 attempt=normalized_attempts.get(spec.name, 1),
             )
+            stage_started_at = journal.now() if journal is not None else None
             missing_inputs = tuple(
                 input_name
                 for input_name in spec.required_inputs
@@ -227,6 +300,13 @@ class PipelineEngine:
                     + ", ".join(missing_inputs),
                 )
                 stage_state.transition(StageLifecycle.FAILED)
+                self._persist_stage(
+                    journal,
+                    task,
+                    result,
+                    started_at=stage_started_at,
+                    cache_key=compute_stage_cache_key(task),
+                )
                 records.append(
                     StageExecutionRecord(
                         stage=spec.name,
@@ -236,6 +316,49 @@ class PipelineEngine:
                         transitions=stage_state.history,
                     )
                 )
+                run_state.transition(RunStatus.FAILED)
+                break
+
+            cache_decision = await self._evaluate_cache(
+                task,
+                journal,
+                force=spec.name in forced,
+            )
+            if cache_decision is not None and cache_decision.hit:
+                cached_manifest = cache_decision.manifest
+                if cached_manifest is None:
+                    raise RuntimeError("cache hit is missing its manifest")
+                result = replace(
+                    cached_manifest.result,
+                    run_id=task.run_id,
+                    stage_run_id=task.stage_run_id,
+                    attempt=task.attempt,
+                )
+                result = self._validate_result_outputs(spec, task, result)
+                if result.status is StageStatus.SUCCEEDED:
+                    stage_state.transition(StageLifecycle.CACHED)
+                else:
+                    stage_state.transition(StageLifecycle.FAILED)
+                self._persist_stage(
+                    journal,
+                    task,
+                    result,
+                    started_at=stage_started_at,
+                    cache_key=cache_decision.cache_key,
+                )
+                records.append(
+                    StageExecutionRecord(
+                        stage=spec.name,
+                        task=task,
+                        handle=None,
+                        result=result,
+                        transitions=stage_state.history,
+                        cache_decision=cache_decision,
+                    )
+                )
+                if result.status is StageStatus.SUCCEEDED:
+                    available.update(result.outputs)
+                    continue
                 run_state.transition(RunStatus.FAILED)
                 break
 
@@ -249,6 +372,13 @@ class PipelineEngine:
                     warning=f"error_type={type(exc).__name__}",
                 )
                 stage_state.transition(StageLifecycle.FAILED)
+                self._persist_stage(
+                    journal,
+                    task,
+                    result,
+                    started_at=stage_started_at,
+                    cache_key=self._cache_key(task, cache_decision),
+                )
                 records.append(
                     StageExecutionRecord(
                         stage=spec.name,
@@ -256,6 +386,7 @@ class PipelineEngine:
                         handle=None,
                         result=result,
                         transitions=stage_state.history,
+                        cache_decision=cache_decision,
                     )
                 )
                 run_state.transition(RunStatus.FAILED)
@@ -275,6 +406,13 @@ class PipelineEngine:
             result = self._validate_result_outputs(spec, task, result)
             terminal_state = self._lifecycle_from_result(result.status)
             stage_state.transition(terminal_state)
+            self._persist_stage(
+                journal,
+                task,
+                result,
+                started_at=stage_started_at,
+                cache_key=self._cache_key(task, cache_decision),
+            )
             records.append(
                 StageExecutionRecord(
                     stage=spec.name,
@@ -282,6 +420,7 @@ class PipelineEngine:
                     handle=handle,
                     result=result,
                     transitions=stage_state.history,
+                    cache_decision=cache_decision,
                 )
             )
             if result.status in {StageStatus.SUCCEEDED, StageStatus.SKIPPED}:
@@ -295,13 +434,98 @@ class PipelineEngine:
         else:
             run_state.transition(RunStatus.SUCCEEDED)
 
+        run_manifest = (
+            None
+            if journal is None
+            else journal.finish(run_state.state)
+        )
+
         return PipelineRunResult(
             run_id=run_id,
             status=run_state.state,
             stages=tuple(records),
             artifacts=dict(available),
             transitions=run_state.history,
+            manifest=run_manifest,
         )
+
+    def _create_journal(
+        self,
+        *,
+        run_id: str,
+        artifacts: Mapping[str, ArtifactRef],
+        configs: Mapping[str, Mapping[str, object]],
+        bindings: Mapping[str, Mapping[str, object]],
+    ) -> RunJournal | None:
+        if self.run_store is None:
+            return None
+        return RunJournal(
+            self.run_store,
+            run_id=run_id,
+            input_artifacts=artifacts,
+            stage_configs=configs,
+            model_bindings=bindings,
+            clock=self.clock,
+        )
+
+    async def _evaluate_cache(
+        self,
+        task: StageTask,
+        journal: RunJournal | None,
+        *,
+        force: bool,
+    ) -> CacheDecision | None:
+        if self.cache_evaluator is None:
+            return None
+        if journal is None:
+            raise RuntimeError("cache evaluation requires a run journal")
+        candidate = None if force else journal.load_candidate(task)
+        expected_models: Sequence[ModelExecution] | None
+        if candidate is None or not task.model_bindings:
+            expected_models = () if not task.model_bindings else None
+        elif self.model_resolver is None:
+            expected_models = None
+        else:
+            try:
+                expected_models = await self.model_resolver.resolve(task)
+            except Exception:
+                expected_models = None
+        return self.cache_evaluator.evaluate(
+            task,
+            candidate,
+            expected_models=expected_models,
+            force=force,
+        )
+
+    @staticmethod
+    def _persist_stage(
+        journal: RunJournal | None,
+        task: StageTask,
+        result: StageResult,
+        *,
+        started_at: str | None,
+        cache_key: str,
+    ) -> None:
+        if journal is None:
+            return
+        if started_at is None:
+            raise RuntimeError("persisted Stage is missing its start time")
+        journal.record_stage(
+            task,
+            result,
+            started_at=started_at,
+            completed_at=journal.now(),
+            cache_key=cache_key,
+        )
+
+    @staticmethod
+    def _cache_key(
+        task: StageTask,
+        decision: CacheDecision | None,
+    ) -> str:
+        if decision is not None:
+            return decision.cache_key
+        return compute_stage_cache_key(task)
 
     @classmethod
     def _build_task(
@@ -393,6 +617,7 @@ class PipelineEngine:
         configs: Mapping[str, Mapping[str, object]],
         bindings: Mapping[str, Mapping[str, object]],
         attempts: Mapping[str, object],
+        forced: Collection[str],
     ) -> None:
         stage_names = set(plan.stage_names)
         for field_name, mapping in (
@@ -405,6 +630,11 @@ class PipelineEngine:
                 raise EngineInputError(
                     f"{field_name} contains unplanned stage: {unknown[0]}"
                 )
+        unknown_forced = sorted(set(forced) - stage_names)
+        if unknown_forced:
+            raise EngineInputError(
+                f"force_stages contains unplanned stage: {unknown_forced[0]}"
+            )
         missing_boundary = sorted(set(plan.boundary_inputs) - set(artifacts))
         if missing_boundary:
             raise EngineInputError(
@@ -504,6 +734,26 @@ class PipelineEngine:
                 )
             normalized[stage_name] = dict(stage_value)
         return normalized
+
+    @staticmethod
+    def _normalize_force_stages(
+        value: Collection[str] | None,
+    ) -> frozenset[str]:
+        if value is None:
+            return frozenset()
+        if isinstance(value, (str, bytes)) or not isinstance(
+            value,
+            Collection,
+        ):
+            raise TypeError("force_stages must be a collection of Stage names")
+        normalized = set()
+        for stage_name in value:
+            if not isinstance(stage_name, str) or not stage_name.strip():
+                raise EngineInputError(
+                    "force_stages must contain non-empty Stage names"
+                )
+            normalized.add(stage_name.strip())
+        return frozenset(normalized)
 
     @staticmethod
     def _required_string(value: object, field_name: str) -> str:

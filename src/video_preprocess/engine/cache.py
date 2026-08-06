@@ -7,7 +7,7 @@ import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 from video_preprocess.domain import (
     ArtifactRef,
@@ -56,6 +56,15 @@ class CacheMissReason(str, Enum):
     OUTPUT_SIZE_MISMATCH = "OUTPUT_SIZE_MISMATCH"
     OUTPUT_CHECKSUM_MISMATCH = "OUTPUT_CHECKSUM_MISMATCH"
     OUTPUT_VERIFICATION_FAILED = "OUTPUT_VERIFICATION_FAILED"
+
+
+class EffectiveModelResolver(Protocol):
+    """Resolves the current deployment fingerprint for Stage model slots."""
+
+    async def resolve(
+        self,
+        task: StageTask,
+    ) -> Sequence[ModelExecution] | None: ...
 
 
 @dataclass(frozen=True, slots=True)

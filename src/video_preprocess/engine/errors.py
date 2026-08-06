@@ -35,3 +35,7 @@ class EngineInputError(ValueError):
 
 class StateTransitionError(RuntimeError):
     """A run or Stage lifecycle attempted an invalid transition."""
+
+
+class EnginePersistenceError(RuntimeError):
+    """The Engine could not durably read or write run state."""

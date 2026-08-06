@@ -381,6 +381,13 @@ def test_stage_and_run_state_machines_reject_invalid_transitions() -> None:
     with pytest.raises(StateTransitionError, match="invalid Stage"):
         stage.transition(StageLifecycle.FAILED)
 
+    cached = StageStateMachine()
+    cached.transition(StageLifecycle.CACHED)
+    assert cached.state is StageLifecycle.CACHED
+    assert cached.state.terminal
+    with pytest.raises(StateTransitionError, match="invalid Stage"):
+        cached.transition(StageLifecycle.RUNNING)
+
     run = RunStateMachine()
     with pytest.raises(StateTransitionError, match="invalid run"):
         run.transition(RunStatus.SUCCEEDED)

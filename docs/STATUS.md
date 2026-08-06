@@ -2,7 +2,7 @@
 
 - 마지막 갱신: **2026-08-06**
 - 현재 단계: **Phase 3 — Pipeline Engine과 LocalExecutor**
-- 다음 작업: **PipelineEngine의 RunStore manifest·cache 통합**
+- 다음 작업: **legacy 11-stage StageTask binding과 Engine compatibility path**
 
 이 문서는 개발 진행 상황의 단일 진입점이다. 새로운 세션은 이 문서를 먼저 읽고, 실제 코드와
 Git 상태를 확인한 뒤 작업을 시작한다.
@@ -18,12 +18,12 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - `src/pipeline/stages/s01_*`~`s11_*`: 단계 구현
 - `src/video_preprocess/domain/`: 버전이 있는 Artifact·Stage 공개 계약
 - `src/video_preprocess/storage/`: Artifact·Run Store Port와 로컬 구현
-- `src/video_preprocess/engine/`: planner, 순차 PipelineEngine과 manifest cache decision 계층
+- `src/video_preprocess/engine/`: planner, PipelineEngine, manifest cache와 RunStore journal
 - `src/video_preprocess/executors/`: async Executor Port, Stage binding과 순차 LocalExecutor
 - 로컬 파일 존재 여부를 기준으로 단계 스킵
 - VAD, STT, diarization, caption과 embedding이 `InferenceGateway`와 Local Provider로 실행
 - 모든 모델 Stage에서 구체 ML library import와 model lifecycle 제거 완료
-- cache key/evaluator는 구현됐지만 PipelineEngine persistence와 기존 runner에는 아직 연결되지 않음
+- 새 Engine은 manifest persistence/cache resume를 지원하지만 기존 runner에는 아직 연결되지 않음
 - legacy Stage binding과 HTTP provider는 아직 구현되지 않음
 - Local Store는 구현됐고 model Stage compatibility adapter에서 media 등록에 사용하며,
   전체 runner 연결은 Engine 전환 시점까지 보류
@@ -65,6 +65,8 @@ Git 상태를 확인한 뒤 작업을 시작한다.
   [`ADR-0011`](./adr/0011-sequential-pipeline-engine-artifact-orchestration.md)
 - content-addressed manifest cache 결정:
   [`ADR-0012`](./adr/0012-content-addressed-manifest-cache-decisions.md)
+- PipelineEngine RunStore journal과 cache resume 결정:
+  [`ADR-0013`](./adr/0013-pipeline-engine-run-journal-and-cache-resume.md)
 
 ## 3. 완료된 작업
 
@@ -101,6 +103,7 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - [x] Executor Port와 순차 LocalExecutor
 - [x] 순차 PipelineEngine과 run/stage 상태 머신
 - [x] manifest cache key와 artifact 검증 기반 cache decision
+- [x] PipelineEngine RunStore manifest와 같은 run의 cache resume
 
 ## 4. 아직 구현되지 않은 작업
 
@@ -118,7 +121,8 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - [x] 순차 LocalExecutor
 - [x] 최소 PipelineEngine
 - [x] manifest cache key와 독립 evaluator
-- [ ] PipelineEngine manifest persistence와 cache hit 통합
+- [x] PipelineEngine manifest persistence와 같은 run의 cache hit 통합
+- [ ] global cache index와 run 간 cache 재사용
 - [ ] HTTPInferenceProvider와 모델 서버 계약 구현
 - [ ] Application Service와 API adapter
 - [ ] 타임라인 경계 정합성 개선
@@ -128,19 +132,19 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 문서가 존재한다고 구현된 것으로 간주하지 않는다. 완료 여부는 코드와 자동 테스트를 기준으로
 이 체크리스트에서 갱신한다.
 
-## 5. 다음 작업: PipelineEngine manifest persistence와 cache integration slice
+## 5. 다음 작업: legacy StageTask binding과 Engine compatibility slice
 
 권장 순서:
 
-1. `PipelineEngine`에 RunStore, cache evaluator, UTC clock과 effective model resolver Port 주입
-2. 실행 시작·Stage terminal·run terminal 시점에 RunManifest/StageManifest를 원자적으로 저장
-3. Stage 제출 전에 후보 manifest를 조회하고 hit면 Executor 없이 output artifact를 전달
-4. force-stage와 cache miss reason을 Stage execution record에 남겨 dry-run/CLI가 소비할 기반 마련
-5. 실패·취소 manifest도 진단용으로 저장하되 cache 후보는 succeeded만 사용
-6. fake RunStore/Executor로 cache hit, miss 실행, 저장 순서와 재시작 contract test 작성
+1. 기존 11개 Stage module의 `run(ctx)`를 StageTask runner로 감싸는 compatibility binding 계약 설계
+2. task input ArtifactRef를 기존 output tree에 materialize/register하는 run-scoped context 구성
+3. legacy `OUTPUT` 파일을 logical output key별 ArtifactRef로 등록하고 StageResult로 정규화
+4. 기존 파일 존재 skip은 binding 내부에서 비활성화하고 Engine cache decision만 실행 여부를 소유
+5. 우선 01 probe~04 audio의 non-model Stage binding과 fake/fixture contract test 구현
+6. 이후 05~10 model/Gateway Stage, 11 context 순서로 연결하고 기존 CLI와 sample 회귀 수행
 
-이번 slice에서는 새 Engine 내부 persistence를 먼저 완성한다. legacy `run(ctx)` binding과 기본
-CLI 전환은 manifest/cache 통합이 고정된 다음 slice에서 진행한다.
+첫 slice는 compatibility adapter와 non-model Stage 경계를 고정한다. 전체 11단계가 새 Engine에서
+동등하게 실행된 뒤 CLI 기본 경로를 Application Service로 전환한다.
 
 ## 6. 알려진 중요 문제
 
@@ -161,7 +165,7 @@ CLI 전환은 manifest/cache 통합이 고정된 다음 slice에서 진행한다
 
 ## 7. 기존 검증 기준선
 
-2026-08-06 Phase 0~Phase 3 manifest cache decision 점검 결과:
+2026-08-06 Phase 0~Phase 3 Engine manifest/cache integration 점검 결과:
 
 - 깨끗한 Python 3.13 임시 venv에 `requirements-dev.txt` 설치 성공
 - embedding slice 당시 기존 `.venv`와 깨끗한 venv에서 전체 테스트 85개 성공
@@ -173,6 +177,9 @@ CLI 전환은 manifest/cache 통합이 고정된 다음 slice에서 진행한다
 - LocalExecutor slice 기본 테스트 177개 성공
 - PipelineEngine slice 기본 테스트 194개 성공
 - manifest cache decision slice 기본 테스트 218개 성공
+- Engine manifest/cache integration slice 기본 테스트 228개 성공
+- running/stage/terminal 저장 순서, same-run cache resume, cached lifecycle, effective model miss,
+  force/config invalidation, failed/cancelled persistence와 실제 Local Store 재시작 확인
 - run-local identity 제외 cache key, 입력/설정/Stage/model 변화, effective model resolution,
   input/output 누락·크기·checksum·verification 오류와 force/skipped miss reason 확인
 - full/partial plan, deterministic task identity, boundary/config/model 사전 검증, logical artifact
@@ -225,6 +232,18 @@ CLI 전환은 manifest/cache 통합이 고정된 다음 slice에서 진행한다
 
 최신 기록을 위에 추가한다. 긴 구현 설명은 PR이나 ADR에 두고 여기에는 다음 세션이 재개하는 데
 필요한 정보만 적는다.
+
+### 2026-08-06 — Phase 3 PipelineEngine manifest persistence와 cache resume
+
+- 목표: in-memory Engine 상태와 cache decision을 Local Run/Artifact Store의 durable 실행 경로로 연결
+- 완료: 선택적 `RunJournal`, UTC clock, `EffectiveModelResolver`, `force_stages`, cached lifecycle과
+  `StageExecutionRecord.cache_decision` 구현
+- 주요 결정: running→Stage→running→terminal manifest 저장, 같은 run/stage attempt 후보 조회,
+  model fingerprint 미확정 시 miss, content-equal downstream 독립 hit, persistence 오류 명시; ADR-0013
+- 검증: 기본 pytest 228개 통과; fake Store 저장 순서와 재시작, model/force/config miss,
+  failed/cancelled manifest, 실제 LocalArtifactStore/LocalRunStore cache resume 확인
+- 호환성: Store 미주입 시 기존 in-memory Engine 동작 유지; legacy runner/CLI는 아직 새 Engine 미사용
+- 다음 작업: 기존 11개 `run(ctx)`를 StageTask/StageResult에 연결하는 compatibility binding
 
 ### 2026-08-06 — Phase 3 manifest cache key와 decision 계층
 

@@ -18,8 +18,8 @@ Executor Port와 LocalExecutor는
 [`src/video_preprocess/executors/`](../src/video_preprocess/executors/)에 구현됐다. 순차
 PipelineEngine과 상태 머신은
 [`src/video_preprocess/engine/`](../src/video_preprocess/engine/)에 구현됐다. manifest cache key와
-decision 계층도 구현됐지만 RunStore/Engine 통합, legacy Stage binding과 HTTP Provider는 아직
-구현 완료로 간주하지 않는다. Inference 공통 계약,
+decision, RunStore journal과 같은 run의 cache resume도 구현됐다. legacy Stage binding, global
+cache index와 HTTP Provider는 아직 구현 완료로 간주하지 않는다. Inference 공통 계약,
 Gateway, `LocalEmbeddingProvider`, `LocalCaptionProvider`, `LocalSTTProvider`,
 `LocalDiarizationProvider`와 `LocalVADProvider`는
 [`src/video_preprocess/inference/`](../src/video_preprocess/inference/)에 구현되어 있고 결정은
@@ -246,16 +246,19 @@ artifact가 있는지 확인해야 한다. 결정 근거는
 - required input을 logical key로 resolve하고 Stage별 `StageTask`를 순차 생성한다.
 - run ID, Stage name, attempt, version, input, config와 model binding으로 deterministic task
   identity와 idempotency key를 만든다. trace ID는 결과 fingerprint에서 제외한다.
-- run은 `pending → running → terminal`, Stage는 `pending → queued → running → terminal` 전이를
-  따르며 잘못된 전이를 거부한다.
+- run은 `pending → running → terminal`, 실행 Stage는 `pending → queued → running → terminal`,
+  cache hit는 `pending → cached` 전이를 따르며 잘못된 전이를 거부한다.
 - `succeeded`와 `skipped` output을 다음 Stage의 artifact map에 합치고 `failed` 또는 `cancelled`면
   후속 제출을 중단한다.
 - 선언되지 않은 output을 거부하고 downstream required input이 실제로 없을 때 stable failed
   result로 정규화한다.
 
-이 상태와 결과는 아직 메모리에만 있다. RunStore manifest 기록, cache hit/miss 결정, retry와
-legacy Stage 실행 연결은 후속 slice다. 결정 근거는
-[`ADR-0011`](./adr/0011-sequential-pipeline-engine-artifact-orchestration.md)에 기록한다.
+RunStore가 주입되면 Engine은 시작, 각 Stage terminal과 run terminal 시점에 manifest를 저장한다.
+같은 run/stage attempt의 성공 manifest가 cache 검증을 통과하면 Executor 제출 없이 output을
+전달한다. 결정 근거는
+[`ADR-0011`](./adr/0011-sequential-pipeline-engine-artifact-orchestration.md)과
+[`ADR-0013`](./adr/0013-pipeline-engine-run-journal-and-cache-resume.md)에 기록한다. retry, global
+cache index와 legacy Stage 실행 연결은 후속 slice다.
 
 ## 5. Executor 계약
 
@@ -283,8 +286,9 @@ class Executor(Protocol):
   반환된 결과를 폐기해 `cancelled`로 완료한다.
 - ML 모델 인스턴스, Stage 순서와 retry 정책은 관리하지 않는다.
 
-현재 handle/job은 in-memory이며 같은 service event loop lifecycle에서 사용한다. Stage별 timeout,
-cancellation token과 persisted status는 PipelineEngine 후속 slice다. 결정 근거는
+현재 handle/job은 in-memory이며 같은 service event loop lifecycle에서 사용한다. Engine의
+run/stage terminal manifest는 저장되지만 Executor handle status는 저장하지 않는다. Stage별 timeout,
+cancellation token과 persisted job status는 후속 slice다. 결정 근거는
 [`ADR-0010`](./adr/0010-async-sequential-local-executor.md)에 기록한다.
 
 ### 5.2 RemoteExecutor
@@ -298,6 +302,7 @@ cancellation token과 persisted status는 PipelineEngine 후속 slice다. 결정
 ### 5.3 실행 상태
 
 ```text
+pending ───────────────────────→ cached
 pending → queued → running → succeeded
                          ├→ skipped
                          ├→ failed
@@ -673,6 +678,13 @@ run/stage ID, attempt, trace, idempotency key와 artifact 저장 URI는 결과 �
 fingerprint를 resolve하지 못하면 안전하게 miss 처리한다. 구조화된 recheck fingerprint가 아직
 없으므로 모든 `skipped` manifest도 `SKIPPED_RECHECK_REQUIRED` miss다. 상세 결정은
 [`ADR-0012`](./adr/0012-content-addressed-manifest-cache-decisions.md)에 기록한다.
+
+PipelineEngine 통합 시 RunStore가 주입되면 running RunManifest, StageManifest, 갱신된 running
+RunManifest, terminal RunManifest 순서로 저장한다. cache 후보는 현재 RunStore Port의 조회
+범위에 맞춰 같은 run ID와 deterministic stage run ID/attempt에서 찾는다. hit result는 현재 task
+identity로 다시 묶고 Engine lifecycle `cached`로 기록한다. `force_stages`는 대상만 실행하며
+downstream은 새 checksum이 같으면 독립적으로 hit할 수 있다. 상세 결정은
+[`ADR-0013`](./adr/0013-pipeline-engine-run-journal-and-cache-resume.md)에 기록한다.
 
 ## 11. 버전 호환 정책
 
