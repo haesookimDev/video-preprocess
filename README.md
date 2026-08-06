@@ -1,129 +1,247 @@
 # video-preprocess
 
-긴 영상을 로컬 LLM으로 분석하기 위한 전처리 파이프라인 프로토타입.
-방법론은 [docs/](docs/00-overview.md) 참고.
+긴 영상을 검색·요약·질의응답에 사용할 수 있는 타임라인과 LLM 컨텍스트로 변환하는 로컬
+전처리 파이프라인이다. 영상에서 씬, 키프레임, 음성 구간, 전사, 화자와 캡션을 추출한 뒤
+SQLite 검색 인덱스와 자기완결형 `context.md`를 생성한다. LLM 호출 자체는 포함하지 않는다.
 
-현재 기본 CLI는 Pipeline Application Service, Engine, LocalExecutor와 manifest cache를 사용한다.
-모델별 로컬/서버 추론과 다른 서비스 연동을 지원하기 위한 아키텍처 전환은 계속 진행 중이다.
-현재 VAD, STT, diarization, caption과 embedding은 Local Inference Provider를 사용한다. 문서는 다음
-순서로 확인한다.
+## 현재 구현 상태
 
-- [개발 문서 안내](docs/README.md)
-- [현재 개발 상태와 다음 작업](docs/STATUS.md)
-- [목표 아키텍처](docs/06-target-architecture.md)
-- [실행기·단계·추론 계약](docs/07-execution-inference-contracts.md)
-- [상세 개발 로드맵](docs/08-development-roadmap.md)
+기본 CLI는 다음 실행 경로를 사용한다.
 
-## 최소 파이프라인 구성
+```mermaid
+flowchart LR
+    CLI[run_pipeline.py] --> APP[Pipeline Application Service]
+    APP --> ENGINE[Pipeline Engine]
+    ENGINE --> EXECUTOR[LocalExecutor]
+    EXECUTOR --> STAGES[01~11 Stage bindings]
+    STAGES --> GATEWAY[Inference Gateway]
+    GATEWAY --> LOCAL[Local Providers]
+    ENGINE --> STORES[Artifact / Run Stores]
+```
 
-| 단계 | 처리 | 출력 |
-|---|---|---|
-| 01_probe | ffprobe 메타데이터 추출 | `metadata.json` |
-| 02_scenes | PySceneDetect 씬 경계 검출 | `scenes.json`, `scene_stats.csv` |
-| 03_keyframes | 씬별 중앙 키프레임 추출 | `keyframes.json`, `frames/*.jpg` |
-| 04_audio | 오디오 디먹싱·16kHz mono 정규화 | `audio.json`, `audio_16k.wav` |
-| 05_vad | Silero VAD 음성 구간 검출 | `vad_segments.json` |
-| 06_stt | faster-whisper 전사 (VAD 구간만) | `transcript.json` |
-| 07_diarize | pyannote 화자 분리 (HF_TOKEN 필요) | `diarization.json` |
-| 08_captions | BLIP 씬 키프레임 캡셔닝 (영어) | `captions.json` |
-| 09_timeline | 씬 카드 병합 (공통 시간축, 화자 라벨 포함) | `timeline.json`, `timeline.md` |
-| 10_index | SQLite FTS5 + 임베딩 인덱스 | `index.db`, `index_summary.json` |
-| 11_context | **LLM 입력 컨텍스트 최종본 조립** | `context.md`, `context.json` |
+구현된 범위:
 
-## 설치
+- 11단계 DAG 계획과 순차 `LocalExecutor` 실행
+- 입력·설정·모델 binding·산출물 checksum 기반 manifest cache
+- VAD, STT, diarization, caption, embedding Local Inference Provider
+- 전체·단계별·from/to 선택 실행과 같은 local run 재개
+- 기존 JSON·Markdown·SQLite 출력 구조와 query CLI
+
+아직 구현되지 않은 범위:
+
+- HTTP Inference Provider와 모델 서버
+- REST API·queue adapter와 RemoteExecutor
+- run 사이의 global content-addressed cache
+- Stage별 cache 사유를 보여주는 완전한 dry-run preview
+
+정확한 완료 상태와 다음 작업은 [docs/STATUS.md](docs/STATUS.md)를 기준으로 한다.
+
+## 요구 환경과 설치
+
+- Python 3.10 이상
+- FFmpeg와 ffprobe
+- 로컬 모델을 위한 충분한 디스크와 메모리
+
+macOS 기준:
 
 ```bash
 brew install ffmpeg
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
+.venv/bin/python src/run_pipeline.py --preflight-only
 ```
 
-화자 분리까지 로컬에서 실행하려면 선택 의존성을 설치한다:
-
-```bash
-.venv/bin/pip install -r requirements-diarization.txt
-```
-
-개발 환경은 전체 로컬 의존성과 pytest를 함께 설치한다:
+`requirements.txt`에는 현재 11단계 로컬 실행에 필요한 패키지와 diarization 의존성이 포함된다.
+개발 환경은 pytest를 포함한 다음 파일을 사용한다.
 
 ```bash
 .venv/bin/pip install -r requirements-dev.txt
 .venv/bin/python -m pytest
 ```
 
-화자 분리(07_diarize)는 선택 의존성과 Hugging Face 게이트 모델을 사용한다:
+### 화자 분리 credential
+
+07단계는 Hugging Face 게이트 모델을 사용한다.
+
 1. [pyannote/speaker-diarization-community-1](https://huggingface.co/pyannote/speaker-diarization-community-1)
-   페이지에서 약관 동의
-2. `HF_TOKEN=hf_...` 환경변수를 설정하거나 프로젝트 루트 `.env`에 추가
+   사용 약관에 동의한다.
+2. `HF_TOKEN` 환경변수 또는 Git에서 제외된 프로젝트 루트 `.env`에 토큰을 설정한다.
 
-토큰이 없으면 해당 단계만 자동 스킵되고 나머지 파이프라인은 정상 동작한다.
+```dotenv
+HF_TOKEN=hf_...
+```
 
-## 실행
+토큰이 없거나 optional diarization을 사용할 수 없으면 07단계는 명시적인 `skipped` 결과와
+사유를 기록하고, 나머지 단계는 화자 라벨 없이 계속 실행된다. 토큰은 산출물이나 manifest에
+기록되지 않는다.
+
+## 빠른 시작
 
 ```bash
-.venv/bin/python src/run_pipeline.py <video.mp4>
+# 전체 파이프라인 실행
+.venv/bin/python src/run_pipeline.py samples/sample.mp4
 
-# 모델을 로드하지 않고 Python·FFmpeg·SQLite·패키지·credential만 검사
-.venv/bin/python src/run_pipeline.py --preflight-only
+# 생성된 최종 컨텍스트 확인
+sed -n '1,120p' output/sample/11_context/context.md
 
-# 옵션
-#   --out DIR            출력 루트 (기본: output)
-#   --force              기존 단계 출력 무시하고 전부 재실행
-#   --force-stage NAME   지정 Stage만 캐시를 무시 (여러 번 지정 가능)
-#   --stage NAME         정확히 한 단계만 실행
-#   --from-stage NAME    지정 단계와 그 하위 단계 실행
-#   --to-stage NAME      지정 단계까지 필요한 상위 단계 실행
-#   --run-id ID          같은 run manifest 재개 (기본: 출력 경로 기반 ID)
-#   --dry-run            실행 없이 Stage plan과 boundary input 출력
-#   --whisper-model M    tiny/base/small/medium/large (기본: base)
-#   --language ko        전사 언어 고정 (기본: 자동 감지)
-#   --scene-threshold N  씬 검출 민감도, 낮을수록 민감 (기본: 27.0)
-#   --preflight-only     실행 환경만 검사하고 종료
+# 검색 결과로 축약된 질의 컨텍스트 생성
+.venv/bin/python src/query.py output/sample "음성 구간 검출은 어디서 설명해?" --topk 2
 ```
 
-## 출력 구조
+기본 출력 위치는 `output/<video_stem>/`이다. 같은 출력 위치에는 안정적인 local run ID가
+사용되므로 중단된 실행을 다시 시작하거나 검증된 산출물을 재사용할 수 있다.
 
+## 실행 범위와 옵션
+
+```bash
+# 실행 없이 DAG 순서, boundary input과 force 대상 확인
+.venv/bin/python src/run_pipeline.py samples/sample.mp4 --dry-run
+
+# 정확히 한 단계 실행
+.venv/bin/python src/run_pipeline.py samples/sample.mp4 --stage 10_index
+
+# 지정 단계부터 영향을 받는 하위 단계 실행
+.venv/bin/python src/run_pipeline.py samples/sample.mp4 --from-stage 06_stt
+
+# 지정 단계까지 필요한 상위 단계 실행
+.venv/bin/python src/run_pipeline.py samples/sample.mp4 --to-stage 09_timeline
+
+# 한 단계 또는 선택된 plan 전체의 cache 무시
+.venv/bin/python src/run_pipeline.py samples/sample.mp4 --force-stage 07_diarize
+.venv/bin/python src/run_pipeline.py samples/sample.mp4 --force
+
+# 명시적인 run ID로 실행·재개
+.venv/bin/python src/run_pipeline.py samples/sample.mp4 --run-id experiment-01
 ```
+
+| 옵션 | 의미 |
+|---|---|
+| `--out DIR` | 출력 상위 디렉터리. 기본값은 `output` |
+| `--stage NAME` | 정확히 한 Stage만 선택 |
+| `--from-stage NAME` | 선택 Stage와 DAG descendant 실행 |
+| `--to-stage NAME` | 선택 Stage와 필요한 ancestor 실행 |
+| `--force-stage NAME` | 지정 Stage의 cache 무시. 여러 번 지정 가능 |
+| `--force` | 현재 plan의 모든 Stage cache 무시 |
+| `--run-id ID` | 같은 manifest를 재개할 논리 run ID |
+| `--dry-run` | Stage plan·boundary·force 대상을 JSON으로 출력하고 종료 |
+| `--whisper-model MODEL` | faster-whisper 모델. 기본값은 `base` |
+| `--language CODE` | STT 언어 고정. 생략하면 자동 감지 |
+| `--scene-threshold N` | 씬 변화 임계값. 낮을수록 민감 |
+| `--preflight-only` | 모델을 로드하지 않고 실행 환경만 검사 |
+
+`--stage`는 `--from-stage` 또는 `--to-stage`와 함께 사용할 수 없다. 부분 실행은 같은 run의
+이전 manifest에 필요한 boundary artifact가 있고 현재 영상 checksum과 일치할 때만 허용된다.
+처음 실행하는 output이라면 전체 실행 또는 필요한 상위 단계를 포함한 `--to-stage`부터 수행한다.
+
+현재 `--dry-run`은 cache hit/miss를 추측하지 않고 `evaluated_at_runtime`으로 표시한다. Stage별
+cache decision과 stable miss reason 출력은 다음 Phase 3 작업이다.
+
+## 11단계 파이프라인
+
+| 단계 | 처리 | 주요 출력 |
+|---|---|---|
+| `01_probe` | ffprobe 메타데이터 추출 | `metadata.json` |
+| `02_scenes` | PySceneDetect 씬 경계 검출 | `scenes.json`, `scene_stats.csv` |
+| `03_keyframes` | 씬별 중앙 키프레임 추출 | `keyframes.json`, `frames/*.jpg`, `keyframe_images.zip` |
+| `04_audio` | 오디오 디먹싱·16kHz mono 정규화 | `audio.json`, `audio_16k.wav` |
+| `05_vad` | Silero VAD 음성 구간 검출 | `vad_segments.json` |
+| `06_stt` | VAD 구간만 faster-whisper 전사 | `transcript.json` |
+| `07_diarize` | pyannote 화자 분리 | `diarization.json` |
+| `08_captions` | BLIP 키프레임 캡셔닝 | `captions.json` |
+| `09_timeline` | 씬·전사·화자·캡션을 공통 시간축으로 병합 | `timeline.json`, `timeline.md` |
+| `10_index` | SQLite FTS5 + embedding 검색 인덱스 | `index.db`, `index_summary.json` |
+| `11_context` | LLM 입력 컨텍스트 최종본 조립 | `context.md`, `context.json` |
+
+의존 관계와 상세 처리 규칙은 [docs/05-pipeline.md](docs/05-pipeline.md)에 정리되어 있다.
+
+## Cache와 재개
+
+완료 여부는 대표 파일의 존재만으로 판단하지 않는다. Engine은 다음 항목을 cache semantics로
+사용하고 Artifact Store가 입력과 출력의 크기·SHA-256을 검증한다.
+
+- Stage 이름과 version
+- 입력 artifact의 종류, media type, 크기와 checksum
+- 해당 Stage 설정
+- 요청한 model binding
+- 이전 실행의 effective provider·model·revision·runtime
+- 모든 선언된 output의 존재와 integrity
+
+| 상황 | 동작 |
+|---|---|
+| 같은 local run, 검증된 비모델 Stage | cache hit 가능 |
+| effective model fingerprint를 실행 전에 확정할 수 없음 | 안전한 cache miss 후 재실행 |
+| 이전 결과가 `skipped` | 조건 재평가를 위해 재실행 |
+| 입력·설정·binding·Stage version 변경 | 관련 Stage cache miss |
+| output 누락·변조 | cache miss |
+| `--force-stage` / `--force` | 지정 범위 강제 실행 |
+
+현재 cache 후보 조회 범위는 같은 `run_id`다. 다른 run의 동일 artifact를 재사용하는 global cache
+index는 아직 구현되지 않았다.
+
+## 출력과 Manifest
+
+```text
 output/<video_stem>/
-├── 00_input/                  # cache integrity용 입력 영상 copy
-├── 01_probe/ … 11_context/    # 단계별 개별 산출물 (위 표 참고)
-├── _manifests/                # run/stage 상태, cache key와 ArtifactRef
-├── logs/run_<run_id>.log      # 상세 로그 (DEBUG, 프레임/세그먼트 단위)
-└── run_summary.json           # CLI 호환 단계별 상태·metrics view
+├── 00_input/                   # cache integrity 검증용 입력 영상 copy
+├── 01_probe/ … 11_context/     # 기존 단계별 산출물
+├── _manifests/                 # run/stage manifest, cache key, ArtifactRef
+├── _pending/                   # 원자적 publish 전 비공개 임시 artifact
+├── logs/run_<run_id>.log       # 상세 실행 로그
+└── run_summary.json            # CLI 호환 상태·metrics 요약
 ```
 
-- 콘솔에는 INFO 로그(진행 상황·통계), 파일에는 DEBUG 로그(개별 씬/세그먼트/명령)가 기록된다.
-- cache는 파일 존재만 보지 않고 Stage version, 입력 checksum, 설정, model binding과 output
-  integrity를 검증한다. `--force-stage`로 한 단계만, `--force`로 계획된 모든 단계를 강제한다.
-- 부분 실행은 같은 `run_id`의 검증된 이전 manifest가 필요하다. 기본 local run ID는 output
-  workspace에서 안정적으로 만들어지므로 같은 명령의 재개에 사용할 수 있다.
-- 현재 model Stage는 실행 전 effective revision을 안전하게 확정할 수 없으면 재실행한다.
-  run 간 global cache와 cache-aware dry-run은 후속 Phase 3 작업이다.
-- 사람이 결과를 빠르게 확인할 때는 `09_timeline/timeline.md` 를 본다.
-- **최종 산출물은 `11_context/context.md`** — 포맷 안내 전문(preamble) + 메타데이터 +
-  씬 목차 + 씬 카드 전문으로 구성된 자기완결 문서로, 그대로 LLM 프롬프트에 넣어
-  요약·질의응답·이벤트 분석에 사용한다. `context.json`은 동일 내용의 구조화 버전.
-- `08_captions/captions.json`에는 기존 캡션 구조와 함께 실제 `provider`, model `revision`,
-  `runtime`이 기록된다.
-- `06_stt/transcript.json`에도 실제 `provider`, model `revision`, `runtime`, 감지 언어 확률이
-  기록된다.
-- `07_diarize/diarization.json`에도 실제 `provider`, model `revision`, `runtime`이 기록된다.
-  `HF_TOKEN`은 Provider 설정으로만 사용되며 요청·산출물에 저장되지 않는다.
-- `05_vad/vad_segments.json`에도 실제 `model`, `provider`, ONNX asset SHA-256 `revision`,
-  `runtime`이 기록된다.
+- 사람이 빠르게 확인할 결과: `09_timeline/timeline.md`
+- LLM에 그대로 넣을 최종본: `11_context/context.md`
+- 프로그램에서 사용할 최종본: `11_context/context.json`
+- 검색 DB: `10_index/index.db`
 
-## 검색 + 컨텍스트 조립
+모델 Stage JSON에는 실제 `provider`, `model`, `revision`, `runtime`이 기록된다. manifest에는
+StageTask 입력·설정·binding, StageResult 출력·상태·사유·metrics와 cache key가 기록된다.
+`run_summary.json`은 기존 소비자를 위한 view이며 상세 상태의 원본은 `_manifests/`다.
 
-전처리가 끝난 영상에 대해 하이브리드 검색(FTS5 키워드 + 임베딩 의미, RRF 융합)으로
-관련 씬을 찾고 LLM 입력 컨텍스트를 조립해 출력한다 (LLM 호출은 하지 않음):
+## 검색과 컨텍스트 조립
+
+`query.py`는 SQLite FTS5 키워드 순위와 multilingual embedding cosine 순위를 RRF로 결합한다.
+상위 씬 카드와 전체 씬 목차를 조립해 stdout으로 출력하며 LLM을 호출하지 않는다.
 
 ```bash
 .venv/bin/python src/query.py output/sample "음성 구간 검출 얘기는 어디서 해?" --topk 2
 ```
 
-- 검색 순위 근거(FTS bm25, 코사인 유사도, RRF 점수)는 `logs/query_<timestamp>.log`에 DEBUG로 기록된다.
-- 조립 구조: `영상 개요(씬 목차)` + `관련 씬 카드 원문` (최상위 씬을 맨 뒤에 배치해
-  lost-in-the-middle 완화).
+검색 순위 근거는 `logs/query_<timestamp>.log`에 DEBUG로 기록된다. 별도 query 프로세스는 현재
+embedding 모델을 매번 로드한다. cached Hugging Face 모델이 있어도 metadata HEAD 요청이 발생하는
+환경에서는 다음처럼 명시적인 offline 실행을 사용할 수 있다.
+
+```bash
+HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
+  .venv/bin/python src/query.py output/sample "음성 구간 검출" --topk 2
+```
+
+## 개발과 검증
+
+기본 테스트는 모델 weight를 다운로드하거나 network를 요구하지 않는다.
+
+```bash
+.venv/bin/python -m pytest
+```
+
+미디어·모델 통합 변경은 `samples/sample.mp4` 전체 실행과 query까지 별도로 검증한다.
+
+```bash
+HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
+  .venv/bin/python src/run_pipeline.py samples/sample.mp4 --force
+HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
+  .venv/bin/python src/query.py output/sample "음성 구간 검출" --topk 2
+```
+
+개발 문서:
+
+- [문서 안내](docs/README.md)
+- [현재 상태·검증 기록·다음 작업](docs/STATUS.md)
+- [목표 아키텍처](docs/06-target-architecture.md)
+- [실행·추론 계약](docs/07-execution-inference-contracts.md)
+- [개발 로드맵](docs/08-development-roadmap.md)
+- [Architecture Decision Records](docs/adr/)
 
 ## 테스트 영상 생성 (macOS)
 
