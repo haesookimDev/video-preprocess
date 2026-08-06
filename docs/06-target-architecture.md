@@ -182,7 +182,12 @@ flowchart LR
 검증하고 stable name 사전순 tie-break로 deterministic topological plan을 만든다. exact,
 from, to 선택과 plan 밖에서 필요한 `boundary_inputs` 규칙은
 [`ADR-0009`](./adr/0009-deterministic-stage-registry-and-dag-planner.md)에 기록한다. 기존 runner
-연결은 아직 하지 않았으며 다음 LocalExecutor slice에서 같은 plan을 소비한다.
+연결은 아직 하지 않았다.
+
+`LocalExecutor`는 injected Stage runner를 `StageTask`로 submit하고 단일 local execution slot에서
+순차 실행한다. async handle, idempotency, 결과 identity와 취소 경계는
+[`ADR-0010`](./adr/0010-async-sequential-local-executor.md)에 기록한다. Planner를 소비하는
+PipelineEngine과 legacy Stage binding은 아직 구현되지 않았다.
 
 ## 8. 설정과 모델 binding
 

@@ -13,8 +13,10 @@ Python Protocol, HTTP OpenAPI, 작업 큐 메시지는 모두 이 계약을 동�
 Artifact·Run Store Port와 로컬 구현은
 [`src/video_preprocess/storage/`](../src/video_preprocess/storage/)에 있고 저장 규칙은
 [`ADR-0003`](./adr/0003-local-artifact-and-manifest-storage.md)에 기록한다. Stage registry와
-DAG planner는 [`src/video_preprocess/engine/`](../src/video_preprocess/engine/)에 구현됐지만
-Executor와 HTTP Provider 계약은 아직 설계 상태이며 구현 완료로 간주하지 않는다. Inference
+DAG planner는 [`src/video_preprocess/engine/`](../src/video_preprocess/engine/)에 구현됐다.
+Executor Port와 LocalExecutor는
+[`src/video_preprocess/executors/`](../src/video_preprocess/executors/)에 구현됐지만
+PipelineEngine과 HTTP Provider는 아직 설계 상태이며 구현 완료로 간주하지 않는다. Inference
 공통 계약,
 Gateway, `LocalEmbeddingProvider`, `LocalCaptionProvider`, `LocalSTTProvider`,
 `LocalDiarizationProvider`와 `LocalVADProvider`는
@@ -247,10 +249,21 @@ class Executor(Protocol):
 
 ### 5.1 LocalExecutor
 
-- 초기 버전은 현재 프로세스 또는 제한된 worker pool을 사용한다.
-- Stage Runner에 의존 서비스를 주입한다.
-- ML 모델 인스턴스를 직접 관리하지 않는다.
-- Stage별 timeout과 cancellation token을 전달한다.
+현재 구현은 다음 규칙을 사용한다.
+
+- `StageBindingRegistry`로 stable Stage name에 sync/async runner callable을 주입한다.
+- `submit`은 `queued` handle을 즉시 반환하고 한 async lock으로 current process에서 순차 실행한다.
+- sync runner는 `asyncio.to_thread`, async runner는 현재 event loop에서 실행한다.
+- 동일 idempotency key·동일 task는 같은 handle을 반환하고 다른 task면 충돌로 거부한다.
+- runner exception, non-StageResult, run/stage/attempt mismatch는 stable reason code를 가진
+  `failed` StageResult로 정규화한다.
+- queued cancel은 runner를 호출하지 않는다. running cancel은 실제 호출을 강제 중단하지 않고
+  반환된 결과를 폐기해 `cancelled`로 완료한다.
+- ML 모델 인스턴스, Stage 순서와 retry 정책은 관리하지 않는다.
+
+현재 handle/job은 in-memory이며 같은 service event loop lifecycle에서 사용한다. Stage별 timeout,
+cancellation token과 persisted status는 PipelineEngine 후속 slice다. 결정 근거는
+[`ADR-0010`](./adr/0010-async-sequential-local-executor.md)에 기록한다.
 
 ### 5.2 RemoteExecutor
 

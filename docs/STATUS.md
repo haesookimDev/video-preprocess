@@ -2,7 +2,7 @@
 
 - 마지막 갱신: **2026-08-06**
 - 현재 단계: **Phase 3 — Pipeline Engine과 LocalExecutor**
-- 다음 작업: **Executor Port와 순차 LocalExecutor**
+- 다음 작업: **PipelineEngine 순차 orchestration과 상태 머신**
 
 이 문서는 개발 진행 상황의 단일 진입점이다. 새로운 세션은 이 문서를 먼저 읽고, 실제 코드와
 Git 상태를 확인한 뒤 작업을 시작한다.
@@ -19,11 +19,12 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - `src/video_preprocess/domain/`: 버전이 있는 Artifact·Stage 공개 계약
 - `src/video_preprocess/storage/`: Artifact·Run Store Port와 로컬 구현
 - `src/video_preprocess/engine/`: 11개 Stage registry와 deterministic DAG planner
+- `src/video_preprocess/executors/`: async Executor Port, Stage binding과 순차 LocalExecutor
 - 로컬 파일 존재 여부를 기준으로 단계 스킵
 - VAD, STT, diarization, caption과 embedding이 `InferenceGateway`와 Local Provider로 실행
 - 모든 모델 Stage에서 구체 ML library import와 model lifecycle 제거 완료
 - Registry/planner는 구현됐지만 기존 runner에 아직 연결되지 않음
-- Pipeline 상태 머신, Executor Port, HTTP provider는 아직 구현되지 않음
+- Pipeline 상태 머신, legacy Stage binding, HTTP provider는 아직 구현되지 않음
 - Local Store는 구현됐고 model Stage compatibility adapter에서 media 등록에 사용하며,
   전체 runner 연결은 Engine 전환 시점까지 보류
 
@@ -58,6 +59,8 @@ Git 상태를 확인한 뒤 작업을 시작한다.
   [`ADR-0008`](./adr/0008-audio-artifact-local-vad-provider.md)
 - deterministic Stage registry·DAG 결정:
   [`ADR-0009`](./adr/0009-deterministic-stage-registry-and-dag-planner.md)
+- async 순차 LocalExecutor 결정:
+  [`ADR-0010`](./adr/0010-async-sequential-local-executor.md)
 
 ## 3. 완료된 작업
 
@@ -91,6 +94,7 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - [x] audio ArtifactRef와 local diarization provider·s07 adapter
 - [x] audio ArtifactRef와 local VAD provider·s05 adapter
 - [x] 11개 Stage registry와 deterministic DAG planner
+- [x] Executor Port와 순차 LocalExecutor
 
 ## 4. 아직 구현되지 않은 작업
 
@@ -105,7 +109,8 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - [x] Local diarization Provider
 - [x] Local VAD Provider
 - [x] Stage registry와 DAG planner
-- [ ] PipelineEngine과 LocalExecutor
+- [x] 순차 LocalExecutor
+- [ ] PipelineEngine
 - [ ] manifest 기반 cache
 - [ ] HTTPInferenceProvider와 모델 서버 계약 구현
 - [ ] Application Service와 API adapter
@@ -116,20 +121,21 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 문서가 존재한다고 구현된 것으로 간주하지 않는다. 완료 여부는 코드와 자동 테스트를 기준으로
 이 체크리스트에서 갱신한다.
 
-## 5. 다음 작업: Executor Port와 순차 LocalExecutor slice
+## 5. 다음 작업: PipelineEngine 순차 orchestration과 상태 머신 slice
 
 권장 순서:
 
-1. `StageTask`를 제출·상태 조회·결과 회수·취소하는 Executor Port의 최소 async 계약 확정
-2. stable Stage name → 실행 callable binding을 별도 registry로 구성
-3. worker pool 없이 현재 프로세스에서 한 task씩 실행하는 순차 `LocalExecutor` 구현
-4. unknown Stage, duplicate submission, result type·ID mismatch와 예외를 정규화
-5. fake Stage runner로 submit/status/result/cancel과 idempotency contract test 작성
-6. legacy `run(ctx)` Stage 연결은 다음 compatibility adapter slice로 분리
+1. `ExecutionPlan`과 boundary input ArtifactRef를 받아 StageTask를 순서대로 생성하는
+   `PipelineEngine` 구현
+2. run/stage 상태를 `pending → queued → running → terminal`로 전이하고 잘못된 전이 거부
+3. stage별 config/model binding을 명시적으로 주입하고 required input을 logical key로 resolve
+4. 성공 output을 다음 Stage input map에 합치고 failed/cancelled에서 후속 제출 중단
+5. fake Executor·ArtifactRef로 전체/부분 plan, skip/fail/cancel과 input 전달 contract test 작성
+6. RunStore manifest write와 cache 판정은 다음 slice로 분리
 
-Registry/planner는 11개 DAG, logical artifact owner, cycle·누락 input 검증과 exact/from/to
-selection을 구현했다. LocalExecutor는 이 plan을 변경하지 않고 `StageTask` 실행 위치만
-소유해야 한다.
+LocalExecutor는 실행 위치와 runner lifecycle만 소유하며 plan 순서, dependency artifact 조립과
+run 중단 정책은 다음 PipelineEngine이 소유한다. legacy `run(ctx)` binding은 Engine contract가
+고정된 뒤 연결한다.
 
 ## 6. 알려진 중요 문제
 
@@ -150,7 +156,7 @@ selection을 구현했다. LocalExecutor는 이 plan을 변경하지 않고 `Sta
 
 ## 7. 기존 검증 기준선
 
-2026-08-06 Phase 0~Phase 3 registry/planner 점검 결과:
+2026-08-06 Phase 0~Phase 3 LocalExecutor 점검 결과:
 
 - 깨끗한 Python 3.13 임시 venv에 `requirements-dev.txt` 설치 성공
 - embedding slice 당시 기존 `.venv`와 깨끗한 venv에서 전체 테스트 85개 성공
@@ -159,6 +165,9 @@ selection을 구현했다. LocalExecutor는 이 plan을 변경하지 않고 `Sta
 - diarization slice 기본 테스트 124개 성공
 - VAD slice 기본 테스트 135개 성공
 - registry/planner slice 기본 테스트 157개 성공
+- LocalExecutor slice 기본 테스트 177개 성공
+- concurrent submit 직렬화, sync/async runner, idempotent handle, queued/running cancel,
+  exception·result type·identity 정규화 contract 확인
 - default 11개 DAG가 기존 01~11 순서이며 cycle·unknown dependency·duplicate output·누락
   producer와 exact/from/to/boundary input contract 확인
 - VAD asset revision
@@ -205,6 +214,18 @@ selection을 구현했다. LocalExecutor는 이 plan을 변경하지 않고 `Sta
 
 최신 기록을 위에 추가한다. 긴 구현 설명은 PR이나 ADR에 두고 여기에는 다음 세션이 재개하는 데
 필요한 정보만 적는다.
+
+### 2026-08-06 — Phase 3 Executor Port와 순차 LocalExecutor
+
+- 목표: Stage 실행 위치를 Engine에서 분리하고 local/remote가 공유할 async lifecycle 고정
+- 완료: `ExecutionHandle`·`ExecutionStatus`·`Executor` Port, `StageBindingRegistry`,
+  single-slot `LocalExecutor` 구현
+- 주요 결정: submit 즉시 queued handle, sync runner는 thread, async runner는 await, 동일 task
+  idempotency, exception/invalid result 정규화, 강제 thread 종료 없는 cancel; ADR-0010
+- 검증: 기본 pytest 177개 통과; 동시 submit 순차성, terminal state mapping, sync/async,
+  duplicate/idempotency 충돌, queued/running cancel, unknown binding/handle과 identity 검증
+- 호환성: 기존 runner/CLI와 legacy Stage는 연결하지 않아 실제 pipeline 동작 변경 없음
+- 다음 작업: fake Executor를 사용하는 PipelineEngine 순차 orchestration과 상태 머신
 
 ### 2026-08-06 — Phase 3 Stage registry와 DAG planner
 
