@@ -235,6 +235,10 @@ credential을 Provider 설정으로 주입하고, `s07_diarize`는 WAV ArtifactR
 speaker turn·gate 오류와 비밀값 경계는
 [`ADR-0007`](./adr/0007-audio-artifact-local-diarization-provider.md)에 기록한다.
 
+`vad.default`는 `LocalVADProvider`에 연결되어 있다. `s05_vad`는 16kHz WAV ArtifactRef와
+silence/padding option을 전달하며 decode와 Silero ONNX lifecycle은 Provider가 맡는다. 내장
+모델 revision 규칙은 [`ADR-0008`](./adr/0008-audio-artifact-local-vad-provider.md)에 기록한다.
+
 ## 9. 산출물 저장 전략
 
 Stage 사이에는 실제 파일 경로가 아니라 `ArtifactRef`를 전달한다.

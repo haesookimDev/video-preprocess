@@ -7,6 +7,7 @@ from video_preprocess.inference.local import (
     create_local_caption_service,
     create_local_diarization_service,
     create_local_stt_service,
+    create_local_vad_service,
 )
 from video_preprocess.storage import LocalArtifactStore, LegacyOutputAdapter
 
@@ -21,14 +22,15 @@ def configure_local_inference(ctx: PipelineContext) -> None:
         ctx.caption_service,
         ctx.stt_service,
         ctx.diarization_service,
+        ctx.vad_service,
         ctx.artifact_registrar,
     )
     if all(dependency is not None for dependency in dependencies):
         return
     if any(dependency is not None for dependency in dependencies):
         raise ValueError(
-            "caption_service, stt_service, diarization_service, and "
-            "artifact_registrar "
+            "caption_service, stt_service, diarization_service, vad_service, "
+            "and artifact_registrar "
             "must be configured together"
         )
 
@@ -54,3 +56,4 @@ def configure_local_inference(ctx: PipelineContext) -> None:
         artifact_store,
         token=load_hf_token(project_root),
     )
+    ctx.vad_service = create_local_vad_service(artifact_store)

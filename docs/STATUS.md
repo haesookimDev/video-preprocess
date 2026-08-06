@@ -1,8 +1,8 @@
 # 개발 상태와 세션 인수인계
 
 - 마지막 갱신: **2026-08-06**
-- 현재 단계: **Phase 2 — Local Inference Provider**
-- 다음 작업: **VAD LocalInferenceProvider와 s05 adapter**
+- 현재 단계: **Phase 3 — Pipeline Engine과 LocalExecutor**
+- 다음 작업: **stage registry와 DAG planner**
 
 이 문서는 개발 진행 상황의 단일 진입점이다. 새로운 세션은 이 문서를 먼저 읽고, 실제 코드와
 Git 상태를 확인한 뒤 작업을 시작한다.
@@ -19,10 +19,10 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - `src/video_preprocess/domain/`: 버전이 있는 Artifact·Stage 공개 계약
 - `src/video_preprocess/storage/`: Artifact·Run Store Port와 로컬 구현
 - 로컬 파일 존재 여부를 기준으로 단계 스킵
-- VAD 단계가 faster-whisper의 Silero 함수를 직접 호출
-- embedding, caption, STT와 diarization은 `InferenceGateway`와 각 Local Provider를 통해 실행
-- VAD Local provider, HTTP provider, Executor Port는 아직 구현되지 않음
-- Local Store는 구현됐고 caption/STT/diarization compatibility adapter에서 media 등록에 사용하며,
+- VAD, STT, diarization, caption과 embedding이 `InferenceGateway`와 Local Provider로 실행
+- 모든 모델 Stage에서 구체 ML library import와 model lifecycle 제거 완료
+- Pipeline Engine, Executor Port, HTTP provider는 아직 구현되지 않음
+- Local Store는 구현됐고 model Stage compatibility adapter에서 media 등록에 사용하며,
   전체 runner 연결은 Engine 전환 시점까지 보류
 
 기존 샘플 산출물은 `output/` 아래에 있으나 생성물이며 Git에 커밋하지 않는다.
@@ -52,6 +52,8 @@ Git 상태를 확인한 뒤 작업을 시작한다.
   [`ADR-0006`](./adr/0006-audio-artifact-local-stt-provider.md)
 - diarization audio ArtifactRef·credential 결정:
   [`ADR-0007`](./adr/0007-audio-artifact-local-diarization-provider.md)
+- VAD audio ArtifactRef·option 결정:
+  [`ADR-0008`](./adr/0008-audio-artifact-local-vad-provider.md)
 
 ## 3. 완료된 작업
 
@@ -83,6 +85,7 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - [x] ArtifactRef batch와 local caption provider·s08 adapter
 - [x] audio ArtifactRef와 local STT provider·s06 adapter
 - [x] audio ArtifactRef와 local diarization provider·s07 adapter
+- [x] audio ArtifactRef와 local VAD provider·s05 adapter
 
 ## 4. 아직 구현되지 않은 작업
 
@@ -95,7 +98,7 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - [x] LocalCaptionProvider
 - [x] LocalSTTProvider
 - [x] Local diarization Provider
-- [ ] Local VAD Provider
+- [x] Local VAD Provider
 - [ ] PipelineEngine과 LocalExecutor
 - [ ] manifest 기반 cache
 - [ ] HTTPInferenceProvider와 모델 서버 계약 구현
@@ -107,21 +110,20 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 문서가 존재한다고 구현된 것으로 간주하지 않는다. 완료 여부는 코드와 자동 테스트를 기준으로
 이 체크리스트에서 갱신한다.
 
-## 5. 다음 작업: Local VAD provider slice
+## 5. 다음 작업: Stage registry와 DAG planner slice
 
 권장 순서:
 
-1. `voice_activity_detection`의 audio ArtifactRef, option과 speech segment 출력 규칙 확정
-2. faster-whisper decode와 Silero 함수를 lazy하게 캡슐화하는 `LocalVADProvider` 구현
-3. fake decoder/detector로 시간 변환·option·artifact 오류·model 재사용 contract test 작성
-4. `s05_vad`에서 faster-whisper 직접 import와 audio decode 제거
-5. 기존 WAV ArtifactRef registrar와 `vad.default` binding을 composition root에 추가
-6. sample 3개 segment·speech ratio와 기존 `vad_segments.json` 호환 검증
+1. 현재 11개 Stage의 stable ID, version, logical input/output key를 명시한 registry 구현
+2. registry에서 dependency DAG를 만들고 deterministic topological order를 계산
+3. duplicate ID/output, unknown dependency와 dependency cycle을 실행 전에 거부
+4. 전체·`--stage`·`--from-stage`·`--to-stage` 선택을 위한 순수 plan API 구현
+5. ML·FFmpeg 없이 registry/planner contract test 작성
+6. 기존 runner에는 아직 연결하지 않고 다음 LocalExecutor slice의 입력으로 고정
 
-Diarization은 WAV ArtifactRef만 전달하며 credential은 composition root가 Provider 설정으로
-주입한다. `s07_diarize`는 pyannote/Hugging Face를 import하지 않고 기존 credential·gate skip
-정책을 유지한다. VAD까지 Provider로 이동하면 Phase 2의 모든 모델 Stage에서 구체 ML import가
-제거된다.
+Phase 2는 모든 현재 모델 task를 Local Provider로 이동하고 sample 회귀를 통과해 완료했다.
+Phase 3 첫 slice는 실행을 바꾸기 전에 DAG와 선택 규칙을 순수 domain/application 코드로
+고정한다.
 
 ## 6. 알려진 중요 문제
 
@@ -142,13 +144,19 @@ Diarization은 WAV ArtifactRef만 전달하며 credential은 composition root가
 
 ## 7. 기존 검증 기준선
 
-2026-08-06 Phase 0~Phase 2 diarization slice 점검 결과:
+2026-08-06 Phase 0~Phase 2 완료 점검 결과:
 
 - 깨끗한 Python 3.13 임시 venv에 `requirements-dev.txt` 설치 성공
 - embedding slice 당시 기존 `.venv`와 깨끗한 venv에서 전체 테스트 85개 성공
 - caption slice 기본 테스트 97개 성공
 - STT slice 기본 테스트 108개 성공
 - diarization slice 기본 테스트 124개 성공
+- VAD slice 기본 테스트 135개 성공
+- VAD asset revision
+  `sha256:4cbf549b8326f60f80f2536d9eefeb450a9abe83365a098031c89719f1be17d2` 기록
+- `sample.mp4 --force` 오프라인 캐시 실행 `ok`(29.4초), 기존 VAD 3개·14.8초·0.493과
+  downstream STT 3개 확인
+- VAD slice 이후 query `음성 구간 검출 --topk 2`도 씬 02를 최상위로 반환
 - `sample.mp4 --force` 오프라인 캐시 실행 `ok`(28.2초), diarization 화자 1명·턴 3개와
   resolved commit `3533c8cf8e369892e6b79ff1bf80f7b0286a54ee`, downstream 산출물 확인
 - diarization slice 이후 query `음성 구간 검출 --topk 2`도 씬 02를 최상위로 반환
@@ -188,6 +196,22 @@ Diarization은 WAV ArtifactRef만 전달하며 credential은 composition root가
 
 최신 기록을 위에 추가한다. 긴 구현 설명은 PR이나 ADR에 두고 여기에는 다음 세션이 재개하는 데
 필요한 정보만 적는다.
+
+### 2026-08-06 — Phase 2 local VAD provider / Phase 2 완료
+
+- 목표: WAV를 ArtifactRef로 전달하고 s05에서 faster-whisper decoder·Silero lifecycle 제거
+- 완료: `SpeechSegment`·`VADBatch`·`VADService`, `LocalVADProvider`, runner composition과
+  s05 compatibility adapter 구현
+- 주요 결정: `vad.default`, 단일 16kHz WAV artifact, portable silence/padding option,
+  내장 ONNX content hash revision; ADR-0008
+- 검증: 기본 pytest 135개 통과; fake backend로 sample→time 정규화·option·1회 load·
+  idempotency·artifact/model/decode/inference 오류·warmup 검증; 실제 sample 기존 VAD 3개,
+  14.8초, ratio 0.493 재현; 전체 11단계 `ok`(29.4초), query top-1 씬 02 확인
+- 호환성: 기존 has_audio/duration/ratio/options/segments와 no-audio skip 구조를 유지하고
+  model/provider/revision/runtime만 additive하게 추가
+- Phase 결과: VAD·STT·diarization·caption·embedding의 model lifecycle이 모두 Local Provider로
+  이동했고 Stage는 구체 ML library를 import하지 않음
+- 다음 작업: Phase 3 stage registry와 deterministic DAG planner
 
 ### 2026-08-06 — Phase 2 local diarization provider
 

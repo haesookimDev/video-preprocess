@@ -12,6 +12,7 @@ if TYPE_CHECKING:
         CaptionService,
         DiarizationService,
         STTService,
+        VADService,
     )
     from video_preprocess.storage import LegacyArtifactRegistrar
 
@@ -44,6 +45,10 @@ class PipelineContext:
         repr=False,
     )
     diarization_service: DiarizationService | None = field(
+        default=None,
+        repr=False,
+    )
+    vad_service: VADService | None = field(
         default=None,
         repr=False,
     )

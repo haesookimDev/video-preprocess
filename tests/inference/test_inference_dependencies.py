@@ -176,3 +176,41 @@ def test_pyannote_and_hub_imports_are_lazy_in_diarization_provider() -> None:
     assert "huggingface_hub" not in top_level_roots
     assert "pyannote" in _imported_roots(provider_path)
     assert "huggingface_hub" in _imported_roots(provider_path)
+
+
+def test_vad_stage_does_not_import_faster_whisper() -> None:
+    stage_path = (
+        PROJECT_ROOT
+        / "src"
+        / "pipeline"
+        / "stages"
+        / "s05_vad.py"
+    )
+
+    assert "faster_whisper" not in _imported_roots(stage_path)
+
+
+def test_faster_whisper_imports_are_lazy_in_vad_provider() -> None:
+    provider_path = (
+        PROJECT_ROOT
+        / "src"
+        / "video_preprocess"
+        / "inference"
+        / "local"
+        / "vad.py"
+    )
+    tree = ast.parse(
+        provider_path.read_text(encoding="utf-8"),
+        filename=str(provider_path),
+    )
+    top_level_roots = set()
+    for node in tree.body:
+        if isinstance(node, ast.Import):
+            top_level_roots.update(
+                alias.name.split(".", 1)[0] for alias in node.names
+            )
+        elif isinstance(node, ast.ImportFrom) and node.level == 0:
+            top_level_roots.add((node.module or "").split(".", 1)[0])
+
+    assert "faster_whisper" not in top_level_roots
+    assert "faster_whisper" in _imported_roots(provider_path)

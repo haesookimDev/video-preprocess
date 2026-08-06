@@ -7,6 +7,7 @@ from .errors import InferenceCallError, ProviderConfigurationError
 from .gateway import InferenceGateway
 from .provider import InferenceProvider
 from .stt import SpeechChunk, STTService, TranscriptSegment, TranscriptionBatch
+from .vad import SpeechSegment, VADBatch, VADService
 
 __all__ = [
     "CaptionBatch",
@@ -21,7 +22,10 @@ __all__ = [
     "ProviderConfigurationError",
     "SpeakerTurn",
     "SpeechChunk",
+    "SpeechSegment",
     "STTService",
     "TranscriptSegment",
     "TranscriptionBatch",
+    "VADBatch",
+    "VADService",
 ]

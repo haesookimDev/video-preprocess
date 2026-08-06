@@ -62,7 +62,7 @@ flowchart TD
 | 02_scenes | 인접 프레임 간 HSV 색상 변화량이 임계값(27.0)을 넘으면 씬 경계로 판정. 프레임별 통계를 CSV로 저장해 임계값 튜닝 지원 | PySceneDetect `ContentDetector` | 0.9s |
 | 03_keyframes | 씬 중앙 타임스탬프로 입력 시크 후 1프레임만 디코딩 (전체 디코딩 회피) | ffmpeg `-ss` | 0.3s |
 | 04_audio | 오디오 트랙 분리 후 모든 음성 모델의 공통 입력인 16kHz mono PCM으로 정규화 | ffmpeg | 0.1s |
-| 05_vad | 프레임 단위 음성 확률 계산 → 발화 구간만 추출. 무음 구간을 STT에서 제외해 시간 절약 + Whisper 무음 환각 방지 | Silero VAD (ONNX, faster-whisper 내장) | 0.1s |
+| 05_vad | WAV ArtifactRef와 silence/padding option을 VAD Provider에 전달. 음성 구간만 추출해 Whisper 무음 환각 방지 | Local Silero VAD Provider (faster-whisper 내장 ONNX) | 0.1s (+ 첫 session load) |
 | 06_stt | 인접 VAD 구간 병합(gap ≤ 0.5s) 후 WAV ArtifactRef와 구간을 STT Provider에 전달. Provider가 원본 시간축으로 보정 | Local faster-whisper Provider `base`(기본)/`small` (CTranslate2 int8) | 5.6s / 13.9s |
 | 07_diarize | WAV ArtifactRef를 Diarization Provider에 전달. Provider가 화자 임베딩·클러스터링 후 발화 턴별 라벨 반환 | Local pyannote Provider `speaker-diarization-community-1` (HF 게이트) | 27.9s |
 | 08_captions | keyframe ArtifactRef batch를 VLM Provider에 입력해 캡션 생성. 이미지(수백~수천 토큰)를 텍스트(수십 토큰)로 압축 | Local BLIP Provider `image-captioning-base` | 3.0s |
@@ -88,3 +88,6 @@ flowchart TD
 `07_diarize/diarization.json`은 기존 speaker·turn 구조를 유지하며 실제 `provider`, model
 `revision`, `runtime`을 추가로 기록한다. HF token은 Provider 설정에만 존재하며 산출물이나
 추론 요청에 포함되지 않는다.
+
+`05_vad/vad_segments.json`은 기존 duration·ratio·option·segment 구조를 유지하며 실제
+`model`, `provider`, ONNX asset SHA-256 `revision`, `runtime`을 추가로 기록한다.
