@@ -2,7 +2,7 @@
 
 - 마지막 갱신: **2026-08-06**
 - 현재 단계: **Phase 3 — Pipeline Engine과 LocalExecutor**
-- 다음 작업: **Application Service composition root와 Engine CLI 전환**
+- 다음 작업: **Engine CLI adapter와 선택 실행·dry-run**
 
 이 문서는 개발 진행 상황의 단일 진입점이다. 새로운 세션은 이 문서를 먼저 읽고, 실제 코드와
 Git 상태를 확인한 뒤 작업을 시작한다.
@@ -21,6 +21,7 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - `src/video_preprocess/engine/`: planner, PipelineEngine, manifest cache와 RunStore journal
 - `src/video_preprocess/executors/`: async Executor Port, Stage binding과 순차 LocalExecutor
 - `src/video_preprocess/adapters/`: legacy 01~11 StageTask compatibility binding
+- `src/video_preprocess/services/`: pipeline Application Service와 local composition root
 - 로컬 파일 존재 여부를 기준으로 단계 스킵
 - VAD, STT, diarization, caption과 embedding이 `InferenceGateway`와 Local Provider로 실행
 - 모든 모델 Stage에서 구체 ML library import와 model lifecycle 제거 완료
@@ -74,6 +75,8 @@ Git 상태를 확인한 뒤 작업을 시작한다.
   [`ADR-0015`](./adr/0015-legacy-model-stage-bindings-and-sidecar-restore.md)
 - legacy final Stage와 전체 pipeline binding 결정:
   [`ADR-0016`](./adr/0016-legacy-final-stage-and-pipeline-bindings.md)
+- Application Service와 local runtime composition 결정:
+  [`ADR-0017`](./adr/0017-pipeline-application-service-and-local-runtime.md)
 
 ## 3. 완료된 작업
 
@@ -114,6 +117,7 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - [x] legacy 01 probe~04 audio StageTask binding
 - [x] legacy 05 VAD~08 caption StageTask/model result binding
 - [x] legacy 09 timeline~11 context/index StageTask binding과 11단계 composition
+- [x] pipeline Application Service와 local Engine/Store/inference composition root
 
 ## 4. 아직 구현되지 않은 작업
 
@@ -137,7 +141,8 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - [x] legacy 09~11 Engine/LocalExecutor compatibility path
 - [ ] global cache index와 run 간 cache 재사용
 - [ ] HTTPInferenceProvider와 모델 서버 계약 구현
-- [ ] Application Service와 API adapter
+- [x] Pipeline Application Service와 local runtime factory
+- [ ] API adapter
 - [ ] 타임라인 경계 정합성 개선
 - [ ] 한국어 검색과 평가 체계
 - [ ] 실제 token budget
@@ -149,11 +154,11 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 
 권장 순서:
 
-1. Application Service가 video input 검증·run ID·output root와 Local Store를 소유
-2. local inference service, 11-stage binding, LocalExecutor와 PipelineEngine을 한 composition root에서 조립
-3. 기존 CLI 옵션을 service request로 변환하고 `--stage`, `--from-stage`, `--to-stage`를 planner에 연결
-4. `--force-stage`와 manifest cache evaluator를 연결하고 기존 `--force` 호환 정책 확정
-5. `--dry-run`에서 plan, boundary input, 예상 cache decision을 실행 없이 출력
+1. 기존 CLI 옵션을 service request로 변환하고 `--stage`, `--from-stage`, `--to-stage`를 planner에 연결
+2. `--run-id`로 같은 run 재개와 부분 실행 boundary 복구를 제공
+3. `--force-stage`와 manifest cache evaluator를 연결하고 기존 `--force` 호환 정책 확정
+4. `--dry-run`에서 plan, boundary input, 예상 cache decision을 실행 없이 출력
+5. 기존 `run_summary.json` 사용자 호환 view를 Application result에서 생성
 6. 실제 `samples/sample.mp4`를 새 기본 Engine 경로로 실행하고 JSON/Markdown/DB/query 동등성 확인
 
 이 slice가 끝나면 기존 `pipeline.runner`는 명시적 compatibility 진입점으로 남기고 기본 CLI는
@@ -204,6 +209,9 @@ Application Service를 사용한다. API adapter도 같은 service request/resul
   embedding `ModelExecution`, companion output 누락과 metadata 오류 거부 확인
 - 단일 shared binding registry와 LocalExecutor로 fake 11단계 default DAG 전체 성공 및 생성 artifact
   integrity 확인
+- Application Service/local runtime slice 기본 테스트 248개 성공
+- exact stage 설정·binding 필터, ID 생성, boundary 누락 오류, 입력 video 원자적 등록,
+  11-stage local composition과 부분 실행의 이전 manifest 요구 확인
 - running/stage/terminal 저장 순서, same-run cache resume, cached lifecycle, effective model miss,
   force/config invalidation, failed/cancelled persistence와 실제 Local Store 재시작 확인
 - run-local identity 제외 cache key, 입력/설정/Stage/model 변화, effective model resolution,
@@ -258,6 +266,18 @@ Application Service를 사용한다. API adapter도 같은 service request/resul
 
 최신 기록을 위에 추가한다. 긴 구현 설명은 PR이나 ADR에 두고 여기에는 다음 세션이 재개하는 데
 필요한 정보만 적는다.
+
+### 2026-08-06 — Phase 3 Pipeline Application Service와 local runtime
+
+- 목표: CLI/API가 공유할 실행 유스케이스와 로컬 배포 composition을 Engine 앞에 추가
+- 완료: typed settings/request, plan·ID·boundary 검증 Application Service, video ingest,
+  Local Store/RunStore/cache/Executor/11-stage binding/inference composition factory 구현
+- 주요 결정: 부분 실행은 같은 run manifest의 검증된 boundary output만 복구하고 video checksum이
+  달라지면 거부; input copy는 `00_input/`에 저장; ADR-0017
+- 검증: 기본 pytest 248개 통과; exact selection filtering, missing input, local ingest/composition,
+  이전 manifest 없는 partial run 거부 확인
+- 호환성: 기존 CLI는 아직 legacy runner를 사용하며 새 service는 다음 slice에서 기본 연결
+- 다음 작업: CLI adapter, run resume/선택/force/dry-run과 실제 sample 동등성
 
 ### 2026-08-06 — Phase 3 legacy 09~11 final Stage와 전체 composition
 

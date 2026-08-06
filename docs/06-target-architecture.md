@@ -202,6 +202,13 @@ deterministic bundle로 추적하고 timeline/context companion 문서와 index 
 [`ADR-0016`](./adr/0016-legacy-final-stage-and-pipeline-bindings.md)에 기록한다. global cache index와
 Application Service를 통한 기본 CLI 연결은 아직 구현되지 않았다.
 
+`PipelineApplicationService`는 adapter-neutral run request를 검증하고 planner 선택, run/trace ID,
+Stage config/model binding 필터와 boundary artifact 요구를 조정한다. `LocalPipelineRuntimeFactory`는
+입력 video를 local Artifact Store의 `00_input/`에 등록하고 Local Run Store, cache evaluator,
+LocalExecutor, 11-stage compatibility binding과 local inference service를 조립한다. 같은 run의 부분
+실행은 이전 manifest에서 integrity가 확인된 boundary output만 복구한다. 결정은
+[`ADR-0017`](./adr/0017-pipeline-application-service-and-local-runtime.md)에 기록한다.
+
 ## 8. 설정과 모델 binding
 
 파이프라인 알고리즘 설정과 모델 배포 설정을 분리한다.

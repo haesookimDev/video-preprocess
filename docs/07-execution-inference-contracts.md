@@ -307,6 +307,20 @@ code로 반환한다.
 전체 registry는 mutable legacy context 보호를 위해 하나의 실행 잠금을 공유한다. 상세 결정은
 [`ADR-0016`](./adr/0016-legacy-final-stage-and-pipeline-bindings.md)에 기록한다.
 
+### 4.7 Pipeline Application Service
+
+`PipelineRunRequest`는 local video/output 경로, pipeline 설정, 선택 실행 범위, 선택적 run/trace ID와
+forced Stage를 표현한다. Application Service는 같은 `DAGPlanner`로 plan을 만들고 plan에 포함된
+Stage의 config/model binding만 Engine에 전달한다. runtime factory는 plan의 `boundary_inputs`를
+충족하는 ArtifactRef와 Engine을 제공해야 하며, 하나라도 빠지면 실행 전에 거부한다.
+
+local runtime은 video bytes를 `00_input/`에 원자적으로 publish하고 output root별 stable artifact
+namespace를 사용한다. 부분 실행은 명시한 같은 `run_id`의 RunManifest와 StageManifest에서 output을
+복구하고 현재 video checksum이 이전 run input과 같으며 artifact integrity가 유효할 때만 boundary로
+전달한다. 현재 global cache index와 실행 전 effective model resolver가 없으므로 다른 run의 결과와
+model Stage 결과를 무리하게 재사용하지 않는다. 상세 결정은
+[`ADR-0017`](./adr/0017-pipeline-application-service-and-local-runtime.md)에 기록한다.
+
 ## 5. Executor 계약
 
 Executor는 `StageTask` 실행 위치를 추상화한다.

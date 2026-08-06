@@ -207,6 +207,7 @@ Phase 2는 2026-08-06에 VAD까지 Local Provider로 이동하고 sample 회귀�
 - [x] legacy 05 VAD~08 caption StageTask/model result binding 구현
 - [x] legacy 09~11 StageTask compatibility binding 구현
 - [x] 하나의 registry에서 11개 legacy Stage 전체 composition 구현
+- [x] Pipeline Application Service와 local runtime composition 구현
 - global cache key index와 run 간 재사용
 - retry policy 구현
 - 선택 실행 CLI 구현
