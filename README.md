@@ -3,6 +3,16 @@
 긴 영상을 로컬 LLM으로 분석하기 위한 전처리 파이프라인 프로토타입.
 방법론은 [docs/](docs/00-overview.md) 참고.
 
+현재 구현은 로컬 단일 프로세스 MVP다. 모델별 로컬/서버 추론과 다른 서비스 연동을
+지원하기 위해 Engine, Executor, Inference Provider를 분리하는 아키텍처 전환을 계획하고
+있다. 문서는 다음 순서로 확인한다.
+
+- [개발 문서 안내](docs/README.md)
+- [현재 개발 상태와 다음 작업](docs/STATUS.md)
+- [목표 아키텍처](docs/06-target-architecture.md)
+- [실행기·단계·추론 계약](docs/07-execution-inference-contracts.md)
+- [상세 개발 로드맵](docs/08-development-roadmap.md)
+
 ## 최소 파이프라인 구성
 
 | 단계 | 처리 | 출력 |
@@ -51,7 +61,7 @@ python3 -m venv .venv
 
 ```
 output/<video_stem>/
-├── 01_probe/ … 07_timeline/   # 단계별 개별 산출물 (위 표 참고)
+├── 01_probe/ … 11_context/    # 단계별 개별 산출물 (위 표 참고)
 ├── logs/run_<timestamp>.log   # 상세 로그 (DEBUG, 프레임/세그먼트 단위)
 └── run_summary.json           # 단계별 상태·소요 시간
 ```
@@ -101,3 +111,7 @@ ffmpeg -v error \
 - 한국어 캡셔닝 VLM 교체 (현재 BLIP은 영어 캡션)
 - 긴 영상 대응: 컨텍스트 최종본의 토큰 예산 관리 (씬 수가 많을 때 목차 + 선별
   씬 카드로 축약하는 예산 배분 로직)
+
+아키텍처 마이그레이션과 위 기능의 정확한 구현 순서는
+[`docs/08-development-roadmap.md`](docs/08-development-roadmap.md)를 기준으로 하며, 실제
+완료 여부는 [`docs/STATUS.md`](docs/STATUS.md)에서 관리한다.
