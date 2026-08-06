@@ -187,7 +187,10 @@ from, to 선택과 plan 밖에서 필요한 `boundary_inputs` 규칙은
 `LocalExecutor`는 injected Stage runner를 `StageTask`로 submit하고 단일 local execution slot에서
 순차 실행한다. async handle, idempotency, 결과 identity와 취소 경계는
 [`ADR-0010`](./adr/0010-async-sequential-local-executor.md)에 기록한다. Planner를 소비하는
-PipelineEngine과 legacy Stage binding은 아직 구현되지 않았다.
+최소 `PipelineEngine`은 plan 순서, StageTask identity, logical artifact 전달과 fail/cancel 중단을
+구현했다. 결정은
+[`ADR-0011`](./adr/0011-sequential-pipeline-engine-artifact-orchestration.md)에 기록한다.
+RunStore/cache와 legacy Stage binding은 아직 구현되지 않았다.
 
 ## 8. 설정과 모델 binding
 

@@ -6,11 +6,21 @@ from .errors import (
     DuplicateOutputError,
     DuplicateStageError,
     EngineConfigurationError,
+    EngineInputError,
     InvalidInputDependencyError,
     PlanSelectionError,
+    StateTransitionError,
     UnknownDependencyError,
 )
 from .planner import DAGPlanner, ExecutionPlan
+from .pipeline import (
+    PipelineEngine,
+    PipelineRunResult,
+    RunStateMachine,
+    StageExecutionRecord,
+    StageLifecycle,
+    StageStateMachine,
+)
 from .registry import StageRegistry
 
 __all__ = [
@@ -20,10 +30,18 @@ __all__ = [
     "DuplicateOutputError",
     "DuplicateStageError",
     "EngineConfigurationError",
+    "EngineInputError",
     "ExecutionPlan",
     "InvalidInputDependencyError",
+    "PipelineEngine",
+    "PipelineRunResult",
     "PlanSelectionError",
     "StageRegistry",
+    "StageExecutionRecord",
+    "StageLifecycle",
+    "StageStateMachine",
+    "StateTransitionError",
     "UnknownDependencyError",
     "create_default_registry",
+    "RunStateMachine",
 ]

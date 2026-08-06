@@ -2,7 +2,7 @@
 
 - 마지막 갱신: **2026-08-06**
 - 현재 단계: **Phase 3 — Pipeline Engine과 LocalExecutor**
-- 다음 작업: **PipelineEngine 순차 orchestration과 상태 머신**
+- 다음 작업: **manifest cache key와 cache decision 계층**
 
 이 문서는 개발 진행 상황의 단일 진입점이다. 새로운 세션은 이 문서를 먼저 읽고, 실제 코드와
 Git 상태를 확인한 뒤 작업을 시작한다.
@@ -18,13 +18,13 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - `src/pipeline/stages/s01_*`~`s11_*`: 단계 구현
 - `src/video_preprocess/domain/`: 버전이 있는 Artifact·Stage 공개 계약
 - `src/video_preprocess/storage/`: Artifact·Run Store Port와 로컬 구현
-- `src/video_preprocess/engine/`: 11개 Stage registry와 deterministic DAG planner
+- `src/video_preprocess/engine/`: registry, DAG planner와 순차 PipelineEngine 상태 머신
 - `src/video_preprocess/executors/`: async Executor Port, Stage binding과 순차 LocalExecutor
 - 로컬 파일 존재 여부를 기준으로 단계 스킵
 - VAD, STT, diarization, caption과 embedding이 `InferenceGateway`와 Local Provider로 실행
 - 모든 모델 Stage에서 구체 ML library import와 model lifecycle 제거 완료
-- Registry/planner는 구현됐지만 기존 runner에 아직 연결되지 않음
-- Pipeline 상태 머신, legacy Stage binding, HTTP provider는 아직 구현되지 않음
+- PipelineEngine은 구현됐지만 manifest cache와 기존 runner에는 아직 연결되지 않음
+- legacy Stage binding과 HTTP provider는 아직 구현되지 않음
 - Local Store는 구현됐고 model Stage compatibility adapter에서 media 등록에 사용하며,
   전체 runner 연결은 Engine 전환 시점까지 보류
 
@@ -61,6 +61,8 @@ Git 상태를 확인한 뒤 작업을 시작한다.
   [`ADR-0009`](./adr/0009-deterministic-stage-registry-and-dag-planner.md)
 - async 순차 LocalExecutor 결정:
   [`ADR-0010`](./adr/0010-async-sequential-local-executor.md)
+- 순차 PipelineEngine과 artifact orchestration 결정:
+  [`ADR-0011`](./adr/0011-sequential-pipeline-engine-artifact-orchestration.md)
 
 ## 3. 완료된 작업
 
@@ -95,6 +97,7 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - [x] audio ArtifactRef와 local VAD provider·s05 adapter
 - [x] 11개 Stage registry와 deterministic DAG planner
 - [x] Executor Port와 순차 LocalExecutor
+- [x] 순차 PipelineEngine과 run/stage 상태 머신
 
 ## 4. 아직 구현되지 않은 작업
 
@@ -110,7 +113,7 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - [x] Local VAD Provider
 - [x] Stage registry와 DAG planner
 - [x] 순차 LocalExecutor
-- [ ] PipelineEngine
+- [x] 최소 PipelineEngine
 - [ ] manifest 기반 cache
 - [ ] HTTPInferenceProvider와 모델 서버 계약 구현
 - [ ] Application Service와 API adapter
@@ -121,21 +124,19 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 문서가 존재한다고 구현된 것으로 간주하지 않는다. 완료 여부는 코드와 자동 테스트를 기준으로
 이 체크리스트에서 갱신한다.
 
-## 5. 다음 작업: PipelineEngine 순차 orchestration과 상태 머신 slice
+## 5. 다음 작업: manifest cache key와 cache decision slice
 
 권장 순서:
 
-1. `ExecutionPlan`과 boundary input ArtifactRef를 받아 StageTask를 순서대로 생성하는
-   `PipelineEngine` 구현
-2. run/stage 상태를 `pending → queued → running → terminal`로 전이하고 잘못된 전이 거부
-3. stage별 config/model binding을 명시적으로 주입하고 required input을 logical key로 resolve
-4. 성공 output을 다음 Stage input map에 합치고 failed/cancelled에서 후속 제출 중단
-5. fake Executor·ArtifactRef로 전체/부분 plan, skip/fail/cancel과 input 전달 contract test 작성
-6. RunStore manifest write와 cache 판정은 다음 slice로 분리
+1. Stage version, input checksum, config와 requested model binding을 canonical cache key로 계산
+2. 성공 StageManifest의 task·result와 ArtifactStore verify 결과를 함께 검사하는 cache evaluator 구현
+3. hit/miss/forced 결정과 stable miss reason을 명시적 타입으로 반환
+4. model의 effective provider/revision이 이전 manifest와 호환되는지 검사하고 변경 시 miss 처리
+5. skipped diarization처럼 실행 조건이 바뀔 수 있는 결과는 영구 hit로 취급하지 않도록 정책화
+6. 순수 fake Store로 입력·config·model·output 누락/변조와 force contract test 작성
 
-LocalExecutor는 실행 위치와 runner lifecycle만 소유하며 plan 순서, dependency artifact 조립과
-run 중단 정책은 다음 PipelineEngine이 소유한다. legacy `run(ctx)` binding은 Engine contract가
-고정된 뒤 연결한다.
+이 slice는 cache 판단을 순수 계층으로 먼저 고정한다. PipelineEngine의 RunStore manifest write와
+cache hit 통합, legacy `run(ctx)` binding은 다음 slice에서 연결한다.
 
 ## 6. 알려진 중요 문제
 
@@ -156,7 +157,7 @@ run 중단 정책은 다음 PipelineEngine이 소유한다. legacy `run(ctx)` bi
 
 ## 7. 기존 검증 기준선
 
-2026-08-06 Phase 0~Phase 3 LocalExecutor 점검 결과:
+2026-08-06 Phase 0~Phase 3 PipelineEngine 점검 결과:
 
 - 깨끗한 Python 3.13 임시 venv에 `requirements-dev.txt` 설치 성공
 - embedding slice 당시 기존 `.venv`와 깨끗한 venv에서 전체 테스트 85개 성공
@@ -166,6 +167,9 @@ run 중단 정책은 다음 PipelineEngine이 소유한다. legacy `run(ctx)` bi
 - VAD slice 기본 테스트 135개 성공
 - registry/planner slice 기본 테스트 157개 성공
 - LocalExecutor slice 기본 테스트 177개 성공
+- PipelineEngine slice 기본 테스트 194개 성공
+- full/partial plan, deterministic task identity, boundary/config/model 사전 검증, logical artifact
+  전달, skip/fail/cancel, output 계약과 invalid state transition 확인
 - concurrent submit 직렬화, sync/async runner, idempotent handle, queued/running cancel,
   exception·result type·identity 정규화 contract 확인
 - default 11개 DAG가 기존 01~11 순서이며 cycle·unknown dependency·duplicate output·누락
@@ -214,6 +218,17 @@ run 중단 정책은 다음 PipelineEngine이 소유한다. legacy `run(ctx)` bi
 
 최신 기록을 위에 추가한다. 긴 구현 설명은 PR이나 ADR에 두고 여기에는 다음 세션이 재개하는 데
 필요한 정보만 적는다.
+
+### 2026-08-06 — Phase 3 순차 PipelineEngine과 상태 머신
+
+- 목표: Planner와 Executor 사이에서 StageTask 조립, artifact 전달과 실행 중단 정책을 소유
+- 완료: `PipelineEngine`, run/stage 상태 머신, Stage별 execution record와 in-memory run result 구현
+- 주요 결정: plan 전체 입력 사전 검증, logical key input resolve, deterministic task identity,
+  succeeded/skipped output 전달, failed/cancelled 후속 제출 중단, output 계약 검증; ADR-0011
+- 검증: 기본 pytest 194개 통과; full/partial plan, boundary/config/model/attempt 검증,
+  idempotency, skip/fail/cancel, 누락·미선언 output과 invalid transition 확인
+- 호환성: RunStore/cache와 legacy runner에는 아직 연결하지 않아 기존 CLI·출력 동작 변경 없음
+- 다음 작업: manifest cache key와 ArtifactStore 검증을 포함한 cache decision 계층
 
 ### 2026-08-06 — Phase 3 Executor Port와 순차 LocalExecutor
 

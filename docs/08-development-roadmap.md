@@ -1,6 +1,6 @@
 # 엔진·실행기 분리 개발 로드맵
 
-상태: **진행 중 — Phase 2**
+상태: **진행 중 — Phase 3**
 기준일: 2026-08-06  
 대상 설계: [`06-target-architecture.md`](./06-target-architecture.md)  
 공개 계약: [`07-execution-inference-contracts.md`](./07-execution-inference-contracts.md)
@@ -194,8 +194,9 @@ Phase 2는 2026-08-06에 VAD까지 Local Provider로 이동하고 sample 회귀�
 - [x] stage registry와 DAG planner 구현
 - [x] 의존성 cycle과 누락된 input 검증
 - [x] exact/from/to 선택과 boundary input plan 구현
-- run/stage 상태 머신 구현
+- [x] run/stage 상태 머신 구현
 - [x] Executor Port와 순차 LocalExecutor 구현
+- [x] PipelineEngine 순차 StageTask 생성과 logical artifact orchestration 구현
 - stage timeout과 cancellation token 전달
 - manifest cache key 계산
 - cache miss 사유 기록

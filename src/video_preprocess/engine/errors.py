@@ -27,3 +27,11 @@ class DependencyCycleError(EngineConfigurationError):
 
 class PlanSelectionError(ValueError):
     """A requested stage selection cannot produce an execution plan."""
+
+
+class EngineInputError(ValueError):
+    """A plan, config, binding, or boundary artifact is incomplete."""
+
+
+class StateTransitionError(RuntimeError):
+    """A run or Stage lifecycle attempted an invalid transition."""

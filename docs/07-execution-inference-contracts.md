@@ -15,9 +15,10 @@ Artifact·Run Store Port와 로컬 구현은
 [`ADR-0003`](./adr/0003-local-artifact-and-manifest-storage.md)에 기록한다. Stage registry와
 DAG planner는 [`src/video_preprocess/engine/`](../src/video_preprocess/engine/)에 구현됐다.
 Executor Port와 LocalExecutor는
-[`src/video_preprocess/executors/`](../src/video_preprocess/executors/)에 구현됐지만
-PipelineEngine과 HTTP Provider는 아직 설계 상태이며 구현 완료로 간주하지 않는다. Inference
-공통 계약,
+[`src/video_preprocess/executors/`](../src/video_preprocess/executors/)에 구현됐다. 순차
+PipelineEngine과 상태 머신은
+[`src/video_preprocess/engine/`](../src/video_preprocess/engine/)에 구현됐지만 manifest cache,
+legacy Stage binding과 HTTP Provider는 아직 구현 완료로 간주하지 않는다. Inference 공통 계약,
 Gateway, `LocalEmbeddingProvider`, `LocalCaptionProvider`, `LocalSTTProvider`,
 `LocalDiarizationProvider`와 `LocalVADProvider`는
 [`src/video_preprocess/inference/`](../src/video_preprocess/inference/)에 구현되어 있고 결정은
@@ -234,6 +235,26 @@ name 사전순으로 정렬한다. 현재 11개 숫자 prefix Stage는 기존 01
 정렬된 logical input key다. Engine/Executor는 실행 전에 이 key에 해당하는 external 또는 기존
 artifact가 있는지 확인해야 한다. 결정 근거는
 [`ADR-0009`](./adr/0009-deterministic-stage-registry-and-dag-planner.md)에 기록한다.
+
+### 4.5 PipelineEngine orchestration
+
+현재 최소 `PipelineEngine`은 `ExecutionPlan`과 boundary `ArtifactRef` map을 입력받아 다음 계약을
+수행한다.
+
+- plan 전체의 boundary input, stage config, model binding과 attempt를 첫 제출 전에 검증한다.
+- required input을 logical key로 resolve하고 Stage별 `StageTask`를 순차 생성한다.
+- run ID, Stage name, attempt, version, input, config와 model binding으로 deterministic task
+  identity와 idempotency key를 만든다. trace ID는 결과 fingerprint에서 제외한다.
+- run은 `pending → running → terminal`, Stage는 `pending → queued → running → terminal` 전이를
+  따르며 잘못된 전이를 거부한다.
+- `succeeded`와 `skipped` output을 다음 Stage의 artifact map에 합치고 `failed` 또는 `cancelled`면
+  후속 제출을 중단한다.
+- 선언되지 않은 output을 거부하고 downstream required input이 실제로 없을 때 stable failed
+  result로 정규화한다.
+
+이 상태와 결과는 아직 메모리에만 있다. RunStore manifest 기록, cache hit/miss 결정, retry와
+legacy Stage 실행 연결은 후속 slice다. 결정 근거는
+[`ADR-0011`](./adr/0011-sequential-pipeline-engine-artifact-orchestration.md)에 기록한다.
 
 ## 5. Executor 계약
 

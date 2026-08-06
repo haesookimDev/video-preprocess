@@ -1,0 +1,386 @@
+"""Tests for sequential PipelineEngine task and artifact orchestration."""
+
+import asyncio
+
+import pytest
+
+from video_preprocess.domain import (
+    ArtifactRef,
+    Checksum,
+    RunStatus,
+    StageResult,
+    StageSpec,
+    StageStatus,
+)
+from video_preprocess.engine import (
+    DAGPlanner,
+    EngineInputError,
+    PipelineEngine,
+    RunStateMachine,
+    StageLifecycle,
+    StageRegistry,
+    StageStateMachine,
+    StateTransitionError,
+)
+from video_preprocess.executors import (
+    ExecutionHandle,
+    ExecutionState,
+    ExecutionStatus,
+)
+
+
+def artifact(name: str) -> ArtifactRef:
+    return ArtifactRef(
+        artifact_id=f"art_{name}",
+        kind="json",
+        uri=f"artifact://run_123/{name}.json",
+        media_type="application/json",
+        size_bytes=len(name),
+        checksum=Checksum("sha256", f"checksum_{name}"),
+    )
+
+
+def pipeline_plan():
+    specs = [
+        StageSpec(
+            name="01_prepare",
+            stage_version="1.0.0",
+            required_inputs=("source",),
+            outputs=("prepared",),
+        ),
+        StageSpec(
+            name="02_process",
+            stage_version="1.0.0",
+            dependencies=("01_prepare",),
+            required_inputs=("prepared",),
+            outputs=("processed",),
+            model_slots=("worker",),
+        ),
+        StageSpec(
+            name="03_finish",
+            stage_version="1.0.0",
+            dependencies=("02_process",),
+            required_inputs=("processed",),
+            outputs=("final",),
+        ),
+    ]
+    return DAGPlanner(
+        StageRegistry(specs, external_inputs=("source",))
+    )
+
+
+class FakeExecutor:
+    def __init__(self, resolver, *, submit_error=None, result_error=None):
+        self.resolver = resolver
+        self.submit_error = submit_error
+        self.result_error = result_error
+        self.tasks = []
+        self.by_execution_id = {}
+
+    async def submit(self, task):
+        if self.submit_error is not None:
+            raise self.submit_error
+        self.tasks.append(task)
+        handle = ExecutionHandle(
+            execution_id=f"exec_{len(self.tasks)}",
+            stage_run_id=task.stage_run_id,
+            attempt=task.attempt,
+        )
+        self.by_execution_id[handle.execution_id] = task
+        return handle
+
+    async def status(self, handle):
+        return ExecutionStatus(handle, ExecutionState.SUCCEEDED)
+
+    async def result(self, handle):
+        if self.result_error is not None:
+            raise self.result_error
+        return self.resolver(self.by_execution_id[handle.execution_id])
+
+    async def cancel(self, handle):
+        return None
+
+
+def success_result(task, *, status=StageStatus.SUCCEEDED, outputs=None):
+    return StageResult(
+        run_id=task.run_id,
+        stage_run_id=task.stage_run_id,
+        attempt=task.attempt,
+        status=status,
+        outputs={} if outputs is None else outputs,
+    )
+
+
+def default_resolver(task):
+    output_names = {
+        "01_prepare": "prepared",
+        "02_process": "processed",
+        "03_finish": "final",
+    }
+    name = output_names[task.stage]
+    return success_result(task, outputs={name: artifact(name)})
+
+
+def run_engine(executor, plan=None, **overrides):
+    planner = pipeline_plan()
+    selected_plan = planner.plan() if plan is None else plan
+    kwargs = {
+        "run_id": "run_123",
+        "trace_id": "trace_123",
+        "artifacts": {"source": artifact("source")},
+        "stage_configs": {"02_process": {"threshold": 0.5}},
+        "model_bindings": {"02_process": {"worker": "worker.default"}},
+    }
+    kwargs.update(overrides)
+    return asyncio.run(PipelineEngine(executor).run(selected_plan, **kwargs))
+
+
+def test_engine_builds_tasks_and_passes_outputs_to_downstream_stage() -> None:
+    executor = FakeExecutor(default_resolver)
+
+    result = run_engine(executor)
+
+    assert result.status is RunStatus.SUCCEEDED
+    assert result.transitions == (RunStatus.PENDING, RunStatus.RUNNING, RunStatus.SUCCEEDED)
+    assert [record.stage for record in result.stages] == [
+        "01_prepare",
+        "02_process",
+        "03_finish",
+    ]
+    assert all(
+        record.transitions
+        == (
+            StageLifecycle.PENDING,
+            StageLifecycle.QUEUED,
+            StageLifecycle.RUNNING,
+            StageLifecycle.SUCCEEDED,
+        )
+        for record in result.stages
+    )
+    assert executor.tasks[0].inputs == {"source": artifact("source")}
+    assert executor.tasks[1].inputs == {"prepared": artifact("prepared")}
+    assert executor.tasks[1].config == {"threshold": 0.5}
+    assert executor.tasks[1].model_bindings == {
+        "worker": "worker.default"
+    }
+    assert executor.tasks[2].inputs == {"processed": artifact("processed")}
+    assert result.artifacts["final"] == artifact("final")
+
+
+def test_engine_task_identity_and_idempotency_are_deterministic() -> None:
+    first_executor = FakeExecutor(default_resolver)
+    second_executor = FakeExecutor(default_resolver)
+
+    run_engine(first_executor)
+    run_engine(second_executor)
+
+    assert [task.stage_run_id for task in first_executor.tasks] == [
+        task.stage_run_id for task in second_executor.tasks
+    ]
+    assert [task.idempotency_key for task in first_executor.tasks] == [
+        task.idempotency_key for task in second_executor.tasks
+    ]
+    assert all(task.idempotency_key.startswith("stage_") for task in first_executor.tasks)
+
+    changed_executor = FakeExecutor(default_resolver)
+    run_engine(
+        changed_executor,
+        stage_configs={"02_process": {"threshold": 0.75}},
+    )
+    assert (
+        first_executor.tasks[1].idempotency_key
+        != changed_executor.tasks[1].idempotency_key
+    )
+
+
+def test_partial_plan_uses_boundary_artifact_without_running_ancestor() -> None:
+    planner = pipeline_plan()
+    executor = FakeExecutor(default_resolver)
+    plan = planner.plan(stage="02_process")
+
+    result = run_engine(
+        executor,
+        plan,
+        artifacts={"prepared": artifact("prepared")},
+    )
+
+    assert result.status is RunStatus.SUCCEEDED
+    assert [task.stage for task in executor.tasks] == ["02_process"]
+    assert executor.tasks[0].inputs == {"prepared": artifact("prepared")}
+
+
+def test_engine_rejects_missing_boundary_before_submission() -> None:
+    executor = FakeExecutor(default_resolver)
+
+    with pytest.raises(EngineInputError, match="boundary"):
+        run_engine(executor, artifacts={})
+
+    assert executor.tasks == []
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        ({"stage_configs": {"missing": {}}}, "unplanned stage"),
+        ({"model_bindings": {}}, "missing worker"),
+        (
+            {
+                "model_bindings": {
+                    "02_process": {
+                        "worker": "worker.default",
+                        "extra": "extra.default",
+                    }
+                }
+            },
+            "unexpected extra",
+        ),
+        ({"attempts": {"02_process": 0}}, "positive integer"),
+    ],
+)
+def test_engine_validates_config_binding_and_attempt_scope(
+    overrides,
+    message,
+) -> None:
+    executor = FakeExecutor(default_resolver)
+
+    with pytest.raises(EngineInputError, match=message):
+        run_engine(executor, **overrides)
+
+    assert executor.tasks == []
+
+
+def test_engine_validates_all_config_payloads_before_submission() -> None:
+    executor = FakeExecutor(default_resolver)
+
+    with pytest.raises(EngineInputError, match="03_finish"):
+        run_engine(
+            executor,
+            stage_configs={
+                "02_process": {"threshold": 0.5},
+                "03_finish": {"invalid": object()},
+            },
+        )
+
+    assert executor.tasks == []
+
+
+@pytest.mark.parametrize(
+    ("terminal_status", "run_status", "lifecycle"),
+    [
+        (StageStatus.FAILED, RunStatus.FAILED, StageLifecycle.FAILED),
+        (StageStatus.CANCELLED, RunStatus.CANCELLED, StageLifecycle.CANCELLED),
+    ],
+)
+def test_engine_stops_after_failed_or_cancelled_stage(
+    terminal_status,
+    run_status,
+    lifecycle,
+) -> None:
+    def resolver(task):
+        if task.stage == "02_process":
+            return success_result(task, status=terminal_status)
+        return default_resolver(task)
+
+    executor = FakeExecutor(resolver)
+
+    result = run_engine(executor)
+
+    assert result.status is run_status
+    assert [task.stage for task in executor.tasks] == [
+        "01_prepare",
+        "02_process",
+    ]
+    assert result.stages[-1].state is lifecycle
+
+
+def test_skipped_stage_can_publish_sentinel_output_and_continue() -> None:
+    def resolver(task):
+        if task.stage == "01_prepare":
+            return success_result(
+                task,
+                status=StageStatus.SKIPPED,
+                outputs={"prepared": artifact("prepared")},
+            )
+        return default_resolver(task)
+
+    executor = FakeExecutor(resolver)
+
+    result = run_engine(executor)
+
+    assert result.status is RunStatus.SUCCEEDED
+    assert result.stages[0].state is StageLifecycle.SKIPPED
+    assert len(executor.tasks) == 3
+
+
+def test_missing_upstream_output_fails_next_stage_without_submitting_it() -> None:
+    def resolver(task):
+        if task.stage == "01_prepare":
+            return success_result(task)
+        return default_resolver(task)
+
+    executor = FakeExecutor(resolver)
+
+    result = run_engine(executor)
+
+    assert result.status is RunStatus.FAILED
+    assert [task.stage for task in executor.tasks] == ["01_prepare"]
+    assert result.stages[-1].stage == "02_process"
+    assert result.stages[-1].handle is None
+    assert result.stages[-1].result.reason_code == "MISSING_REQUIRED_INPUT"
+    assert result.stages[-1].transitions == (
+        StageLifecycle.PENDING,
+        StageLifecycle.FAILED,
+    )
+
+
+def test_undeclared_stage_output_is_normalized_and_stops_run() -> None:
+    def resolver(task):
+        return success_result(
+            task,
+            outputs={"undeclared": artifact("undeclared")},
+        )
+
+    executor = FakeExecutor(resolver)
+
+    result = run_engine(executor)
+
+    assert result.status is RunStatus.FAILED
+    assert result.stages[0].result.reason_code == "UNDECLARED_STAGE_OUTPUT"
+    assert "undeclared" not in result.artifacts
+    assert len(executor.tasks) == 1
+
+
+@pytest.mark.parametrize(
+    ("executor", "reason_code"),
+    [
+        (
+            FakeExecutor(default_resolver, submit_error=RuntimeError("submit")),
+            "EXECUTOR_SUBMIT_FAILED",
+        ),
+        (
+            FakeExecutor(default_resolver, result_error=RuntimeError("result")),
+            "EXECUTOR_RESULT_FAILED",
+        ),
+    ],
+)
+def test_engine_normalizes_executor_infrastructure_errors(
+    executor,
+    reason_code,
+) -> None:
+    result = run_engine(executor)
+
+    assert result.status is RunStatus.FAILED
+    assert result.stages[0].result.reason_code == reason_code
+
+
+def test_stage_and_run_state_machines_reject_invalid_transitions() -> None:
+    stage = StageStateMachine()
+    stage.transition(StageLifecycle.QUEUED)
+    stage.transition(StageLifecycle.RUNNING)
+    stage.transition(StageLifecycle.SUCCEEDED)
+    with pytest.raises(StateTransitionError, match="invalid Stage"):
+        stage.transition(StageLifecycle.FAILED)
+
+    run = RunStateMachine()
+    with pytest.raises(StateTransitionError, match="invalid run"):
+        run.transition(RunStatus.SUCCEEDED)
