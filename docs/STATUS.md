@@ -1,8 +1,8 @@
 # 개발 상태와 세션 인수인계
 
-마지막 갱신: **2026-08-06**  
-현재 단계: **아키텍처 설계 완료, 구현 시작 전**  
-다음 Phase: **Phase 0 — 기준선 고정**
+- 마지막 갱신: **2026-08-06**
+- 현재 단계: **Phase 0 — 기준선 고정 검증 마무리**
+- 다음 작업: **깨끗한 환경 설치 확인 후 Phase 1 계약 타입 설계**
 
 이 문서는 개발 진행 상황의 단일 진입점이다. 새로운 세션은 이 문서를 먼저 읽고, 실제 코드와
 Git 상태를 확인한 뒤 작업을 시작한다.
@@ -64,9 +64,9 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 
 ## 4. 아직 구현되지 않은 작업
 
-- [ ] 누락된 runtime/optional dependency 명세
-- [ ] pytest와 legacy/golden fixture
-- [ ] runtime preflight
+- [x] 누락된 runtime/optional dependency 명세
+- [x] pytest와 최소 legacy fixture 및 단위 테스트
+- [x] runtime preflight와 `--preflight-only` CLI
 - [ ] domain 계약 타입
 - [ ] ArtifactStore와 RunStore
 - [ ] LocalInferenceProvider
@@ -81,20 +81,19 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 문서가 존재한다고 구현된 것으로 간주하지 않는다. 완료 여부는 코드와 자동 테스트를 기준으로
 이 체크리스트에서 갱신한다.
 
-## 5. 다음 작업: Phase 0 첫 번째 변경 묶음
+## 5. 다음 작업: Phase 0 종료와 Phase 1 착수
 
 권장 순서:
 
-1. 현재 import 기준으로 필수·선택 의존성 목록 확정
-2. 패키지 관리 방식 결정
-   - 최소 변경: requirements 파일 분리
-   - 권장: `pyproject.toml` + lock 전략
-3. `pytest` 구성과 순수 함수 단위 테스트 추가
-4. legacy JSON fixture 최소 세트 추가
-5. FFmpeg·SQLite FTS5·선택 provider preflight 추가
-6. README와 설치 명령 검증
+1. 임시 가상환경에서 `requirements-dev.txt` 설치 절차 재현
+2. 기본 pytest와 `--preflight-only` 검증
+3. Phase 0 결과를 기준선으로 확정
+4. Phase 1의 `ArtifactRef`, `StageSpec`, `StageTask`, `StageResult` 타입 설계
+5. dataclass와 Pydantic 중 공개 계약 구현 방식 결정
+6. 직렬화 round-trip과 schema version 테스트부터 구현
 
-첫 PR은 아키텍처 타입을 바로 만들기보다 설치 재현성과 테스트 기반을 다루는 것이 안전하다.
+현재 `.venv`에서는 전체 sample과 query까지 성공했다. 마지막으로 깨끗한 환경 설치를 확인한
+뒤 Phase 1로 이동한다.
 
 ## 6. 알려진 중요 문제
 
@@ -109,6 +108,8 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 | P1 | 관련도 하한 없음 | 무관 질의도 항상 top-k 반환 |
 | P1 | 모든 씬을 context에 포함 | 긴 영상 token budget 초과 |
 | P1 | `keyframes_per_scene` 미사용 | 설정과 실제 동작 불일치 |
+| P1 | cached Hugging Face 모델도 metadata HEAD 요청 | offline 환경에서 모델 로드 실패 가능 |
+| P2 | macOS에서 OpenCV·PyAV FFmpeg dylib 중복 경고 | 환경에 따라 충돌 또는 불안정 가능 |
 
 이 문제는 새 구조에서 해결하되, P0 정확성 문제가 구조 전환을 막으면 Phase 0에서 최소 수정한다.
 
@@ -153,6 +154,33 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 최신 기록을 위에 추가한다. 긴 구현 설명은 PR이나 ADR에 두고 여기에는 다음 세션이 재개하는 데
 필요한 정보만 적는다.
 
+### 2026-08-06 — Phase 0 runtime preflight
+
+- 목표: 모델 import 전에 로컬 실행 환경의 누락 조건을 진단
+- 완료: Python 3.10+, FFmpeg/ffprobe, SQLite FTS5, 필수 모듈, HF credential과
+  diarization 선택 모듈 검사; `--preflight-only` 추가; 환경변수 HF_TOKEN 지원
+- 변경 파일: `src/pipeline/preflight.py`, `src/run_pipeline.py`,
+  `src/pipeline/stages/s07_diarize.py`, `tests/test_preflight.py`
+- 검증: pytest 21개 통과; preflight 전체 OK; 임시 출력에서 sample 11단계 status `ok`;
+  query `음성 구간 검출`의 top-1이 씬 02임을 확인
+- 주의사항: 첫 모델 접근에는 네트워크가 필요했으며, 캐시된 모델도 Hub metadata HEAD를
+  시도했다. macOS에서 OpenCV/PyAV FFmpeg dylib 중복 경고가 발생했으나 실행은 성공했다.
+- 호환성: 기존 영상 positional CLI는 유지하고 `--preflight-only`에서만 생략 가능
+- 다음 작업: 깨끗한 임시 venv 설치 검증 후 Phase 1 domain 계약 타입 착수
+
+### 2026-08-06 — Phase 0 의존성 및 테스트 기준선
+
+- 목표: 구조 변경 전 설치 의존성과 네트워크 없는 기본 회귀 테스트 확립
+- 완료: 기본·diarization·개발 requirements 분리, pytest 설정, 단위 테스트 13개,
+  legacy metadata/timeline fixture 추가
+- 주요 결정: 현재 MVP 호환을 위해 requirements 파일 방식을 유지하고, provider 분리 시
+  packaging/extras 구조를 다시 결정
+- 변경 파일: `requirements*.txt`, `pyproject.toml`, `tests/`, `README.md`, `AGENTS.md`
+- 검증: `.venv/bin/python -m pytest` — 13 passed; `.venv/bin/pip check` — 성공;
+  소스와 테스트 23개 구문 검사 성공
+- 호환성: 실행 코드와 기존 산출물 형식 변경 없음
+- 다음 작업: 표준 라이브러리 기반 runtime preflight와 CLI 연결
+
 ### 2026-08-06 — 아키텍처 문서화
 
 - 목표: 엔진·실행기·추론 provider 분리 요구를 지속 가능한 개발 문서로 정리
@@ -177,4 +205,3 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - 호환성 또는 migration 주의사항:
 - 다음 작업:
 ```
-

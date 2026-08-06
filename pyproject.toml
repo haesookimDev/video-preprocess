@@ -1,0 +1,9 @@
+[tool.pytest.ini_options]
+minversion = "8.0"
+addopts = ["-ra", "--strict-config", "--strict-markers"]
+testpaths = ["tests"]
+pythonpath = ["src"]
+markers = [
+    "integration: exercises native tools or multiple pipeline components",
+    "model: loads local ML model weights and may take significant time",
+]

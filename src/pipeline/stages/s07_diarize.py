@@ -1,6 +1,6 @@
 """7단계: pyannote로 화자 분리(diarization)를 수행한다.
 
-- 게이트 모델이므로 .env의 HF_TOKEN이 필요하다.
+- 게이트 모델이므로 환경변수 또는 .env의 HF_TOKEN이 필요하다.
 - 오디오가 없거나 토큰이 없으면 빈 결과를 저장하고 스킵한다 (후속 단계는 화자
   라벨 없이 동작).
 
@@ -13,19 +13,10 @@ from pathlib import Path
 
 from ..context import PipelineContext
 from ..logging_setup import stage_logger
+from ..preflight import load_hf_token
 
 NAME = "07_diarize"
 OUTPUT = "07_diarize/diarization.json"
-
-
-def _load_hf_token(project_root: Path) -> str | None:
-    env_file = project_root / ".env"
-    if not env_file.exists():
-        return None
-    for line in env_file.read_text().splitlines():
-        if line.startswith("HF_TOKEN"):
-            return line.split("=", 1)[1].strip().strip('"').strip("'")
-    return None
 
 
 def _skip(ctx: PipelineContext, out_dir: Path, reason: str, log) -> dict:
@@ -43,9 +34,9 @@ def run(ctx: PipelineContext) -> dict:
     if not audio_info.get("has_audio"):
         return _skip(ctx, out_dir, "오디오 없음", log)
 
-    token = _load_hf_token(Path(__file__).resolve().parents[3])
+    token = load_hf_token(Path(__file__).resolve().parents[3])
     if not token:
-        return _skip(ctx, out_dir, ".env에 HF_TOKEN 없음", log)
+        return _skip(ctx, out_dir, "환경변수/.env에 HF_TOKEN 없음", log)
 
     log.info("화자 분리 모델 로드: %s", ctx.diarize_model)
     t0 = time.monotonic()

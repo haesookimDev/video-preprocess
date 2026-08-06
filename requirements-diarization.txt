@@ -1,0 +1,6 @@
+-r requirements.txt
+
+# Optional stage 07 dependencies. The pipeline runs without these packages when
+# diarization is not configured.
+huggingface-hub>=0.20,<2
+pyannote.audio>=3.3,<5

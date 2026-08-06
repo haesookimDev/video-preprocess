@@ -1,0 +1,3 @@
+-r requirements-diarization.txt
+
+pytest>=8,<10

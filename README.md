@@ -37,10 +37,23 @@ python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 ```
 
-화자 분리(07_diarize)는 Hugging Face 게이트 모델을 사용한다:
+화자 분리까지 로컬에서 실행하려면 선택 의존성을 설치한다:
+
+```bash
+.venv/bin/pip install -r requirements-diarization.txt
+```
+
+개발 환경은 전체 로컬 의존성과 pytest를 함께 설치한다:
+
+```bash
+.venv/bin/pip install -r requirements-dev.txt
+.venv/bin/python -m pytest
+```
+
+화자 분리(07_diarize)는 선택 의존성과 Hugging Face 게이트 모델을 사용한다:
 1. [pyannote/speaker-diarization-community-1](https://huggingface.co/pyannote/speaker-diarization-community-1)
    페이지에서 약관 동의
-2. 프로젝트 루트 `.env`에 `HF_TOKEN=hf_...` 추가
+2. `HF_TOKEN=hf_...` 환경변수를 설정하거나 프로젝트 루트 `.env`에 추가
 
 토큰이 없으면 해당 단계만 자동 스킵되고 나머지 파이프라인은 정상 동작한다.
 
@@ -49,12 +62,16 @@ python3 -m venv .venv
 ```bash
 .venv/bin/python src/run_pipeline.py <video.mp4>
 
+# 모델을 로드하지 않고 Python·FFmpeg·SQLite·패키지·credential만 검사
+.venv/bin/python src/run_pipeline.py --preflight-only
+
 # 옵션
 #   --out DIR            출력 루트 (기본: output)
 #   --force              기존 단계 출력 무시하고 전부 재실행
 #   --whisper-model M    tiny/base/small/medium/large (기본: base)
 #   --language ko        전사 언어 고정 (기본: 자동 감지)
 #   --scene-threshold N  씬 검출 민감도, 낮을수록 민감 (기본: 27.0)
+#   --preflight-only     실행 환경만 검사하고 종료
 ```
 
 ## 출력 구조

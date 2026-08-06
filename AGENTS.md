@@ -14,7 +14,9 @@ This repository has no separate build step. Use Python 3.10+ and install the nat
 ```bash
 brew install ffmpeg
 python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt
+.venv/bin/pip install -r requirements-dev.txt
+.venv/bin/python -m pytest
+.venv/bin/python src/run_pipeline.py --preflight-only
 .venv/bin/python src/run_pipeline.py samples/sample.mp4
 .venv/bin/python src/query.py output/sample "음성 구간 검출" --topk 2
 ```
@@ -27,7 +29,9 @@ Follow PEP 8 with four-space indentation, type hints, `pathlib.Path`, and UTF-8 
 
 ## Testing Guidelines
 
-There is currently no automated test suite or coverage threshold. Before submitting, run the full pipeline against `samples/sample.mp4`, confirm the summary status is `ok`, and exercise `src/query.py`. For stage-specific changes, remove that stage's generated directory or run with `--force`, then inspect its JSON, Markdown, database, or media outputs. If adding tests, place them in `tests/` and name files `test_<module>.py` for pytest discovery.
+Run `.venv/bin/python -m pytest` for every code change. The default suite must not download model weights or require network access. Put tests in `tests/` and name files `test_<module>.py` for pytest discovery. Mark native-tool or multi-component tests with `integration` and tests that load model weights with `model`; keep those explicit rather than part of the default fast path. There is not yet a coverage threshold.
+
+For changes to media processing or model integration, also run the full pipeline against `samples/sample.mp4`, confirm the summary status is `ok`, and exercise `src/query.py`. For stage-specific changes, rerun the affected stage and downstream stages once selective execution is available; until then, remove the relevant generated directories or use `--force`, then inspect the JSON, Markdown, database, or media outputs.
 
 ## Commit & Pull Request Guidelines
 
