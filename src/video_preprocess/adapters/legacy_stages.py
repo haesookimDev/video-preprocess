@@ -1,0 +1,462 @@
+"""Compatibility bindings from StageTask to the current ``run(ctx)`` stages."""
+
+from __future__ import annotations
+
+import hashlib
+import os
+import tempfile
+import threading
+import zipfile
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass
+from pathlib import Path, PurePosixPath
+from typing import Protocol
+
+from pipeline.context import PipelineContext
+from video_preprocess.domain import ArtifactRef, StageResult, StageStatus, StageTask
+from video_preprocess.executors import StageBindingRegistry
+from video_preprocess.storage import LegacyArtifactRegistrar
+
+
+class LegacyStageContractError(RuntimeError):
+    """A legacy path/config cannot satisfy its explicit StageTask contract."""
+
+
+class LegacyStageModule(Protocol):
+    """Minimal shape shared by the existing numbered Stage modules."""
+
+    NAME: str
+
+    def run(self, ctx: PipelineContext) -> Mapping[str, object]: ...
+
+
+PathResolver = Callable[[PipelineContext], Path]
+OutputResolver = Callable[
+    [PipelineContext, LegacyArtifactRegistrar, StageTask],
+    Mapping[str, ArtifactRef],
+]
+AfterRunHook = Callable[[PipelineContext], None]
+
+
+@dataclass(frozen=True, slots=True)
+class LegacyInputBinding:
+    """Logical task input and the host path read by a legacy Stage."""
+
+    logical_name: str
+    path: PathResolver
+
+
+@dataclass(frozen=True, slots=True)
+class LegacyStageDefinition:
+    """Explicit compatibility contract for one current Stage module."""
+
+    name: str
+    stage_version: str
+    module: LegacyStageModule
+    inputs: Sequence[LegacyInputBinding]
+    config_fields: Sequence[str]
+    output_resolver: OutputResolver
+    after_run: AfterRunHook | None = None
+
+
+class LegacyStageTaskRunner:
+    """Run one legacy Stage while enforcing explicit task semantics."""
+
+    def __init__(
+        self,
+        context: PipelineContext,
+        registrar: LegacyArtifactRegistrar,
+        definition: LegacyStageDefinition,
+        *,
+        execution_lock: threading.Lock | None = None,
+    ) -> None:
+        if not isinstance(context, PipelineContext):
+            raise TypeError("context must be a PipelineContext")
+        if not callable(getattr(registrar, "register_file", None)):
+            raise TypeError("registrar must implement register_file")
+        if not isinstance(definition, LegacyStageDefinition):
+            raise TypeError("definition must be a LegacyStageDefinition")
+        self.context = context
+        self.registrar = registrar
+        self.definition = definition
+        self.execution_lock = execution_lock or threading.Lock()
+
+    def __call__(self, task: StageTask) -> StageResult:
+        if not isinstance(task, StageTask):
+            raise TypeError("task must be a StageTask")
+        with self.execution_lock:
+            self._validate_task(task)
+            self._verify_inputs(task)
+            previous_config = {
+                name: getattr(self.context, name)
+                for name in self.definition.config_fields
+            }
+            try:
+                for name in self.definition.config_fields:
+                    setattr(self.context, name, task.config[name])
+                metrics = self.definition.module.run(self.context)
+                if not isinstance(metrics, Mapping):
+                    raise LegacyStageContractError(
+                        "legacy Stage must return a metrics mapping"
+                    )
+                if self.definition.after_run is not None:
+                    self.definition.after_run(self.context)
+                outputs = dict(
+                    self.definition.output_resolver(
+                        self.context,
+                        self.registrar,
+                        task,
+                    )
+                )
+            finally:
+                for name, value in previous_config.items():
+                    setattr(self.context, name, value)
+        return StageResult(
+            run_id=task.run_id,
+            stage_run_id=task.stage_run_id,
+            attempt=task.attempt,
+            status=StageStatus.SUCCEEDED,
+            outputs=outputs,
+            metrics=dict(metrics),
+        )
+
+    def _validate_task(self, task: StageTask) -> None:
+        definition = self.definition
+        if task.stage != definition.name:
+            raise LegacyStageContractError(
+                "StageTask name does not match the legacy binding"
+            )
+        if task.stage_version != definition.stage_version:
+            raise LegacyStageContractError(
+                "StageTask version does not match the legacy binding"
+            )
+        expected_inputs = {binding.logical_name for binding in definition.inputs}
+        if set(task.inputs) != expected_inputs:
+            raise LegacyStageContractError(
+                "StageTask inputs do not match the legacy binding"
+            )
+        expected_config = set(definition.config_fields)
+        if set(task.config) != expected_config:
+            raise LegacyStageContractError(
+                "StageTask config does not match the legacy binding"
+            )
+        if task.model_bindings:
+            raise LegacyStageContractError(
+                "non-model legacy binding rejects model bindings"
+            )
+
+    def _verify_inputs(self, task: StageTask) -> None:
+        for binding in self.definition.inputs:
+            ref = task.inputs[binding.logical_name]
+            path = binding.path(self.context)
+            _verify_path(binding.logical_name, path, ref)
+
+
+def create_legacy_media_bindings(
+    context: PipelineContext,
+    registrar: LegacyArtifactRegistrar,
+    *,
+    stage_modules: Mapping[str, LegacyStageModule] | None = None,
+) -> StageBindingRegistry:
+    """Bind legacy Stages 01-04 for the sequential LocalExecutor."""
+
+    modules = (
+        _load_default_modules()
+        if stage_modules is None
+        else dict(stage_modules)
+    )
+    expected_names = {"01_probe", "02_scenes", "03_keyframes", "04_audio"}
+    if set(modules) != expected_names:
+        raise ValueError("stage_modules must define legacy Stages 01 through 04")
+    for name, module in modules.items():
+        if getattr(module, "NAME", None) != name or not callable(
+            getattr(module, "run", None)
+        ):
+            raise TypeError(
+                f"legacy Stage module does not match binding {name}"
+            )
+    context.artifact_registrar = registrar
+    execution_lock = threading.Lock()
+    definitions = _media_definitions(modules)
+    return StageBindingRegistry(
+        (
+            definition.name,
+            LegacyStageTaskRunner(
+                context,
+                registrar,
+                definition,
+                execution_lock=execution_lock,
+            ),
+        )
+        for definition in definitions
+    )
+
+
+def _media_definitions(
+    modules: Mapping[str, LegacyStageModule],
+) -> tuple[LegacyStageDefinition, ...]:
+    video = LegacyInputBinding("video", lambda ctx: ctx.video_path)
+    metadata = LegacyInputBinding(
+        "metadata",
+        lambda ctx: ctx.out_root / "01_probe" / "metadata.json",
+    )
+    scenes = LegacyInputBinding(
+        "scenes",
+        lambda ctx: ctx.out_root / "02_scenes" / "scenes.json",
+    )
+    return (
+        LegacyStageDefinition(
+            name="01_probe",
+            stage_version="1.0.0",
+            module=modules["01_probe"],
+            inputs=(video,),
+            config_fields=(),
+            output_resolver=_probe_outputs,
+        ),
+        LegacyStageDefinition(
+            name="02_scenes",
+            stage_version="1.0.0",
+            module=modules["02_scenes"],
+            inputs=(video, metadata),
+            config_fields=("scene_threshold", "min_scene_len_frames"),
+            output_resolver=_scene_outputs,
+        ),
+        LegacyStageDefinition(
+            name="03_keyframes",
+            stage_version="1.1.0",
+            module=modules["03_keyframes"],
+            inputs=(video, scenes),
+            config_fields=("keyframes_per_scene",),
+            output_resolver=_keyframe_outputs,
+            after_run=_write_keyframe_bundle,
+        ),
+        LegacyStageDefinition(
+            name="04_audio",
+            stage_version="1.0.0",
+            module=modules["04_audio"],
+            inputs=(video, metadata),
+            config_fields=(),
+            output_resolver=_audio_outputs,
+        ),
+    )
+
+
+def _probe_outputs(
+    ctx: PipelineContext,
+    registrar: LegacyArtifactRegistrar,
+    task: StageTask,
+) -> Mapping[str, ArtifactRef]:
+    return {
+        "metadata": _register(
+            registrar,
+            task,
+            "metadata",
+            "01_probe/metadata.json",
+            kind="json",
+            media_type="application/json",
+        )
+    }
+
+
+def _scene_outputs(
+    ctx: PipelineContext,
+    registrar: LegacyArtifactRegistrar,
+    task: StageTask,
+) -> Mapping[str, ArtifactRef]:
+    return {
+        "scenes": _register(
+            registrar,
+            task,
+            "scenes",
+            "02_scenes/scenes.json",
+            kind="json",
+            media_type="application/json",
+        ),
+        "scene_stats": _register(
+            registrar,
+            task,
+            "scene_stats",
+            "02_scenes/scene_stats.csv",
+            kind="table",
+            media_type="text/csv",
+        ),
+    }
+
+
+def _keyframe_outputs(
+    ctx: PipelineContext,
+    registrar: LegacyArtifactRegistrar,
+    task: StageTask,
+) -> Mapping[str, ArtifactRef]:
+    return {
+        "keyframes": _register(
+            registrar,
+            task,
+            "keyframes",
+            "03_keyframes/keyframes.json",
+            kind="json",
+            media_type="application/json",
+        ),
+        "keyframe_images": _register(
+            registrar,
+            task,
+            "keyframe_images",
+            "03_keyframes/keyframe_images.zip",
+            kind="archive",
+            media_type="application/zip",
+        ),
+    }
+
+
+def _audio_outputs(
+    ctx: PipelineContext,
+    registrar: LegacyArtifactRegistrar,
+    task: StageTask,
+) -> Mapping[str, ArtifactRef]:
+    metadata = _register(
+        registrar,
+        task,
+        "audio_metadata",
+        "04_audio/audio.json",
+        kind="json",
+        media_type="application/json",
+    )
+    payload = ctx.load_json(ctx.out_root / "04_audio" / "audio.json")
+    if payload.get("has_audio"):
+        audio = _register(
+            registrar,
+            task,
+            "audio",
+            "04_audio/audio_16k.wav",
+            kind="audio",
+            media_type="audio/wav",
+        )
+    else:
+        audio = metadata
+    return {"audio": audio, "audio_metadata": metadata}
+
+
+def _register(
+    registrar: LegacyArtifactRegistrar,
+    task: StageTask,
+    logical_name: str,
+    relative_path: str,
+    *,
+    kind: str,
+    media_type: str,
+) -> ArtifactRef:
+    try:
+        return registrar.register_file(
+            relative_path,
+            artifact_id=f"{task.stage_run_id}:{logical_name}",
+            kind=kind,
+            media_type=media_type,
+            metadata={
+                "stage": task.stage,
+                "logical_output": logical_name,
+            },
+        )
+    except Exception as exc:
+        raise LegacyStageContractError(
+            f"legacy Stage did not publish output {logical_name}"
+        ) from exc
+
+
+def _write_keyframe_bundle(ctx: PipelineContext) -> None:
+    payload = ctx.load_json(
+        ctx.out_root / "03_keyframes" / "keyframes.json"
+    )
+    keyframes = payload.get("keyframes")
+    if not isinstance(keyframes, list):
+        raise LegacyStageContractError(
+            "keyframes.json must contain a keyframes array"
+        )
+    output_path = ctx.out_root / "03_keyframes" / "keyframe_images.zip"
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_name = tempfile.mkstemp(
+        dir=output_path.parent,
+        prefix=".keyframe_images.",
+        suffix=".tmp",
+    )
+    os.close(descriptor)
+    temporary_path = Path(temporary_name)
+    try:
+        with zipfile.ZipFile(
+            temporary_path,
+            mode="w",
+            compression=zipfile.ZIP_STORED,
+        ) as archive:
+            for entry in sorted(keyframes, key=lambda item: item["path"]):
+                relative = _safe_keyframe_path(entry.get("path"))
+                source = ctx.out_root.joinpath(*relative.parts)
+                if not source.is_file():
+                    raise LegacyStageContractError(
+                        "keyframe image listed by Stage is missing"
+                    )
+                info = zipfile.ZipInfo(relative.as_posix())
+                info.date_time = (1980, 1, 1, 0, 0, 0)
+                info.compress_type = zipfile.ZIP_STORED
+                info.external_attr = 0o600 << 16
+                archive.writestr(info, source.read_bytes())
+        os.replace(temporary_path, output_path)
+    except BaseException:
+        temporary_path.unlink(missing_ok=True)
+        raise
+
+
+def _safe_keyframe_path(value: object) -> PurePosixPath:
+    if not isinstance(value, str) or not value.strip() or "\\" in value:
+        raise LegacyStageContractError("keyframe path must be relative POSIX")
+    path = PurePosixPath(value)
+    if (
+        path.is_absolute()
+        or any(part in {"", ".", ".."} for part in path.parts)
+        or path.parts[:2] != ("03_keyframes", "frames")
+    ):
+        raise LegacyStageContractError(
+            "keyframe path must stay under 03_keyframes/frames"
+        )
+    return path
+
+
+def _verify_path(
+    logical_name: str,
+    path: Path,
+    ref: ArtifactRef,
+) -> None:
+    if ref.checksum.algorithm != "sha256":
+        raise LegacyStageContractError(
+            f"legacy input {logical_name} requires a SHA-256 checksum"
+        )
+    digest = hashlib.sha256()
+    size = 0
+    try:
+        with path.open("rb") as handle:
+            while True:
+                chunk = handle.read(1024 * 1024)
+                if not chunk:
+                    break
+                digest.update(chunk)
+                size += len(chunk)
+    except OSError as exc:
+        raise LegacyStageContractError(
+            f"legacy input {logical_name} is not materialized"
+        ) from exc
+    if size != ref.size_bytes or digest.hexdigest() != ref.checksum.value:
+        raise LegacyStageContractError(
+            f"legacy input {logical_name} does not match its ArtifactRef"
+        )
+
+
+def _load_default_modules() -> dict[str, LegacyStageModule]:
+    from pipeline.stages import (
+        s01_probe,
+        s02_scenes,
+        s03_keyframes,
+        s04_audio,
+    )
+
+    return {
+        module.NAME: module
+        for module in (s01_probe, s02_scenes, s03_keyframes, s04_audio)
+    }

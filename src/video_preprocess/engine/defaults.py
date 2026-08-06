@@ -23,10 +23,10 @@ DEFAULT_STAGE_SPECS = (
     ),
     StageSpec(
         name="03_keyframes",
-        stage_version="1.0.0",
+        stage_version="1.1.0",
         dependencies=("02_scenes",),
         required_inputs=("video", "scenes"),
-        outputs=("keyframes",),
+        outputs=("keyframes", "keyframe_images"),
         resource_hints=ResourceHints(cpu=1.0, memory_mb=256),
     ),
     StageSpec(
@@ -78,9 +78,9 @@ DEFAULT_STAGE_SPECS = (
     ),
     StageSpec(
         name="08_captions",
-        stage_version="1.0.0",
+        stage_version="1.1.0",
         dependencies=("03_keyframes",),
-        required_inputs=("keyframes",),
+        required_inputs=("keyframes", "keyframe_images"),
         outputs=("captions",),
         model_slots=("caption",),
         resource_hints=ResourceHints(

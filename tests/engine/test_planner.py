@@ -42,6 +42,14 @@ def test_default_registry_has_stable_eleven_stage_plan() -> None:
     assert registry.get("06_stt").model_slots == ("stt",)
     assert registry.get("07_diarize").dependencies == ("04_audio",)
     assert registry.get("08_captions").dependencies == ("03_keyframes",)
+    assert registry.get("03_keyframes").outputs == (
+        "keyframes",
+        "keyframe_images",
+    )
+    assert registry.get("08_captions").required_inputs == (
+        "keyframes",
+        "keyframe_images",
+    )
 
 
 def test_topological_order_is_independent_of_registration_order() -> None:

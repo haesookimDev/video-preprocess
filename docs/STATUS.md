@@ -2,7 +2,7 @@
 
 - 마지막 갱신: **2026-08-06**
 - 현재 단계: **Phase 3 — Pipeline Engine과 LocalExecutor**
-- 다음 작업: **legacy 11-stage StageTask binding과 Engine compatibility path**
+- 다음 작업: **legacy 05 VAD~08 caption model Stage binding**
 
 이 문서는 개발 진행 상황의 단일 진입점이다. 새로운 세션은 이 문서를 먼저 읽고, 실제 코드와
 Git 상태를 확인한 뒤 작업을 시작한다.
@@ -20,11 +20,12 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - `src/video_preprocess/storage/`: Artifact·Run Store Port와 로컬 구현
 - `src/video_preprocess/engine/`: planner, PipelineEngine, manifest cache와 RunStore journal
 - `src/video_preprocess/executors/`: async Executor Port, Stage binding과 순차 LocalExecutor
+- `src/video_preprocess/adapters/`: legacy 01~04 StageTask compatibility binding
 - 로컬 파일 존재 여부를 기준으로 단계 스킵
 - VAD, STT, diarization, caption과 embedding이 `InferenceGateway`와 Local Provider로 실행
 - 모든 모델 Stage에서 구체 ML library import와 model lifecycle 제거 완료
 - 새 Engine은 manifest persistence/cache resume를 지원하지만 기존 runner에는 아직 연결되지 않음
-- legacy Stage binding과 HTTP provider는 아직 구현되지 않음
+- legacy 01~04 binding은 구현됐고 05~11, 기본 CLI와 HTTP provider는 아직 미구현
 - Local Store는 구현됐고 model Stage compatibility adapter에서 media 등록에 사용하며,
   전체 runner 연결은 Engine 전환 시점까지 보류
 
@@ -67,6 +68,8 @@ Git 상태를 확인한 뒤 작업을 시작한다.
   [`ADR-0012`](./adr/0012-content-addressed-manifest-cache-decisions.md)
 - PipelineEngine RunStore journal과 cache resume 결정:
   [`ADR-0013`](./adr/0013-pipeline-engine-run-journal-and-cache-resume.md)
+- legacy media StageTask binding 결정:
+  [`ADR-0014`](./adr/0014-legacy-media-stage-task-bindings.md)
 
 ## 3. 완료된 작업
 
@@ -104,6 +107,7 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - [x] 순차 PipelineEngine과 run/stage 상태 머신
 - [x] manifest cache key와 artifact 검증 기반 cache decision
 - [x] PipelineEngine RunStore manifest와 같은 run의 cache resume
+- [x] legacy 01 probe~04 audio StageTask binding
 
 ## 4. 아직 구현되지 않은 작업
 
@@ -122,6 +126,8 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - [x] 최소 PipelineEngine
 - [x] manifest cache key와 독립 evaluator
 - [x] PipelineEngine manifest persistence와 같은 run의 cache hit 통합
+- [x] legacy 01~04 Engine/LocalExecutor compatibility path
+- [ ] legacy 05~11 Engine/LocalExecutor compatibility path
 - [ ] global cache index와 run 간 cache 재사용
 - [ ] HTTPInferenceProvider와 모델 서버 계약 구현
 - [ ] Application Service와 API adapter
@@ -132,19 +138,19 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 문서가 존재한다고 구현된 것으로 간주하지 않는다. 완료 여부는 코드와 자동 테스트를 기준으로
 이 체크리스트에서 갱신한다.
 
-## 5. 다음 작업: legacy StageTask binding과 Engine compatibility slice
+## 5. 다음 작업: legacy 05~08 model Stage binding slice
 
 권장 순서:
 
-1. 기존 11개 Stage module의 `run(ctx)`를 StageTask runner로 감싸는 compatibility binding 계약 설계
-2. task input ArtifactRef를 기존 output tree에 materialize/register하는 run-scoped context 구성
-3. legacy `OUTPUT` 파일을 logical output key별 ArtifactRef로 등록하고 StageResult로 정규화
-4. 기존 파일 존재 skip은 binding 내부에서 비활성화하고 Engine cache decision만 실행 여부를 소유
-5. 우선 01 probe~04 audio의 non-model Stage binding과 fake/fixture contract test 구현
-6. 이후 05~10 model/Gateway Stage, 11 context 순서로 연결하고 기존 CLI와 sample 회귀 수행
+1. 05 VAD·06 STT·07 diarization·08 caption의 config와 model binding exact contract 정의
+2. provider-backed legacy JSON의 provider/model/revision/runtime을 `ModelExecution`으로 정규화
+3. 03 cache hit 후 이미지가 materialize되지 않은 경우 `keyframe_images` bundle을 안전하게 복원
+4. no-audio/no-speech/credential skip은 sentinel output과 명시적 StageStatus/reason으로 정규화
+5. fake services와 artifact fixture로 05~08 binding을 LocalExecutor와 PipelineEngine에서 검증
+6. effective model resolver composition에 필요한 alias→fingerprint adapter 경계 정리
 
-첫 slice는 compatibility adapter와 non-model Stage 경계를 고정한다. 전체 11단계가 새 Engine에서
-동등하게 실행된 뒤 CLI 기본 경로를 Application Service로 전환한다.
+그 다음 09 timeline~11 context와 index output sidecar를 연결하고, 전체 11단계 새 Engine sample
+회귀 후 Application Service와 CLI 선택 실행을 구현한다.
 
 ## 6. 알려진 중요 문제
 
@@ -165,7 +171,7 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 
 ## 7. 기존 검증 기준선
 
-2026-08-06 Phase 0~Phase 3 Engine manifest/cache integration 점검 결과:
+2026-08-06 Phase 0~Phase 3 legacy media binding 점검 결과:
 
 - 깨끗한 Python 3.13 임시 venv에 `requirements-dev.txt` 설치 성공
 - embedding slice 당시 기존 `.venv`와 깨끗한 venv에서 전체 테스트 85개 성공
@@ -178,6 +184,11 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - PipelineEngine slice 기본 테스트 194개 성공
 - manifest cache decision slice 기본 테스트 218개 성공
 - Engine manifest/cache integration slice 기본 테스트 228개 성공
+- legacy 01~04 binding slice 기본 테스트 235개 성공
+- strict input/config 검증, context 복원, 01~04 logical output 등록, no-audio sentinel,
+  deterministic keyframe ZIP과 PipelineEngine→LocalExecutor 연결 확인
+- 기존 CLI `sample.mp4 --force` 오프라인 전체 11단계 `ok`(29.4초), VAD/STT/diarization/caption과
+  downstream 산출물 회귀 없음; query `음성 구간 검출 --topk 2` top-1 씬 02 확인
 - running/stage/terminal 저장 순서, same-run cache resume, cached lifecycle, effective model miss,
   force/config invalidation, failed/cancelled persistence와 실제 Local Store 재시작 확인
 - run-local identity 제외 cache key, 입력/설정/Stage/model 변화, effective model resolution,
@@ -232,6 +243,19 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 
 최신 기록을 위에 추가한다. 긴 구현 설명은 PR이나 ADR에 두고 여기에는 다음 세션이 재개하는 데
 필요한 정보만 적는다.
+
+### 2026-08-06 — Phase 3 legacy 01~04 media StageTask binding
+
+- 목표: 기존 `run(ctx)` media Stage를 Engine/LocalExecutor 계약에 단계적으로 연결
+- 완료: strict `LegacyStageTaskRunner`, 01~04 binding factory, logical output registrar,
+  deterministic keyframe image ZIP과 no-audio sentinel 구현
+- 주요 결정: task input path SHA-256 확인, config exact match·실행 후 복원, marker skip 미사용,
+  03/08 Stage version 1.1.0과 `keyframe_images` required contract; ADR-0014
+- 검증: 기본 pytest 235개 통과; fake Stage로 01~04 artifact, input 변조, config/model 거부,
+  bundle 결정성, Engine→LocalExecutor 전체 흐름 확인; 기존 CLI sample 전체 `ok`(29.4초), query
+  top-1 씬 02
+- 호환성: 기존 CLI/runner와 기존 JSON/JPEG/WAV는 유지하며 새 Engine 경로에 ZIP 하나만 추가
+- 다음 작업: 05 VAD~08 caption model Stage binding, bundle 복원과 ModelExecution 정규화
 
 ### 2026-08-06 — Phase 3 PipelineEngine manifest persistence와 cache resume
 

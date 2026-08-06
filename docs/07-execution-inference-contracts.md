@@ -18,8 +18,9 @@ Executor Port와 LocalExecutor는
 [`src/video_preprocess/executors/`](../src/video_preprocess/executors/)에 구현됐다. 순차
 PipelineEngine과 상태 머신은
 [`src/video_preprocess/engine/`](../src/video_preprocess/engine/)에 구현됐다. manifest cache key와
-decision, RunStore journal과 같은 run의 cache resume도 구현됐다. legacy Stage binding, global
-cache index와 HTTP Provider는 아직 구현 완료로 간주하지 않는다. Inference 공통 계약,
+decision, RunStore journal과 같은 run의 cache resume도 구현됐다. 전체 legacy Stage binding,
+global cache index와 HTTP Provider는 아직 구현 완료로 간주하지 않는다. legacy binding은 01~04만
+구현됐으며 05~11과 기본 CLI 연결이 남아 있다. Inference 공통 계약,
 Gateway, `LocalEmbeddingProvider`, `LocalCaptionProvider`, `LocalSTTProvider`,
 `LocalDiarizationProvider`와 `LocalVADProvider`는
 [`src/video_preprocess/inference/`](../src/video_preprocess/inference/)에 구현되어 있고 결정은
@@ -259,6 +260,28 @@ RunStore가 주입되면 Engine은 시작, 각 Stage terminal과 run terminal �
 [`ADR-0011`](./adr/0011-sequential-pipeline-engine-artifact-orchestration.md)과
 [`ADR-0013`](./adr/0013-pipeline-engine-run-journal-and-cache-resume.md)에 기록한다. retry, global
 cache index와 legacy Stage 실행 연결은 후속 slice다.
+
+### 4.6 Legacy 01~04 compatibility binding
+
+`LegacyStageTaskRunner`는 기존 `run(ctx)` Stage를 LocalExecutor에 연결하는 migration adapter다.
+task의 Stage/version, logical input, config와 model binding key를 exact match하고, legacy Stage가
+읽는 materialized path의 size/SHA-256을 input ArtifactRef와 비교한 뒤 실행한다. task config는
+실행 중에만 run-scoped context에 적용하고 원래 값을 복원한다. 기존 runner의 marker 파일 skip은
+사용하지 않는다.
+
+현재 output mapping:
+
+| Stage | outputs |
+|---|---|
+| `01_probe` | `metadata` JSON |
+| `02_scenes` | `scenes` JSON, `scene_stats` CSV |
+| `03_keyframes` | `keyframes` JSON, deterministic `keyframe_images` ZIP |
+| `04_audio` | `audio` WAV와 `audio_metadata` JSON |
+
+no-audio에서는 `audio`가 `audio_metadata` JSON sentinel과 같은 ArtifactRef를 사용한다. 03의 가변
+JPEG sidecar는 정렬·고정 metadata ZIP으로 묶어 manifest에서 누락/변조를 검증한다. 이 계약
+추가로 03과 해당 bundle을 required input으로 받는 08의 Stage version은 `1.1.0`이다. 결정 근거는
+[`ADR-0014`](./adr/0014-legacy-media-stage-task-bindings.md)에 기록한다.
 
 ## 5. Executor 계약
 
