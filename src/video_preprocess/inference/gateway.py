@@ -207,7 +207,7 @@ class InferenceGateway:
 
     @staticmethod
     def _batch_size(request: InferenceRequest) -> int | None:
-        for input_name in ("texts", "images"):
+        for input_name in ("texts", "images", "chunks"):
             value = request.inputs.get(input_name)
             if isinstance(value, list):
                 return len(value)

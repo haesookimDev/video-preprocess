@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from video_preprocess.inference import CaptionService
+    from video_preprocess.inference import CaptionService, STTService
     from video_preprocess.storage import LegacyArtifactRegistrar
 
 
@@ -32,6 +32,10 @@ class PipelineContext:
     diarize_model: str = "pyannote/speaker-diarization-community-1"
 
     caption_service: CaptionService | None = field(
+        default=None,
+        repr=False,
+    )
+    stt_service: STTService | None = field(
         default=None,
         repr=False,
     )

@@ -5,6 +5,7 @@ from .embedding import EmbeddingBatch, EmbeddingService
 from .errors import InferenceCallError, ProviderConfigurationError
 from .gateway import InferenceGateway
 from .provider import InferenceProvider
+from .stt import SpeechChunk, STTService, TranscriptSegment, TranscriptionBatch
 
 __all__ = [
     "CaptionBatch",
@@ -15,4 +16,8 @@ __all__ = [
     "InferenceGateway",
     "InferenceProvider",
     "ProviderConfigurationError",
+    "SpeechChunk",
+    "STTService",
+    "TranscriptSegment",
+    "TranscriptionBatch",
 ]

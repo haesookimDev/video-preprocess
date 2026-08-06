@@ -7,11 +7,6 @@
 출력: 06_stt/transcript.json
 """
 
-import time
-
-from faster_whisper import WhisperModel
-from faster_whisper.audio import decode_audio
-
 from ..context import PipelineContext
 from ..logging_setup import stage_logger
 
@@ -54,54 +49,59 @@ def run(ctx: PipelineContext) -> dict:
         len(vad["segments"]), len(merged), ctx.stt_merge_gap_sec,
     )
 
-    log.info("Whisper 모델 로드: %s (device=auto, compute_type=int8)",
-             ctx.whisper_model)
-    t0 = time.monotonic()
-    model = WhisperModel(ctx.whisper_model, device="auto", compute_type="int8")
-    log.debug("모델 로드 완료 (%.1fs)", time.monotonic() - t0)
-
     audio_info = ctx.load_json(ctx.out_root / "04_audio" / "audio.json")
-    audio = decode_audio(str(ctx.out_root / audio_info["path"]),
-                         sampling_rate=SAMPLE_RATE)
+    if ctx.stt_service is None or ctx.artifact_registrar is None:
+        raise RuntimeError("STT inference dependencies were not configured")
+    audio_ref = ctx.artifact_registrar.register_file(
+        audio_info["path"],
+        artifact_id="audio_16k",
+        kind="audio",
+        media_type="audio/wav",
+        metadata={
+            "stage": "04_audio",
+            "sample_rate": audio_info["sample_rate"],
+            "channels": audio_info["channels"],
+            "duration_sec": audio_info["duration_sec"],
+        },
+    )
 
-    transcript = []
-    detected_lang = None
-    total_speech = 0.0
-    t_start = time.monotonic()
-
-    for i, chunk in enumerate(merged, start=1):
-        s = int(chunk["start_sec"] * SAMPLE_RATE)
-        e = int(chunk["end_sec"] * SAMPLE_RATE)
-        chunk_dur = chunk["end_sec"] - chunk["start_sec"]
-        total_speech += chunk_dur
-        log.debug("청크 %02d/%d 전사 시작: %.2fs ~ %.2fs (%.1fs)",
-                  i, len(merged), chunk["start_sec"], chunk["end_sec"], chunk_dur)
-
-        t_chunk = time.monotonic()
-        segments, info = model.transcribe(
-            audio[s:e], language=ctx.language, beam_size=5,
+    log.info(
+        "STT provider 호출: stt.default → %s "
+        "(device=auto, compute_type=int8)",
+        ctx.whisper_model,
+    )
+    batch = ctx.stt_service.transcribe(
+        audio_ref,
+        merged,
+        language=ctx.language,
+        beam_size=5,
+        sampling_rate=SAMPLE_RATE,
+        run_id=ctx.out_root.name,
+        stage_run_id=NAME,
+    )
+    transcript = [segment.to_dict() for segment in batch.segments]
+    if batch.language is not None:
+        if batch.language_probability is None:
+            log.info("감지 언어: %s", batch.language)
+        else:
+            log.info(
+                "감지 언어: %s (확률 %.2f)",
+                batch.language,
+                batch.language_probability,
+            )
+    for entry in transcript:
+        log.info(
+            "  [%7.2fs~%7.2fs] %s",
+            entry["start_sec"],
+            entry["end_sec"],
+            entry["text"],
         )
-        if detected_lang is None:
-            detected_lang = info.language
-            log.info("감지 언어: %s (확률 %.2f)",
-                     info.language, info.language_probability)
 
-        for seg in segments:
-            entry = {
-                "start_sec": round(chunk["start_sec"] + seg.start, 3),
-                "end_sec": round(chunk["start_sec"] + seg.end, 3),
-                "text": seg.text.strip(),
-                "avg_logprob": round(seg.avg_logprob, 4),
-                "no_speech_prob": round(seg.no_speech_prob, 4),
-                "vad_source_ids": chunk["source_ids"],
-            }
-            transcript.append(entry)
-            log.info("  [%7.2fs~%7.2fs] %s",
-                     entry["start_sec"], entry["end_sec"], entry["text"])
-        log.debug("청크 %02d 전사 완료 (%.1fs 소요)",
-                  i, time.monotonic() - t_chunk)
-
-    elapsed = time.monotonic() - t_start
+    elapsed = float(batch.timing.get("inference_sec", 0.0))
+    total_speech = sum(
+        chunk["end_sec"] - chunk["start_sec"]
+        for chunk in merged
+    )
     rtf = elapsed / total_speech if total_speech else 0
     log.info(
         "전사 완료: 문장 %d개, 음성 %.1f초를 %.1f초에 처리 (RTF %.2f)",
@@ -110,10 +110,24 @@ def run(ctx: PipelineContext) -> dict:
 
     result = {
         "model": ctx.whisper_model,
-        "language": detected_lang,
+        "provider": batch.model.provider,
+        "revision": batch.model.revision,
+        "runtime": batch.model.runtime,
+        "language": batch.language,
+        "language_probability": batch.language_probability,
         "merged_chunk_count": len(merged),
         "transcribe_elapsed_sec": round(elapsed, 2),
         "segments": transcript,
     }
+    log.debug(
+        "실제 STT 모델: provider=%s model=%s revision=%s runtime=%s",
+        batch.model.provider,
+        batch.model.name,
+        batch.model.revision,
+        batch.model.runtime,
+    )
     ctx.save_json(out_dir / "transcript.json", result)
-    return {"transcript_count": len(transcript), "language": detected_lang}
+    return {
+        "transcript_count": len(transcript),
+        "language": batch.language,
+    }

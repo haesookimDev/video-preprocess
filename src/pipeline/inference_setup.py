@@ -2,7 +2,10 @@
 
 import hashlib
 
-from video_preprocess.inference.local import create_local_caption_service
+from video_preprocess.inference.local import (
+    create_local_caption_service,
+    create_local_stt_service,
+)
 from video_preprocess.storage import LocalArtifactStore, LegacyOutputAdapter
 
 from .context import PipelineContext
@@ -11,11 +14,17 @@ from .context import PipelineContext
 def configure_local_inference(ctx: PipelineContext) -> None:
     """Inject local inference services without loading model weights."""
 
-    if ctx.caption_service is not None and ctx.artifact_registrar is not None:
+    dependencies = (
+        ctx.caption_service,
+        ctx.stt_service,
+        ctx.artifact_registrar,
+    )
+    if all(dependency is not None for dependency in dependencies):
         return
-    if ctx.caption_service is not None or ctx.artifact_registrar is not None:
+    if any(dependency is not None for dependency in dependencies):
         raise ValueError(
-            "caption_service and artifact_registrar must be configured together"
+            "caption_service, stt_service, and artifact_registrar "
+            "must be configured together"
         )
 
     namespace_hash = hashlib.sha256(
@@ -28,5 +37,9 @@ def configure_local_inference(ctx: PipelineContext) -> None:
     ctx.artifact_registrar = LegacyOutputAdapter(artifact_store)
     ctx.caption_service = create_local_caption_service(
         ctx.caption_model,
+        artifact_store,
+    )
+    ctx.stt_service = create_local_stt_service(
+        ctx.whisper_model,
         artifact_store,
     )
