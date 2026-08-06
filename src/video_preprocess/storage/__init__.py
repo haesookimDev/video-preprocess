@@ -15,7 +15,7 @@ from .errors import (
 )
 from .local_artifacts import LocalArtifactStore
 from .local_runs import LocalRunStore
-from .legacy import LegacyOutputAdapter
+from .legacy import LegacyArtifactRegistrar, LegacyOutputAdapter
 from .runs import RunStore
 
 __all__ = [
@@ -26,6 +26,7 @@ __all__ = [
     "IncompleteRunError",
     "InvalidArtifactPathError",
     "InvalidArtifactURIError",
+    "LegacyArtifactRegistrar",
     "LegacyArtifactFormatError",
     "LegacyOutputAdapter",
     "LocalArtifactStore",

@@ -66,7 +66,23 @@ class HealthState(str, Enum):
     UNAVAILABLE = "unavailable"
 
 
-InferenceValue = JSONValue | ArtifactRef
+InferenceValue = (
+    JSONValue
+    | ArtifactRef
+    | list["InferenceValue"]
+    | dict[str, "InferenceValue"]
+)
+
+
+_ARTIFACT_FIELDS = {
+    "schema_version",
+    "artifact_id",
+    "kind",
+    "uri",
+    "media_type",
+    "size_bytes",
+    "checksum",
+}
 
 
 def _enum_value(value: object, enum_type: type[Enum], field_name: str) -> Enum:
@@ -87,14 +103,37 @@ def _normalize_inference_values(
     field_name: str,
 ) -> dict[str, InferenceValue]:
     mapping = require_mapping(value, field_name)
-    normalized = {}
+    normalized: dict[str, InferenceValue] = {}
     for key, item in mapping.items():
         require_string(key, f"{field_name}.key")
-        if isinstance(item, ArtifactRef):
-            normalized[key] = item
-        else:
-            normalized[key] = normalize_json(item, f"{field_name}.{key}")
+        normalized[key] = _normalize_inference_value(
+            item,
+            f"{field_name}.{key}",
+        )
     return normalized
+
+
+def _normalize_inference_value(
+    value: object,
+    field_name: str,
+) -> InferenceValue:
+    if isinstance(value, ArtifactRef):
+        return value
+    if isinstance(value, Mapping):
+        normalized: dict[str, InferenceValue] = {}
+        for key, item in value.items():
+            require_string(key, f"{field_name}.key")
+            normalized[key] = _normalize_inference_value(
+                item,
+                f"{field_name}.{key}",
+            )
+        return normalized
+    if isinstance(value, (list, tuple)):
+        return [
+            _normalize_inference_value(item, f"{field_name}[{index}]")
+            for index, item in enumerate(value)
+        ]
+    return normalize_json(value, field_name)
 
 
 def _inference_values_from_dict(
@@ -102,30 +141,58 @@ def _inference_values_from_dict(
     field_name: str,
 ) -> dict[str, InferenceValue]:
     mapping = require_mapping(value, field_name)
-    normalized = {}
+    normalized: dict[str, InferenceValue] = {}
     for key, item in mapping.items():
-        if isinstance(item, Mapping) and {
-            "schema_version",
-            "artifact_id",
-            "kind",
-            "uri",
-            "media_type",
-            "size_bytes",
-            "checksum",
-        }.issubset(item):
-            normalized[key] = ArtifactRef.from_dict(item)
-        else:
-            normalized[key] = normalize_json(item, f"{field_name}.{key}")
+        normalized[key] = _inference_value_from_dict(
+            item,
+            f"{field_name}.{key}",
+        )
     return normalized
+
+
+def _inference_value_from_dict(
+    value: object,
+    field_name: str,
+) -> InferenceValue:
+    if isinstance(value, Mapping):
+        if _ARTIFACT_FIELDS.issubset(value):
+            return ArtifactRef.from_dict(value)
+        normalized: dict[str, InferenceValue] = {}
+        for key, item in value.items():
+            require_string(key, f"{field_name}.key")
+            normalized[key] = _inference_value_from_dict(
+                item,
+                f"{field_name}.{key}",
+            )
+        return normalized
+    if isinstance(value, (list, tuple)):
+        return [
+            _inference_value_from_dict(item, f"{field_name}[{index}]")
+            for index, item in enumerate(value)
+        ]
+    return normalize_json(value, field_name)
 
 
 def _inference_values_to_dict(
     values: Mapping[str, InferenceValue],
 ) -> dict[str, object]:
     return {
-        key: value.to_dict() if isinstance(value, ArtifactRef) else value
+        key: _inference_value_to_dict(value)
         for key, value in values.items()
     }
+
+
+def _inference_value_to_dict(value: InferenceValue) -> object:
+    if isinstance(value, ArtifactRef):
+        return value.to_dict()
+    if isinstance(value, list):
+        return [_inference_value_to_dict(item) for item in value]
+    if isinstance(value, Mapping):
+        return {
+            key: _inference_value_to_dict(item)
+            for key, item in value.items()
+        }
+    return value
 
 
 @dataclass(frozen=True, slots=True)
@@ -712,4 +779,3 @@ class ProviderHealth:
                 mapping.get("details", {}), "details"
             ),
         )
-

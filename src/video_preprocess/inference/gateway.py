@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 
 from video_preprocess.domain import (
     ArtifactRef,
@@ -170,8 +170,11 @@ class InferenceGateway:
                 f"provider does not support task {request.task.value}",
                 retryable=False,
             )
-        texts = request.inputs.get("texts")
-        if isinstance(texts, list) and len(texts) > capabilities.max_batch_size:
+        batch_size = self._batch_size(request)
+        if (
+            batch_size is not None
+            and batch_size > capabilities.max_batch_size
+        ):
             return self._failure(
                 request,
                 InferenceErrorCode.UNSUPPORTED_CAPABILITY,
@@ -181,22 +184,55 @@ class InferenceGateway:
             )
         if capabilities.max_artifact_bytes is not None:
             for input_name, input_value in request.inputs.items():
-                if (
-                    isinstance(input_value, ArtifactRef)
-                    and input_value.size_bytes > capabilities.max_artifact_bytes
+                for artifact_name, artifact in self._iter_artifacts(
+                    input_value,
+                    input_name,
                 ):
-                    return self._failure(
-                        request,
-                        InferenceErrorCode.UNSUPPORTED_CAPABILITY,
-                        f"input artifact exceeds provider limit: {input_name}",
-                        retryable=False,
-                        details={
-                            "max_artifact_bytes": (
-                                capabilities.max_artifact_bytes
-                            )
-                        },
-                    )
+                    if artifact.size_bytes > capabilities.max_artifact_bytes:
+                        return self._failure(
+                            request,
+                            InferenceErrorCode.UNSUPPORTED_CAPABILITY,
+                            (
+                                "input artifact exceeds provider limit: "
+                                f"{artifact_name}"
+                            ),
+                            retryable=False,
+                            details={
+                                "max_artifact_bytes": (
+                                    capabilities.max_artifact_bytes
+                                )
+                            },
+                        )
         return None
+
+    @staticmethod
+    def _batch_size(request: InferenceRequest) -> int | None:
+        for input_name in ("texts", "images"):
+            value = request.inputs.get(input_name)
+            if isinstance(value, list):
+                return len(value)
+        return None
+
+    @classmethod
+    def _iter_artifacts(
+        cls,
+        value: object,
+        field_name: str,
+    ) -> Iterator[tuple[str, ArtifactRef]]:
+        if isinstance(value, ArtifactRef):
+            yield field_name, value
+        elif isinstance(value, list):
+            for index, item in enumerate(value):
+                yield from cls._iter_artifacts(
+                    item,
+                    f"{field_name}[{index}]",
+                )
+        elif isinstance(value, Mapping):
+            for key, item in value.items():
+                yield from cls._iter_artifacts(
+                    item,
+                    f"{field_name}.{key}",
+                )
 
     @staticmethod
     def _failure(

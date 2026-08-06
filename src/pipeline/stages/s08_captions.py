@@ -8,14 +8,29 @@
 """
 
 import time
-
-from PIL import Image
+from pathlib import PurePosixPath
 
 from ..context import PipelineContext
 from ..logging_setup import stage_logger
 
 NAME = "08_captions"
 OUTPUT = "08_captions/captions.json"
+
+
+def _image_media_type(relative_path: str) -> str:
+    suffix = PurePosixPath(relative_path).suffix.lower()
+    media_types = {
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
+        ".webp": "image/webp",
+    }
+    try:
+        return media_types[suffix]
+    except KeyError as exc:
+        raise ValueError(
+            f"지원하지 않는 키프레임 형식입니다: {relative_path}"
+        ) from exc
 
 
 def run(ctx: PipelineContext) -> dict:
@@ -26,39 +41,79 @@ def run(ctx: PipelineContext) -> dict:
         ctx.out_root / "03_keyframes" / "keyframes.json"
     )["keyframes"]
 
-    log.info("캡셔닝 모델 로드: %s", ctx.caption_model)
-    t0 = time.monotonic()
-    # 로드가 느린 라이브러리라 단계 진입 시점에 임포트
-    from transformers import BlipForConditionalGeneration, BlipProcessor
+    if ctx.caption_service is None or ctx.artifact_registrar is None:
+        raise RuntimeError(
+            "caption inference dependencies were not configured"
+        )
 
-    processor = BlipProcessor.from_pretrained(ctx.caption_model)
-    model = BlipForConditionalGeneration.from_pretrained(ctx.caption_model)
-    log.debug("모델 로드 완료 (%.1fs)", time.monotonic() - t0)
+    image_refs = []
+    for kf in keyframes:
+        image_refs.append(
+            ctx.artifact_registrar.register_file(
+                kf["path"],
+                artifact_id=(
+                    f"keyframe_scene_{int(kf['scene_id']):03d}"
+                ),
+                kind="image",
+                media_type=_image_media_type(kf["path"]),
+                metadata={
+                    "scene_id": kf["scene_id"],
+                    "timestamp_sec": kf["timestamp_sec"],
+                    "stage": "03_keyframes",
+                },
+            )
+        )
+
+    if not image_refs:
+        ctx.save_json(
+            out_dir / "captions.json",
+            {"model": ctx.caption_model, "captions": []},
+        )
+        return {"caption_count": 0}
+
+    log.info(
+        "캡션 provider 호출: caption.default → %s (%d장)",
+        ctx.caption_model,
+        len(image_refs),
+    )
+    t_start = time.monotonic()
+    batch = ctx.caption_service.caption(
+        image_refs,
+        max_new_tokens=40,
+        run_id=ctx.out_root.name,
+        stage_run_id=NAME,
+    )
 
     captions = []
-    t_start = time.monotonic()
-    for kf in keyframes:
-        image_path = ctx.out_root / kf["path"]
-        t_frame = time.monotonic()
-        image = Image.open(image_path).convert("RGB")
-        inputs = processor(images=image, return_tensors="pt")
-        output_ids = model.generate(**inputs, max_new_tokens=40)
-        caption = processor.decode(output_ids[0], skip_special_tokens=True)
+    for kf, caption in zip(keyframes, batch.captions):
         captions.append({
             "scene_id": kf["scene_id"],
             "timestamp_sec": kf["timestamp_sec"],
             "keyframe": kf["path"],
             "caption": caption,
         })
-        log.info("씬 %02d 캡션 (%.1fs): %s",
-                 kf["scene_id"], time.monotonic() - t_frame, caption)
+        log.info("씬 %02d 캡션: %s", kf["scene_id"], caption)
 
     elapsed = time.monotonic() - t_start
-    log.info("캡션 %d개 생성 완료 (%.1fs, 장당 평균 %.1fs)",
-             len(captions), elapsed, elapsed / len(captions) if captions else 0)
+    log.info(
+        "캡션 %d개 생성 완료 (%.1fs, 장당 평균 %.1fs)",
+        len(captions),
+        elapsed,
+        elapsed / len(captions),
+    )
+    log.debug(
+        "실제 캡션 모델: provider=%s model=%s revision=%s runtime=%s",
+        batch.model.provider,
+        batch.model.name,
+        batch.model.revision,
+        batch.model.runtime,
+    )
 
     ctx.save_json(out_dir / "captions.json", {
         "model": ctx.caption_model,
+        "provider": batch.model.provider,
+        "revision": batch.model.revision,
+        "runtime": batch.model.runtime,
         "captions": captions,
     })
     return {"caption_count": len(captions)}

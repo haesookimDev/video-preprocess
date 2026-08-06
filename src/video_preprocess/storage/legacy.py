@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
+from typing import Protocol
 
 from video_preprocess.domain import ArtifactRef, ContractValidationError
 from video_preprocess.domain._validation import (
@@ -14,6 +15,20 @@ from video_preprocess.domain._validation import (
 
 from .errors import LegacyArtifactFormatError
 from .local_artifacts import LocalArtifactStore
+
+
+class LegacyArtifactRegistrar(Protocol):
+    """Registers existing MVP files without exposing local paths downstream."""
+
+    def register_file(
+        self,
+        relative_path: str,
+        *,
+        artifact_id: str,
+        kind: str,
+        media_type: str,
+        metadata: Mapping[str, JSONValue] | None = None,
+    ) -> ArtifactRef: ...
 
 
 class LegacyOutputAdapter:
@@ -29,6 +44,25 @@ class LegacyOutputAdapter:
         artifact_id: str,
         metadata: Mapping[str, JSONValue] | None = None,
     ) -> ArtifactRef:
+        return self.register_file(
+            relative_path,
+            artifact_id=artifact_id,
+            kind="json",
+            media_type="application/json",
+            metadata=metadata,
+        )
+
+    def register_file(
+        self,
+        relative_path: str,
+        *,
+        artifact_id: str,
+        kind: str,
+        media_type: str,
+        metadata: Mapping[str, JSONValue] | None = None,
+    ) -> ArtifactRef:
+        """Register any existing legacy artifact without rewriting bytes."""
+
         normalized_metadata = normalize_json_object(
             {} if metadata is None else metadata,
             "metadata",
@@ -37,8 +71,8 @@ class LegacyOutputAdapter:
         return self.store.register_existing(
             relative_path,
             artifact_id=artifact_id,
-            kind="json",
-            media_type="application/json",
+            kind=kind,
+            media_type=media_type,
             metadata=normalized_metadata,
         )
 

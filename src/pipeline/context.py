@@ -1,8 +1,15 @@
 """파이프라인 전역 컨텍스트: 경로·설정을 모든 단계가 공유한다."""
 
+from __future__ import annotations
+
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from video_preprocess.inference import CaptionService
+    from video_preprocess.storage import LegacyArtifactRegistrar
 
 
 @dataclass
@@ -23,6 +30,15 @@ class PipelineContext:
     caption_model: str = "Salesforce/blip-image-captioning-base"
     embed_model: str = "paraphrase-multilingual-MiniLM-L12-v2"
     diarize_model: str = "pyannote/speaker-diarization-community-1"
+
+    caption_service: CaptionService | None = field(
+        default=None,
+        repr=False,
+    )
+    artifact_registrar: LegacyArtifactRegistrar | None = field(
+        default=None,
+        repr=False,
+    )
 
     _created: bool = field(default=False, repr=False)
 
