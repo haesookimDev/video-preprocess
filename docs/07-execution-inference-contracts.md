@@ -19,8 +19,8 @@ Executor Port와 LocalExecutor는
 PipelineEngine과 상태 머신은
 [`src/video_preprocess/engine/`](../src/video_preprocess/engine/)에 구현됐다. manifest cache key와
 decision, RunStore journal과 같은 run의 cache resume도 구현됐다. 전체 legacy Stage binding,
-global cache index와 HTTP Provider는 아직 구현 완료로 간주하지 않는다. legacy binding은 01~04만
-구현됐으며 05~11과 기본 CLI 연결이 남아 있다. Inference 공통 계약,
+global cache index와 HTTP Provider는 아직 구현 완료로 간주하지 않는다. legacy binding은 01~08만
+구현됐으며 09~11과 기본 CLI 연결이 남아 있다. Inference 공통 계약,
 Gateway, `LocalEmbeddingProvider`, `LocalCaptionProvider`, `LocalSTTProvider`,
 `LocalDiarizationProvider`와 `LocalVADProvider`는
 [`src/video_preprocess/inference/`](../src/video_preprocess/inference/)에 구현되어 있고 결정은
@@ -261,7 +261,7 @@ RunStore가 주입되면 Engine은 시작, 각 Stage terminal과 run terminal �
 [`ADR-0013`](./adr/0013-pipeline-engine-run-journal-and-cache-resume.md)에 기록한다. retry, global
 cache index와 legacy Stage 실행 연결은 후속 slice다.
 
-### 4.6 Legacy 01~04 compatibility binding
+### 4.6 Legacy 01~08 compatibility binding
 
 `LegacyStageTaskRunner`는 기존 `run(ctx)` Stage를 LocalExecutor에 연결하는 migration adapter다.
 task의 Stage/version, logical input, config와 model binding key를 exact match하고, legacy Stage가
@@ -282,6 +282,16 @@ no-audio에서는 `audio`가 `audio_metadata` JSON sentinel과 같은 ArtifactRe
 JPEG sidecar는 정렬·고정 metadata ZIP으로 묶어 manifest에서 누락/변조를 검증한다. 이 계약
 추가로 03과 해당 bundle을 required input으로 받는 08의 Stage version은 `1.1.0`이다. 결정 근거는
 [`ADR-0014`](./adr/0014-legacy-media-stage-task-bindings.md)에 기록한다.
+
+05~08 model Stage는 task config와 `vad.default`, `stt.default`, `diarization.default`,
+`caption.default` binding을 exact match한다. 성공 JSON의 provider/model/revision/runtime을 slot별
+`ModelExecution`으로 변환하고 필수 metadata가 없으면 실패한다. no-audio, no-speech, optional
+diarization unavailable과 no-keyframe은 sentinel output을 유지한 `skipped` result와 stable reason
+code로 반환한다.
+
+08이 실행될 때는 검증된 keyframe ZIP member 집합이 keyframes JSON의 safe path와 정확히 같은지
+확인하고 JPEG를 원자적으로 복원한 뒤 caption service를 호출한다. 상세 결정은
+[`ADR-0015`](./adr/0015-legacy-model-stage-bindings-and-sidecar-restore.md)에 기록한다.
 
 ## 5. Executor 계약
 

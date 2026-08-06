@@ -194,10 +194,11 @@ Content-addressed Stage cache key와 manifest/artifact 검증 기반 cache decis
 결정은 [`ADR-0012`](./adr/0012-content-addressed-manifest-cache-decisions.md)에 기록한다.
 PipelineEngine은 선택적으로 RunStore journal과 cache evaluator를 연결해 같은 run/stage attempt를
 재개하며 결정은 [`ADR-0013`](./adr/0013-pipeline-engine-run-journal-and-cache-resume.md)에 기록한다.
-legacy 01~04 media Stage는 strict StageTask adapter로 LocalExecutor에 연결됐고 keyframe sidecar는
+legacy 01~08 Stage는 strict StageTask adapter로 LocalExecutor에 연결됐고 keyframe sidecar는
 deterministic bundle로 추적한다. 결정은
-[`ADR-0014`](./adr/0014-legacy-media-stage-task-bindings.md)에 기록한다. global cache index,
-05~11 binding과 기본 CLI 연결은 아직 구현되지 않았다.
+[`ADR-0014`](./adr/0014-legacy-media-stage-task-bindings.md)와
+[`ADR-0015`](./adr/0015-legacy-model-stage-bindings-and-sidecar-restore.md)에 기록한다. global cache
+index, 09~11 binding과 기본 CLI 연결은 아직 구현되지 않았다.
 
 ## 8. 설정과 모델 binding
 

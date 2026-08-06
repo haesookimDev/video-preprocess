@@ -204,7 +204,8 @@ Phase 2는 2026-08-06에 VAD까지 Local Provider로 이동하고 sample 회귀�
 - [x] RunStore manifest persistence와 같은 run의 PipelineEngine cache hit 통합
 - [x] legacy 01 probe~04 audio StageTask compatibility binding 구현
 - [x] keyframe sidecar의 deterministic artifact bundle 계약 구현
-- legacy 05~11 StageTask compatibility binding 구현
+- [x] legacy 05 VAD~08 caption StageTask/model result binding 구현
+- legacy 09~11 StageTask compatibility binding 구현
 - global cache key index와 run 간 재사용
 - retry policy 구현
 - 선택 실행 CLI 구현
