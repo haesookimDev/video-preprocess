@@ -14,6 +14,8 @@ import time
 
 import numpy as np
 
+from video_preprocess.inference.local import get_local_embedding_service
+
 from ..context import PipelineContext
 from ..logging_setup import stage_logger
 
@@ -39,18 +41,25 @@ def run(ctx: PipelineContext) -> dict:
     )["scene_cards"]
     texts = [_card_text(c) for c in cards]
 
-    log.info("임베딩 모델 로드: %s", ctx.embed_model)
+    log.info("임베딩 provider 준비: embedding.default → %s", ctx.embed_model)
+    embedding_service = get_local_embedding_service(ctx.embed_model)
     t0 = time.monotonic()
-    from sentence_transformers import SentenceTransformer
-
-    model = SentenceTransformer(ctx.embed_model)
-    log.debug("모델 로드 완료 (%.1fs)", time.monotonic() - t0)
-
-    t0 = time.monotonic()
-    vectors = model.encode(texts, normalize_embeddings=True)
-    dim = vectors.shape[1]
+    batch = embedding_service.embed(
+        texts,
+        run_id=ctx.out_root.name,
+        stage_run_id=NAME,
+    )
+    vectors = np.asarray(batch.vectors, dtype=np.float32)
+    dim = batch.dimension
     log.info("씬 카드 %d개 임베딩 완료 (dim=%d, %.1fs)",
              len(texts), dim, time.monotonic() - t0)
+    log.debug(
+        "실제 임베딩 모델: provider=%s model=%s revision=%s runtime=%s",
+        batch.model.provider,
+        batch.model.name,
+        batch.model.revision,
+        batch.model.runtime,
+    )
 
     db_path = out_dir / "index.db"
     db_path.unlink(missing_ok=True)
@@ -72,6 +81,18 @@ def run(ctx: PipelineContext) -> dict:
     """)
     db.execute("INSERT INTO meta VALUES ('embed_model', ?)", (ctx.embed_model,))
     db.execute("INSERT INTO meta VALUES ('embed_dim', ?)", (str(dim),))
+    db.execute(
+        "INSERT INTO meta VALUES ('embed_provider', ?)",
+        (batch.model.provider,),
+    )
+    db.execute(
+        "INSERT INTO meta VALUES ('embed_revision', ?)",
+        (batch.model.revision,),
+    )
+    db.execute(
+        "INSERT INTO meta VALUES ('embed_runtime', ?)",
+        (batch.model.runtime or "",),
+    )
 
     for card, text, vec in zip(cards, texts, vectors):
         db.execute(
@@ -96,6 +117,9 @@ def run(ctx: PipelineContext) -> dict:
     summary = {
         "db": str(db_path.relative_to(ctx.out_root)),
         "embed_model": ctx.embed_model,
+        "embed_provider": batch.model.provider,
+        "embed_revision": batch.model.revision,
+        "embed_runtime": batch.model.runtime,
         "embed_dim": dim,
         "card_count": len(cards),
         "fts_tokenizer": "unicode61",

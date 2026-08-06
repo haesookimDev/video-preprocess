@@ -17,6 +17,8 @@ from pathlib import Path
 import numpy as np
 
 from pipeline.logging_setup import setup_logging
+from video_preprocess.inference import EmbeddingService
+from video_preprocess.inference.local import get_local_embedding_service
 
 RRF_K = 60  # Reciprocal Rank Fusion 상수
 
@@ -45,16 +47,40 @@ def fts_search(db: sqlite3.Connection, query: str, log) -> list[int]:
     return [sid for sid, _ in rows]
 
 
-def embed_search(db: sqlite3.Connection, query: str, log) -> list[int]:
-    """임베딩 코사인 유사도 검색 → scene_id 순위 목록."""
-    model_name = db.execute(
-        "SELECT value FROM meta WHERE key='embed_model'"
-    ).fetchone()[0]
-    log.debug("임베딩 모델 로드: %s", model_name)
-    from sentence_transformers import SentenceTransformer
+def _meta_value(
+    db: sqlite3.Connection,
+    key: str,
+) -> str | None:
+    row = db.execute(
+        "SELECT value FROM meta WHERE key=?",
+        (key,),
+    ).fetchone()
+    return None if row is None else row[0]
 
-    model = SentenceTransformer(model_name)
-    qvec = model.encode([query], normalize_embeddings=True)[0]
+
+def embed_search(
+    db: sqlite3.Connection,
+    query: str,
+    log,
+    embedding_service: EmbeddingService | None = None,
+) -> list[int]:
+    """임베딩 코사인 유사도 검색 → scene_id 순위 목록."""
+    model_name = _meta_value(db, "embed_model")
+    if model_name is None:
+        raise ValueError("index meta does not contain embed_model")
+    revision = _meta_value(db, "embed_revision")
+    requested_revision = None if revision in {None, "default"} else revision
+    service = embedding_service or get_local_embedding_service(
+        model_name,
+        revision=requested_revision,
+    )
+    log.debug("임베딩 provider 호출: %s", model_name)
+    batch = service.embed(
+        [query],
+        run_id="query",
+        stage_run_id="query_embedding",
+    )
+    qvec = np.asarray(batch.vectors[0], dtype=np.float32)
 
     rows = db.execute("SELECT scene_id, vector FROM embeddings").fetchall()
     scored = [
@@ -130,7 +156,9 @@ def main() -> int:
         return 1
 
     run_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-    log = setup_logging(out_root / "logs" / f"query_{run_id}.log")
+    log_dir = out_root / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log = setup_logging(log_dir / f"query_{run_id}.log")
     log.info("질의: %s (topk=%d)", args.query, args.topk)
 
     db = sqlite3.connect(db_path)
