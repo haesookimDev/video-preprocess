@@ -18,9 +18,9 @@ Executor Port와 LocalExecutor는
 [`src/video_preprocess/executors/`](../src/video_preprocess/executors/)에 구현됐다. 순차
 PipelineEngine과 상태 머신은
 [`src/video_preprocess/engine/`](../src/video_preprocess/engine/)에 구현됐다. manifest cache key와
-decision, RunStore journal과 같은 run의 cache resume도 구현됐다. 전체 legacy Stage binding,
-global cache index와 HTTP Provider는 아직 구현 완료로 간주하지 않는다. legacy binding은 01~08만
-구현됐으며 09~11과 기본 CLI 연결이 남아 있다. Inference 공통 계약,
+decision, RunStore journal과 같은 run의 cache resume도 구현됐다. 전체 01~11 legacy Stage binding도
+구현됐으며 global cache index, 기본 CLI 연결과 HTTP Provider는 아직 구현 완료로 간주하지 않는다.
+Inference 공통 계약,
 Gateway, `LocalEmbeddingProvider`, `LocalCaptionProvider`, `LocalSTTProvider`,
 `LocalDiarizationProvider`와 `LocalVADProvider`는
 [`src/video_preprocess/inference/`](../src/video_preprocess/inference/)에 구현되어 있고 결정은
@@ -258,10 +258,10 @@ RunStore가 주입되면 Engine은 시작, 각 Stage terminal과 run terminal �
 같은 run/stage attempt의 성공 manifest가 cache 검증을 통과하면 Executor 제출 없이 output을
 전달한다. 결정 근거는
 [`ADR-0011`](./adr/0011-sequential-pipeline-engine-artifact-orchestration.md)과
-[`ADR-0013`](./adr/0013-pipeline-engine-run-journal-and-cache-resume.md)에 기록한다. retry, global
-cache index와 legacy Stage 실행 연결은 후속 slice다.
+[`ADR-0013`](./adr/0013-pipeline-engine-run-journal-and-cache-resume.md)에 기록한다. retry와 global
+cache index는 후속 slice다.
 
-### 4.6 Legacy 01~08 compatibility binding
+### 4.6 Legacy 01~11 compatibility binding
 
 `LegacyStageTaskRunner`는 기존 `run(ctx)` Stage를 LocalExecutor에 연결하는 migration adapter다.
 task의 Stage/version, logical input, config와 model binding key를 exact match하고, legacy Stage가
@@ -292,6 +292,20 @@ code로 반환한다.
 08이 실행될 때는 검증된 keyframe ZIP member 집합이 keyframes JSON의 safe path와 정확히 같은지
 확인하고 JPEG를 원자적으로 복원한 뒤 caption service를 호출한다. 상세 결정은
 [`ADR-0015`](./adr/0015-legacy-model-stage-bindings-and-sidecar-restore.md)에 기록한다.
+
+09~11은 다음 companion output을 marker와 함께 등록한다.
+
+| Stage | outputs |
+|---|---|
+| `09_timeline` | `timeline` JSON, `timeline_markdown` Markdown |
+| `10_index` | `search_index` SQLite DB, `index_summary` JSON |
+| `11_context` | `context` Markdown, `context_json` JSON |
+
+10은 `embedding.default`를 exact match하고 `embed_model` config를 task/cache semantics에 포함한다.
+성공한 index summary의 embed provider/model/revision/runtime은 `embedding` slot의
+`ModelExecution`으로 변환한다. 세 binding 묶음과 전체 11단계 binding은 각각 생성할 수 있고,
+전체 registry는 mutable legacy context 보호를 위해 하나의 실행 잠금을 공유한다. 상세 결정은
+[`ADR-0016`](./adr/0016-legacy-final-stage-and-pipeline-bindings.md)에 기록한다.
 
 ## 5. Executor 계약
 

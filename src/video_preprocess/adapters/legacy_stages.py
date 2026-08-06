@@ -208,27 +208,12 @@ def create_legacy_media_bindings(
     expected_names = {"01_probe", "02_scenes", "03_keyframes", "04_audio"}
     if set(modules) != expected_names:
         raise ValueError("stage_modules must define legacy Stages 01 through 04")
-    for name, module in modules.items():
-        if getattr(module, "NAME", None) != name or not callable(
-            getattr(module, "run", None)
-        ):
-            raise TypeError(
-                f"legacy Stage module does not match binding {name}"
-            )
+    _validate_modules(modules, expected_names)
     context.artifact_registrar = registrar
-    execution_lock = threading.Lock()
-    definitions = _media_definitions(modules)
-    return StageBindingRegistry(
-        (
-            definition.name,
-            LegacyStageTaskRunner(
-                context,
-                registrar,
-                definition,
-                execution_lock=execution_lock,
-            ),
-        )
-        for definition in definitions
+    return _create_binding_registry(
+        context,
+        registrar,
+        _media_definitions(modules),
     )
 
 
@@ -248,14 +233,87 @@ def create_legacy_model_bindings(
     expected_names = {"05_vad", "06_stt", "07_diarize", "08_captions"}
     if set(modules) != expected_names:
         raise ValueError("stage_modules must define legacy Stages 05 through 08")
-    for name, module in modules.items():
-        if getattr(module, "NAME", None) != name or not callable(
-            getattr(module, "run", None)
-        ):
-            raise TypeError(
-                f"legacy Stage module does not match binding {name}"
-            )
+    _validate_modules(modules, expected_names)
     context.artifact_registrar = registrar
+    return _create_binding_registry(
+        context,
+        registrar,
+        _model_definitions(modules),
+    )
+
+
+def create_legacy_final_bindings(
+    context: PipelineContext,
+    registrar: LegacyArtifactRegistrar,
+    *,
+    stage_modules: Mapping[str, LegacyStageModule] | None = None,
+) -> StageBindingRegistry:
+    """Bind legacy aggregation and delivery Stages 09-11."""
+
+    modules = (
+        _load_final_modules()
+        if stage_modules is None
+        else dict(stage_modules)
+    )
+    expected_names = {"09_timeline", "10_index", "11_context"}
+    if set(modules) != expected_names:
+        raise ValueError("stage_modules must define legacy Stages 09 through 11")
+    _validate_modules(modules, expected_names)
+    context.artifact_registrar = registrar
+    return _create_binding_registry(
+        context,
+        registrar,
+        _final_definitions(modules),
+    )
+
+
+def create_legacy_pipeline_bindings(
+    context: PipelineContext,
+    registrar: LegacyArtifactRegistrar,
+    *,
+    stage_modules: Mapping[str, LegacyStageModule] | None = None,
+) -> StageBindingRegistry:
+    """Bind all eleven legacy Stages behind one shared execution boundary."""
+
+    modules = (
+        {
+            **_load_default_modules(),
+            **_load_model_modules(),
+            **_load_final_modules(),
+        }
+        if stage_modules is None
+        else dict(stage_modules)
+    )
+    expected_names = {
+        "01_probe",
+        "02_scenes",
+        "03_keyframes",
+        "04_audio",
+        "05_vad",
+        "06_stt",
+        "07_diarize",
+        "08_captions",
+        "09_timeline",
+        "10_index",
+        "11_context",
+    }
+    if set(modules) != expected_names:
+        raise ValueError("stage_modules must define legacy Stages 01 through 11")
+    _validate_modules(modules, expected_names)
+    definitions = (
+        *_media_definitions(modules),
+        *_model_definitions(modules),
+        *_final_definitions(modules),
+    )
+    context.artifact_registrar = registrar
+    return _create_binding_registry(context, registrar, definitions)
+
+
+def _create_binding_registry(
+    context: PipelineContext,
+    registrar: LegacyArtifactRegistrar,
+    definitions: Sequence[LegacyStageDefinition],
+) -> StageBindingRegistry:
     execution_lock = threading.Lock()
     return StageBindingRegistry(
         (
@@ -267,8 +325,22 @@ def create_legacy_model_bindings(
                 execution_lock=execution_lock,
             ),
         )
-        for definition in _model_definitions(modules)
+        for definition in definitions
     )
+
+
+def _validate_modules(
+    modules: Mapping[str, LegacyStageModule],
+    expected_names: set[str],
+) -> None:
+    for name in expected_names:
+        module = modules[name]
+        if getattr(module, "NAME", None) != name or not callable(
+            getattr(module, "run", None)
+        ):
+            raise TypeError(
+                f"legacy Stage module does not match binding {name}"
+            )
 
 
 def _media_definitions(
@@ -393,6 +465,71 @@ def _model_definitions(
             outcome_resolver=_caption_outcome,
         ),
     )
+
+
+def _final_definitions(
+    modules: Mapping[str, LegacyStageModule],
+) -> tuple[LegacyStageDefinition, ...]:
+    metadata = LegacyInputBinding(
+        "metadata",
+        lambda ctx, task: ctx.out_root / "01_probe" / "metadata.json",
+    )
+    scenes = LegacyInputBinding(
+        "scenes",
+        lambda ctx, task: ctx.out_root / "02_scenes" / "scenes.json",
+    )
+    keyframes = LegacyInputBinding(
+        "keyframes",
+        lambda ctx, task: ctx.out_root / "03_keyframes" / "keyframes.json",
+    )
+    transcript = LegacyInputBinding(
+        "transcript",
+        lambda ctx, task: ctx.out_root / "06_stt" / "transcript.json",
+    )
+    diarization = LegacyInputBinding(
+        "diarization",
+        lambda ctx, task: ctx.out_root / "07_diarize" / "diarization.json",
+    )
+    captions = LegacyInputBinding(
+        "captions",
+        lambda ctx, task: ctx.out_root / "08_captions" / "captions.json",
+    )
+    timeline = LegacyInputBinding(
+        "timeline",
+        lambda ctx, task: ctx.out_root / "09_timeline" / "timeline.json",
+    )
+    return (
+        LegacyStageDefinition(
+            name="09_timeline",
+            stage_version="1.0.0",
+            module=modules["09_timeline"],
+            inputs=(scenes, keyframes, transcript, diarization, captions),
+            config_fields=(),
+            model_bindings={},
+            output_resolver=_timeline_outputs,
+        ),
+        LegacyStageDefinition(
+            name="10_index",
+            stage_version="1.0.0",
+            module=modules["10_index"],
+            inputs=(timeline,),
+            config_fields=("embed_model",),
+            model_bindings={"embedding": "embedding.default"},
+            output_resolver=_index_outputs,
+            outcome_resolver=_index_outcome,
+        ),
+        LegacyStageDefinition(
+            name="11_context",
+            stage_version="1.0.0",
+            module=modules["11_context"],
+            inputs=(metadata, diarization, timeline),
+            config_fields=(),
+            model_bindings={},
+            output_resolver=_context_outputs,
+        ),
+    )
+
+
 def _probe_outputs(
     ctx: PipelineContext,
     registrar: LegacyArtifactRegistrar,
@@ -556,6 +693,81 @@ def _caption_outputs(
     }
 
 
+def _timeline_outputs(
+    ctx: PipelineContext,
+    registrar: LegacyArtifactRegistrar,
+    task: StageTask,
+) -> Mapping[str, ArtifactRef]:
+    return {
+        "timeline": _register(
+            registrar,
+            task,
+            "timeline",
+            "09_timeline/timeline.json",
+            kind="json",
+            media_type="application/json",
+        ),
+        "timeline_markdown": _register(
+            registrar,
+            task,
+            "timeline_markdown",
+            "09_timeline/timeline.md",
+            kind="document",
+            media_type="text/markdown",
+        ),
+    }
+
+
+def _index_outputs(
+    ctx: PipelineContext,
+    registrar: LegacyArtifactRegistrar,
+    task: StageTask,
+) -> Mapping[str, ArtifactRef]:
+    return {
+        "search_index": _register(
+            registrar,
+            task,
+            "search_index",
+            "10_index/index.db",
+            kind="database",
+            media_type="application/vnd.sqlite3",
+        ),
+        "index_summary": _register(
+            registrar,
+            task,
+            "index_summary",
+            "10_index/index_summary.json",
+            kind="json",
+            media_type="application/json",
+        ),
+    }
+
+
+def _context_outputs(
+    ctx: PipelineContext,
+    registrar: LegacyArtifactRegistrar,
+    task: StageTask,
+) -> Mapping[str, ArtifactRef]:
+    return {
+        "context": _register(
+            registrar,
+            task,
+            "context",
+            "11_context/context.md",
+            kind="document",
+            media_type="text/markdown",
+        ),
+        "context_json": _register(
+            registrar,
+            task,
+            "context_json",
+            "11_context/context.json",
+            kind="json",
+            media_type="application/json",
+        ),
+    }
+
+
 def _vad_outcome(
     ctx: PipelineContext,
     metrics: Mapping[str, object],
@@ -621,6 +833,24 @@ def _caption_outcome(
             reason="keyframe input is empty",
         )
     return _model_outcome(payload, "caption")
+
+
+def _index_outcome(
+    ctx: PipelineContext,
+    metrics: Mapping[str, object],
+) -> LegacyStageOutcome:
+    payload = ctx.load_json(
+        ctx.out_root / "10_index" / "index_summary.json"
+    )
+    return _model_outcome(
+        {
+            "provider": payload.get("embed_provider"),
+            "model": payload.get("embed_model"),
+            "revision": payload.get("embed_revision"),
+            "runtime": payload.get("embed_runtime"),
+        },
+        "embedding",
+    )
 
 
 def _model_outcome(
@@ -873,4 +1103,13 @@ def _load_model_modules() -> dict[str, LegacyStageModule]:
     return {
         module.NAME: module
         for module in (s05_vad, s06_stt, s07_diarize, s08_captions)
+    }
+
+
+def _load_final_modules() -> dict[str, LegacyStageModule]:
+    from pipeline.stages import s09_timeline, s10_index, s11_context
+
+    return {
+        module.NAME: module
+        for module in (s09_timeline, s10_index, s11_context)
     }
