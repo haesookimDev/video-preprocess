@@ -14,10 +14,11 @@ Artifact·Run Store Port와 로컬 구현은
 [`src/video_preprocess/storage/`](../src/video_preprocess/storage/)에 있고 저장 규칙은
 [`ADR-0003`](./adr/0003-local-artifact-and-manifest-storage.md)에 기록한다. Executor와
 나머지 Provider 계약은 아직 설계 상태이며 구현 완료로 간주하지 않는다. Inference 공통 계약,
-Gateway, `LocalEmbeddingProvider`와 `LocalCaptionProvider`는
+Gateway, `LocalEmbeddingProvider`, `LocalCaptionProvider`와 `LocalSTTProvider`는
 [`src/video_preprocess/inference/`](../src/video_preprocess/inference/)에 구현되어 있고 결정은
 [`ADR-0004`](./adr/0004-async-inference-gateway-and-local-embedding-provider.md)와
-[`ADR-0005`](./adr/0005-artifact-batched-local-caption-provider.md)에 기록한다.
+[`ADR-0005`](./adr/0005-artifact-batched-local-caption-provider.md),
+[`ADR-0006`](./adr/0006-audio-artifact-local-stt-provider.md)에 기록한다.
 
 ## 1. 계약 설계 원칙
 
@@ -321,6 +322,37 @@ Gateway는 response의 model 정보를 StageResult와 manifest로 전달한다.
 `outputs.dimension`, `usage.input_count`, model provider·resolved revision·runtime을 함께
 기록한다. 큰 batch의 artifact 출력은 이후 capability로 추가한다.
 
+현재 STT 요청·응답 규칙:
+
+```json
+{
+  "task": "speech_to_text",
+  "model": {
+    "alias": "stt.default",
+    "name": "base",
+    "revision": "default"
+  },
+  "inputs": {
+    "audio": {"artifact_id": "audio_16k", "uri": "artifact://..."},
+    "chunks": [
+      {"start_sec": 1.368, "end_sec": 6.6, "source_ids": [1]}
+    ]
+  },
+  "parameters": {
+    "language": null,
+    "beam_size": 5,
+    "sampling_rate": 16000
+  }
+}
+```
+
+- `inputs.audio`: `audio/wav` ArtifactRef 한 개
+- `inputs.chunks`: 시간순·비중첩 VAD 구간, `source_ids`는 원본 VAD segment ID
+- `outputs.segments`: 절대 시간의 text·log probability·no-speech probability와 source ID
+- `outputs.language`, `outputs.language_probability`: 첫 chunk의 감지 결과
+- `usage`: audio/speech duration, chunk/segment count
+- `timing`: audio decode, model load, inference 시간
+
 현재 caption 요청·응답 규칙:
 
 ```json
@@ -357,10 +389,10 @@ class InferenceProvider(Protocol):
 ```
 
 현재 `InferenceGateway`는 alias binding, capability·batch·중첩 artifact 크기 검증, 전체
-timeout, 예외 정규화와 response ID 검증을 구현한다. `embedding.default`와
-`caption.default`의 local provider는 lazy model load, process 내 재사용, warmup hook과
-idempotent 결과 cache를 제공한다. 동기 CLI/Stage는 task별 동기 Service를 사용하고 async
-application은 `embed_async()` 또는 `caption_async()`를 사용한다.
+timeout, 예외 정규화와 response ID 검증을 구현한다. `embedding.default`,
+`caption.default`, `stt.default`의 local provider는 lazy model load, process 내 재사용,
+warmup hook과 idempotent 결과 cache를 제공한다. 동기 CLI/Stage는 task별 동기 Service를
+사용하고 async application은 각 Service의 async 메서드를 사용한다.
 
 ### 7.1 capability 확인
 
@@ -424,8 +456,9 @@ DELETE /v1/inference-jobs/{request_id}
 
 재시도는 exponential backoff와 jitter를 사용하고 최대 횟수와 전체 deadline을 모두 제한한다.
 현재 Gateway는 한 요청의 capability 확인과 inference를 합친 전체 timeout만 구현한다. retry,
-backoff와 circuit breaker는 HTTP Provider 단계에서 추가한다. Local embedding과 caption의
-실행 thread는 timeout 후 강제 중단할 수 없어 cancellation 미지원으로 capability에 표시한다.
+backoff와 circuit breaker는 HTTP Provider 단계에서 추가한다. Local embedding, caption과
+STT의 실행 thread는 timeout 후 강제 중단할 수 없어 cancellation 미지원으로 capability에
+표시한다.
 
 ## 9. Skip과 Fallback
 

@@ -225,6 +225,11 @@ Caption Service와 legacy artifact registrar를 주입하고, `s08_captions`는 
 ArtifactRef batch로 전달한다. 중첩 ArtifactRef 계약과 로컬 provider 결정은
 [`ADR-0005`](./adr/0005-artifact-batched-local-caption-provider.md)에 기록한다.
 
+`stt.default`는 `LocalSTTProvider`에 연결되어 있다. `s06_stt`는 16kHz WAV ArtifactRef와
+병합된 VAD chunk를 전달하며 faster-whisper model lifecycle과 audio decode는 Provider가 맡는다.
+절대 시간축 segment 계약은
+[`ADR-0006`](./adr/0006-audio-artifact-local-stt-provider.md)에 기록한다.
+
 ## 9. 산출물 저장 전략
 
 Stage 사이에는 실제 파일 경로가 아니라 `ArtifactRef`를 전달한다.

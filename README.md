@@ -5,8 +5,8 @@
 
 현재 구현은 로컬 단일 프로세스 MVP다. 모델별 로컬/서버 추론과 다른 서비스 연동을
 지원하기 위해 Engine, Executor, Inference Provider를 분리하는 아키텍처 전환을 진행하고
-있다. 현재 embedding과 caption은 Local Inference Provider를 사용한다. 문서는 다음 순서로
-확인한다.
+있다. 현재 embedding, caption과 STT는 Local Inference Provider를 사용한다. 문서는 다음
+순서로 확인한다.
 
 - [개발 문서 안내](docs/README.md)
 - [현재 개발 상태와 다음 작업](docs/STATUS.md)
@@ -93,6 +93,8 @@ output/<video_stem>/
   요약·질의응답·이벤트 분석에 사용한다. `context.json`은 동일 내용의 구조화 버전.
 - `08_captions/captions.json`에는 기존 캡션 구조와 함께 실제 `provider`, model `revision`,
   `runtime`이 기록된다.
+- `06_stt/transcript.json`에도 실제 `provider`, model `revision`, `runtime`, 감지 언어 확률이
+  기록된다.
 
 ## 검색 + 컨텍스트 조립
 
