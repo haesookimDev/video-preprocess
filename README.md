@@ -3,10 +3,9 @@
 긴 영상을 로컬 LLM으로 분석하기 위한 전처리 파이프라인 프로토타입.
 방법론은 [docs/](docs/00-overview.md) 참고.
 
-현재 구현은 로컬 단일 프로세스 MVP다. 모델별 로컬/서버 추론과 다른 서비스 연동을
-지원하기 위해 Engine, Executor, Inference Provider를 분리하는 아키텍처 전환을 진행하고
-있다. 현재 VAD, STT, diarization, caption과 embedding은 Local Inference Provider를
-사용한다. 문서는 다음
+현재 기본 CLI는 Pipeline Application Service, Engine, LocalExecutor와 manifest cache를 사용한다.
+모델별 로컬/서버 추론과 다른 서비스 연동을 지원하기 위한 아키텍처 전환은 계속 진행 중이다.
+현재 VAD, STT, diarization, caption과 embedding은 Local Inference Provider를 사용한다. 문서는 다음
 순서로 확인한다.
 
 - [개발 문서 안내](docs/README.md)
@@ -70,6 +69,12 @@ python3 -m venv .venv
 # 옵션
 #   --out DIR            출력 루트 (기본: output)
 #   --force              기존 단계 출력 무시하고 전부 재실행
+#   --force-stage NAME   지정 Stage만 캐시를 무시 (여러 번 지정 가능)
+#   --stage NAME         정확히 한 단계만 실행
+#   --from-stage NAME    지정 단계와 그 하위 단계 실행
+#   --to-stage NAME      지정 단계까지 필요한 상위 단계 실행
+#   --run-id ID          같은 run manifest 재개 (기본: 출력 경로 기반 ID)
+#   --dry-run            실행 없이 Stage plan과 boundary input 출력
 #   --whisper-model M    tiny/base/small/medium/large (기본: base)
 #   --language ko        전사 언어 고정 (기본: 자동 감지)
 #   --scene-threshold N  씬 검출 민감도, 낮을수록 민감 (기본: 27.0)
@@ -80,14 +85,20 @@ python3 -m venv .venv
 
 ```
 output/<video_stem>/
+├── 00_input/                  # cache integrity용 입력 영상 copy
 ├── 01_probe/ … 11_context/    # 단계별 개별 산출물 (위 표 참고)
-├── logs/run_<timestamp>.log   # 상세 로그 (DEBUG, 프레임/세그먼트 단위)
-└── run_summary.json           # 단계별 상태·소요 시간
+├── _manifests/                # run/stage 상태, cache key와 ArtifactRef
+├── logs/run_<run_id>.log      # 상세 로그 (DEBUG, 프레임/세그먼트 단위)
+└── run_summary.json           # CLI 호환 단계별 상태·metrics view
 ```
 
 - 콘솔에는 INFO 로그(진행 상황·통계), 파일에는 DEBUG 로그(개별 씬/세그먼트/명령)가 기록된다.
-- 각 단계는 대표 출력 파일이 이미 있으면 스킵된다. 특정 단계만 다시 돌리려면
-  해당 단계 디렉토리를 지우고 재실행하거나 `--force`로 전체 재실행.
+- cache는 파일 존재만 보지 않고 Stage version, 입력 checksum, 설정, model binding과 output
+  integrity를 검증한다. `--force-stage`로 한 단계만, `--force`로 계획된 모든 단계를 강제한다.
+- 부분 실행은 같은 `run_id`의 검증된 이전 manifest가 필요하다. 기본 local run ID는 output
+  workspace에서 안정적으로 만들어지므로 같은 명령의 재개에 사용할 수 있다.
+- 현재 model Stage는 실행 전 effective revision을 안전하게 확정할 수 없으면 재실행한다.
+  run 간 global cache와 cache-aware dry-run은 후속 Phase 3 작업이다.
 - 사람이 결과를 빠르게 확인할 때는 `09_timeline/timeline.md` 를 본다.
 - **최종 산출물은 `11_context/context.md`** — 포맷 안내 전문(preamble) + 메타데이터 +
   씬 목차 + 씬 카드 전문으로 구성된 자기완결 문서로, 그대로 LLM 프롬프트에 넣어

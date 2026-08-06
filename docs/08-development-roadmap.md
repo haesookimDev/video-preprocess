@@ -210,7 +210,8 @@ Phase 2는 2026-08-06에 VAD까지 Local Provider로 이동하고 sample 회귀�
 - [x] Pipeline Application Service와 local runtime composition 구현
 - global cache key index와 run 간 재사용
 - retry policy 구현
-- 선택 실행 CLI 구현
+- [x] Application Service 기반 선택 실행 CLI 구현
+- cache decision reason을 포함하는 dry-run preview 구현
 
 ```text
 --stage 06_stt

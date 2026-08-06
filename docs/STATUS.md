@@ -2,7 +2,7 @@
 
 - 마지막 갱신: **2026-08-06**
 - 현재 단계: **Phase 3 — Pipeline Engine과 LocalExecutor**
-- 다음 작업: **Engine CLI adapter와 선택 실행·dry-run**
+- 다음 작업: **cache-aware dry-run preview와 effective model resolver**
 
 이 문서는 개발 진행 상황의 단일 진입점이다. 새로운 세션은 이 문서를 먼저 읽고, 실제 코드와
 Git 상태를 확인한 뒤 작업을 시작한다.
@@ -13,7 +13,7 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 
 - `src/run_pipeline.py`: 전처리 CLI
 - `src/query.py`: 기존 index 검색·context 조립 CLI
-- `src/pipeline/runner.py`: 11단계 순차 실행
+- `src/pipeline/runner.py`: 이전 파일 marker 방식의 compatibility runner
 - `src/pipeline/context.py`: 경로·설정·JSON I/O 공유
 - `src/pipeline/stages/s01_*`~`s11_*`: 단계 구현
 - `src/video_preprocess/domain/`: 버전이 있는 Artifact·Stage 공개 계약
@@ -22,13 +22,12 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - `src/video_preprocess/executors/`: async Executor Port, Stage binding과 순차 LocalExecutor
 - `src/video_preprocess/adapters/`: legacy 01~11 StageTask compatibility binding
 - `src/video_preprocess/services/`: pipeline Application Service와 local composition root
-- 로컬 파일 존재 여부를 기준으로 단계 스킵
+- 기본 CLI는 manifest·checksum·설정·model binding 기반 cache 사용
 - VAD, STT, diarization, caption과 embedding이 `InferenceGateway`와 Local Provider로 실행
 - 모든 모델 Stage에서 구체 ML library import와 model lifecycle 제거 완료
-- 새 Engine은 manifest persistence/cache resume를 지원하지만 기존 runner에는 아직 연결되지 않음
-- legacy 01~11 binding은 구현됐고 기본 CLI 전환과 HTTP provider는 아직 미구현
-- Local Store는 구현됐고 model Stage compatibility adapter에서 media 등록에 사용하며,
-  전체 runner 연결은 Engine 전환 시점까지 보류
+- 기본 CLI는 Application Service를 통해 새 Engine과 01~11 binding을 실행
+- HTTP provider, global cache와 API adapter는 아직 미구현
+- Local Store가 input copy, 단계 산출물과 run/stage manifest를 관리
 
 기존 샘플 산출물은 `output/` 아래에 있으나 생성물이며 Git에 커밋하지 않는다.
 
@@ -77,6 +76,8 @@ Git 상태를 확인한 뒤 작업을 시작한다.
   [`ADR-0016`](./adr/0016-legacy-final-stage-and-pipeline-bindings.md)
 - Application Service와 local runtime composition 결정:
   [`ADR-0017`](./adr/0017-pipeline-application-service-and-local-runtime.md)
+- Engine 기반 CLI 전환 결정:
+  [`ADR-0018`](./adr/0018-engine-backed-cli-and-local-run-resume.md)
 
 ## 3. 완료된 작업
 
@@ -118,6 +119,7 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - [x] legacy 05 VAD~08 caption StageTask/model result binding
 - [x] legacy 09 timeline~11 context/index StageTask binding과 11단계 composition
 - [x] pipeline Application Service와 local Engine/Store/inference composition root
+- [x] 기본 CLI의 Engine 전환과 stage/from/to/force/run-id/basic dry-run
 
 ## 4. 아직 구현되지 않은 작업
 
@@ -142,6 +144,7 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - [ ] global cache index와 run 간 cache 재사용
 - [ ] HTTPInferenceProvider와 모델 서버 계약 구현
 - [x] Pipeline Application Service와 local runtime factory
+- [x] Application Service 기반 선택 실행 CLI
 - [ ] API adapter
 - [ ] 타임라인 경계 정합성 개선
 - [ ] 한국어 검색과 평가 체계
@@ -150,26 +153,23 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 문서가 존재한다고 구현된 것으로 간주하지 않는다. 완료 여부는 코드와 자동 테스트를 기준으로
 이 체크리스트에서 갱신한다.
 
-## 5. 다음 작업: Application Service와 Engine CLI slice
+## 5. 다음 작업: cache-aware dry-run과 model fingerprint slice
 
 권장 순서:
 
-1. 기존 CLI 옵션을 service request로 변환하고 `--stage`, `--from-stage`, `--to-stage`를 planner에 연결
-2. `--run-id`로 같은 run 재개와 부분 실행 boundary 복구를 제공
-3. `--force-stage`와 manifest cache evaluator를 연결하고 기존 `--force` 호환 정책 확정
-4. `--dry-run`에서 plan, boundary input, 예상 cache decision을 실행 없이 출력
-5. 기존 `run_summary.json` 사용자 호환 view를 Application result에서 생성
-6. 실제 `samples/sample.mp4`를 새 기본 Engine 경로로 실행하고 JSON/Markdown/DB/query 동등성 확인
+1. Engine의 task/cache preview가 실제 실행과 동일한 task identity·입력 전파 규칙을 사용하도록 공개 API 추가
+2. local provider의 현재 effective provider/model/revision/runtime을 안전하게 resolve하는 adapter 구현
+3. `--dry-run`에 Stage별 `hit/miss/forced`, stable reason과 예상 실행 여부 출력
+4. model 미로드·credential 변경 시 거짓 hit 없이 reason을 표시하는 contract test 추가
+5. 이후 global cache index와 run 간 content-addressed manifest 조회를 구현
 
-이 slice가 끝나면 기존 `pipeline.runner`는 명시적 compatibility 진입점으로 남기고 기본 CLI는
-Application Service를 사용한다. API adapter도 같은 service request/result를 소비하게 한다.
+기본 CLI 전환은 완료됐고, `pipeline.runner`는 명시적 compatibility 구현으로만 남아 있다. basic
+dry-run은 plan/boundary/force를 보여주지만 cache decision은 아직 runtime 평가로 표시한다.
 
 ## 6. 알려진 중요 문제
 
 | 우선순위 | 문제 | 영향 |
 |---|---|---|
-| P0 | 파일 존재만으로 cache hit | 입력·설정·모델 변경 후 stale 결과 재사용 |
-| P0 | skipped diarization도 marker 생성 | credential 추가 후 자동 재시도되지 않음 |
 | P0 | 씬 50:50 경계에서 전사 중복 가능 | timeline과 검색 내용 왜곡 |
 | P1 | 한국어 `unicode61` 정확 일치 의존 | 조사·어미가 다른 키워드 검색 누락 |
 | P1 | 별도 query CLI 프로세스는 embedding 모델을 매번 로드 | 프로세스 간 cold query 지연 |
@@ -212,6 +212,12 @@ Application Service를 사용한다. API adapter도 같은 service request/resul
 - Application Service/local runtime slice 기본 테스트 248개 성공
 - exact stage 설정·binding 필터, ID 생성, boundary 누락 오류, 입력 video 원자적 등록,
   11-stage local composition과 부분 실행의 이전 manifest 요구 확인
+- Engine CLI slice 기본 테스트 252개 성공
+- stage/from/to/run-id/force-stage/basic dry-run, compatibility summary와 default stable local run ID 확인
+- 새 기본 CLI `sample.mp4 --force` 전체 11단계 `ok`; RunManifest `succeeded` 11개, SQLite integrity
+  `ok`, VAD/STT/diarization/caption/index/context 회귀 없음
+- offline query `음성 구간 검출 --topk 2` top-1 씬 02 확인; offline flag가 없으면 기존 cached
+  Hugging Face HEAD 요청 문제가 재현됨
 - running/stage/terminal 저장 순서, same-run cache resume, cached lifecycle, effective model miss,
   force/config invalidation, failed/cancelled persistence와 실제 Local Store 재시작 확인
 - run-local identity 제외 cache key, 입력/설정/Stage/model 변화, effective model resolution,
@@ -266,6 +272,19 @@ Application Service를 사용한다. API adapter도 같은 service request/resul
 
 최신 기록을 위에 추가한다. 긴 구현 설명은 PR이나 ADR에 두고 여기에는 다음 세션이 재개하는 데
 필요한 정보만 적는다.
+
+### 2026-08-06 — Phase 3 Engine 기반 CLI 전환과 선택 실행
+
+- 목표: 기본 CLI를 legacy marker loop에서 Application Service/Engine 경로로 전환
+- 완료: stable local/default 및 explicit run ID, stage/from/to, force-stage/force, basic dry-run,
+  Engine result 기반 `run_summary.json` compatibility view와 run-scoped logging 구현
+- 주요 결정: 기본 run ID는 output workspace hash로 재개 가능, partial boundary는 manifest로만 복구,
+  dry-run cache 판정은 아직 과장하지 않고 runtime 평가로 명시; ADR-0018
+- 검증: 기본 pytest 252개 통과; 새 CLI sample 전체 11단계 성공, manifest 11개·SQLite integrity ok,
+  offline query top-1 씬 02
+- 호환성: 기존 output JSON/Markdown/DB/query와 `--force` 의미 유지; input copy와 `_manifests` 추가,
+  stage elapsed는 새 summary에서 아직 제공하지 않음
+- 다음 작업: 실제 cache evaluator를 재사용하는 dry-run preview와 local effective model resolver
 
 ### 2026-08-06 — Phase 3 Pipeline Application Service와 local runtime
 

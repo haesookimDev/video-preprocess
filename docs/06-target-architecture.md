@@ -209,6 +209,11 @@ LocalExecutor, 11-stage compatibility binding과 local inference service를 조�
 실행은 이전 manifest에서 integrity가 확인된 boundary output만 복구한다. 결정은
 [`ADR-0017`](./adr/0017-pipeline-application-service-and-local-runtime.md)에 기록한다.
 
+기본 CLI도 이 Application Service를 호출하며 stage/from/to/force 선택을 request로만 변환한다.
+local workspace 기반 run 재개와 basic dry-run 결정은
+[`ADR-0018`](./adr/0018-engine-backed-cli-and-local-run-resume.md)에 기록한다. API와 queue adapter는
+같은 service boundary에 추가하고 Engine이나 Stage를 직접 조립하지 않는다.
+
 ## 8. 설정과 모델 binding
 
 파이프라인 알고리즘 설정과 모델 배포 설정을 분리한다.

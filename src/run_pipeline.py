@@ -6,10 +6,13 @@
 """
 
 import argparse
+import asyncio
+import hashlib
+import json
 import sys
+from dataclasses import replace
 from pathlib import Path
 
-from pipeline.context import PipelineContext
 from pipeline.preflight import format_report, run_preflight
 
 
@@ -26,6 +29,18 @@ def main() -> int:
                         help="전사 언어 코드 (기본: 자동 감지)")
     parser.add_argument("--scene-threshold", type=float, default=27.0,
                         help="씬 검출 임계값 (기본: 27.0)")
+    parser.add_argument("--run-id", default=None,
+                        help="재개할 run ID (기본: 출력 경로 기반 local ID)")
+    parser.add_argument("--stage", default=None,
+                        help="정확히 한 단계만 실행")
+    parser.add_argument("--from-stage", default=None,
+                        help="지정 단계와 그 하위 단계를 실행")
+    parser.add_argument("--to-stage", default=None,
+                        help="지정 단계까지 필요한 상위 단계를 실행")
+    parser.add_argument("--force-stage", action="append", default=[],
+                        help="캐시를 무시할 단계 (여러 번 지정 가능)")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="실행 없이 단계 plan과 boundary input 출력")
     parser.add_argument("--preflight-only", action="store_true",
                         help="실행 환경만 검사하고 종료")
     args = parser.parse_args()
@@ -48,19 +63,119 @@ def main() -> int:
         print(f"오류: 영상 파일이 없습니다: {args.video}", file=sys.stderr)
         return 1
 
-    ctx = PipelineContext(
-        video_path=args.video.resolve(),
-        out_root=(args.out / args.video.stem).resolve(),
-        force=args.force,
-        whisper_model=args.whisper_model,
-        language=args.language,
-        scene_threshold=args.scene_threshold,
+    # 무거운 단계 모듈은 runtime factory가 실제 실행 시점에만 로드한다.
+    from video_preprocess.engine import DAGPlanner, create_default_registry
+    from video_preprocess.services import (
+        LocalPipelineRuntimeFactory,
+        PipelineApplicationService,
+        PipelineRunRequest,
+        PipelineSettings,
     )
-    # 무거운 단계 모듈은 preflight가 누락 의존성을 진단한 뒤 로드한다.
-    from pipeline.runner import run_pipeline
 
-    summary = run_pipeline(ctx)
+    output_root = (args.out / args.video.stem).resolve()
+    run_id = args.run_id or _local_run_id(output_root)
+    request = PipelineRunRequest(
+        video_path=args.video.resolve(),
+        output_root=output_root,
+        run_id=run_id,
+        stage=args.stage,
+        from_stage=args.from_stage,
+        to_stage=args.to_stage,
+        force_stages=tuple(args.force_stage),
+        settings=PipelineSettings(
+            whisper_model=args.whisper_model,
+            language=args.language,
+            scene_threshold=args.scene_threshold,
+        ),
+    )
+    service = PipelineApplicationService(
+        DAGPlanner(create_default_registry()),
+        LocalPipelineRuntimeFactory(project_root=project_root),
+    )
+    try:
+        plan = service.plan(request)
+        if args.force:
+            forced = tuple(sorted(set(request.force_stages) | set(plan.stage_names)))
+            request = replace(request, force_stages=forced)
+        if args.dry_run:
+            print(json.dumps(
+                {
+                    "run_id": run_id,
+                    "stages": list(plan.stage_names),
+                    "boundary_inputs": list(plan.boundary_inputs),
+                    "force_stages": list(request.force_stages),
+                    "cache_decisions": "evaluated_at_runtime",
+                },
+                ensure_ascii=False,
+                indent=2,
+            ))
+            return 0
+        result = asyncio.run(service.run(request))
+    except (TypeError, ValueError) as exc:
+        print(f"오류: {exc}", file=sys.stderr)
+        return 2
+
+    summary = _write_compatibility_summary(
+        result,
+        video_path=args.video.resolve(),
+        output_root=output_root,
+    )
+    print(
+        f"파이프라인 종료: {summary['status']} "
+        f"(run_id={result.run_id}, stages={len(result.stages)})"
+    )
     return 0 if summary["status"] == "ok" else 1
+
+
+def _local_run_id(output_root: Path) -> str:
+    digest = hashlib.sha256(
+        str(output_root.resolve()).encode("utf-8")
+    ).hexdigest()[:20]
+    return f"local_{digest}"
+
+
+def _write_compatibility_summary(
+    result,
+    *,
+    video_path: Path,
+    output_root: Path,
+) -> dict[str, object]:
+    stages = []
+    for record in result.stages:
+        status = record.result.status.value
+        if record.from_cache:
+            status = "cached"
+        elif status == "succeeded":
+            status = "ok"
+        stages.append(
+            {
+                "name": record.stage,
+                "status": status,
+                "result": dict(record.result.metrics),
+                "outputs": {
+                    name: ref.uri
+                    for name, ref in record.result.outputs.items()
+                },
+                "cache": (
+                    None
+                    if record.cache_decision is None
+                    else record.cache_decision.status.value
+                ),
+            }
+        )
+    summary = {
+        "run_id": result.run_id,
+        "video": str(video_path),
+        "log_file": str(output_root / "logs" / f"run_{result.run_id}.log"),
+        "stages": stages,
+        "status": "ok" if result.status.value == "succeeded" else result.status.value,
+    }
+    output_root.mkdir(parents=True, exist_ok=True)
+    (output_root / "run_summary.json").write_text(
+        json.dumps(summary, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    return summary
 
 
 if __name__ == "__main__":

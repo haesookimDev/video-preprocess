@@ -321,6 +321,12 @@ namespace를 사용한다. 부분 실행은 명시한 같은 `run_id`의 RunMani
 model Stage 결과를 무리하게 재사용하지 않는다. 상세 결정은
 [`ADR-0017`](./adr/0017-pipeline-application-service-and-local-runtime.md)에 기록한다.
 
+기본 CLI는 output workspace에서 stable local run ID를 파생하며 `--run-id`로 명시적 resume 대상을
+선택할 수 있다. stage/from/to와 force 옵션은 request에만 반영하고 plan/cache 실행 의미는
+Application Service와 Engine이 소유한다. basic dry-run은 현재 plan/boundary/force만 반환하고 cache
+decision을 추정하지 않는다. 상세 결정은
+[`ADR-0018`](./adr/0018-engine-backed-cli-and-local-run-resume.md)에 기록한다.
+
 ## 5. Executor 계약
 
 Executor는 `StageTask` 실행 위치를 추상화한다.

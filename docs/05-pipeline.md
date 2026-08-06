@@ -91,3 +91,26 @@ flowchart TD
 
 `05_vad/vad_segments.json`은 기존 duration·ratio·option·segment 구조를 유지하며 실제
 `model`, `provider`, ONNX asset SHA-256 `revision`, `runtime`을 추가로 기록한다.
+
+## Engine 기반 실행과 선택 범위
+
+기본 `src/run_pipeline.py`는 Pipeline Application Service를 통해 같은 DAG를 계획하고
+PipelineEngine→LocalExecutor에서 실행한다. 입력 영상은 cache integrity 확인을 위해 output의
+`00_input/`에 등록되고 run/stage manifest는 `_manifests/`에 저장된다.
+
+```bash
+# 전체 실행 또는 같은 output workspace 재개
+.venv/bin/python src/run_pipeline.py samples/sample.mp4
+
+# 선택 실행에는 같은 run의 이전 boundary artifact가 필요하다
+.venv/bin/python src/run_pipeline.py samples/sample.mp4 --stage 10_index
+.venv/bin/python src/run_pipeline.py samples/sample.mp4 --from-stage 06_stt
+.venv/bin/python src/run_pipeline.py samples/sample.mp4 --to-stage 09_timeline
+
+# 강제 실행과 실행 없는 plan 확인
+.venv/bin/python src/run_pipeline.py samples/sample.mp4 --force-stage 07_diarize
+.venv/bin/python src/run_pipeline.py samples/sample.mp4 --dry-run
+```
+
+`--force`는 선택된 plan 전체를 강제하고 `--force-stage`는 지정 단계만 강제한다. 현재 dry-run은
+Stage 순서, boundary input과 force 대상을 출력하며 cache hit/miss reason 사전 평가는 후속 작업이다.

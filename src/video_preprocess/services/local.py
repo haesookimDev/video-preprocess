@@ -8,6 +8,7 @@ from collections.abc import Callable, Collection, Mapping
 from pathlib import Path
 
 from pipeline.context import PipelineContext
+from pipeline.logging_setup import setup_logging
 from pipeline.preflight import load_hf_token
 from video_preprocess.adapters import create_legacy_pipeline_bindings
 from video_preprocess.engine import ManifestCacheEvaluator, PipelineEngine
@@ -104,6 +105,7 @@ class LocalPipelineRuntimeFactory:
             embed_model=settings.embed_model,
             diarize_model=settings.diarize_model,
         )
+        setup_logging(context.log_dir / f"run_{run_id}.log")
         context.artifact_registrar = LegacyOutputAdapter(artifact_store)
         self.context_configurer(context, artifact_store)
         bindings = create_legacy_pipeline_bindings(

@@ -11,6 +11,7 @@ from typing import Protocol
 
 from video_preprocess.domain import ArtifactRef
 from video_preprocess.engine import DAGPlanner, PipelineRunResult
+from video_preprocess.engine.planner import ExecutionPlan
 
 
 class PipelineServiceInputError(ValueError):
@@ -180,12 +181,7 @@ class PipelineApplicationService:
         self.trace_id_factory = trace_id_factory or _new_trace_id
 
     async def run(self, request: PipelineRunRequest) -> PipelineRunResult:
-        if not isinstance(request, PipelineRunRequest):
-            raise TypeError("request must be a PipelineRunRequest")
-        if not request.video_path.is_file():
-            raise PipelineServiceInputError(
-                f"video file does not exist: {request.video_path}"
-            )
+        plan = self.plan(request)
         run_id = request.run_id or self._new_identifier(
             self.run_id_factory,
             "run_id",
@@ -193,11 +189,6 @@ class PipelineApplicationService:
         trace_id = request.trace_id or self._new_identifier(
             self.trace_id_factory,
             "trace_id",
-        )
-        plan = self.planner.plan(
-            stage=request.stage,
-            from_stage=request.from_stage,
-            to_stage=request.to_stage,
         )
         runtime = self.runtime_factory.create(
             request,
@@ -229,6 +220,21 @@ class PipelineApplicationService:
             stage_configs=stage_configs,
             model_bindings=model_bindings,
             force_stages=request.force_stages,
+        )
+
+    def plan(self, request: PipelineRunRequest) -> ExecutionPlan:
+        """Validate a request and return its execution-free DAG view."""
+
+        if not isinstance(request, PipelineRunRequest):
+            raise TypeError("request must be a PipelineRunRequest")
+        if not request.video_path.is_file():
+            raise PipelineServiceInputError(
+                f"video file does not exist: {request.video_path}"
+            )
+        return self.planner.plan(
+            stage=request.stage,
+            from_stage=request.from_stage,
+            to_stage=request.to_stage,
         )
 
     @staticmethod
