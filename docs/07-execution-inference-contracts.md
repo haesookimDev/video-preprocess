@@ -1,10 +1,17 @@
 # 실행기·단계·추론 계약
 
-상태: **초안(Draft v1)**  
+상태: **v1 구현 진행 중**
 상위 설계: [`06-target-architecture.md`](./06-target-architecture.md)
 
 이 문서는 구현 언어나 전송 방식보다 오래 유지되어야 하는 논리 계약을 정의한다.
 Python Protocol, HTTP OpenAPI, 작업 큐 메시지는 모두 이 계약을 동일하게 표현해야 한다.
+
+현재 `ArtifactRef`, `StageSpec`, `StageTask`, `StageResult`와 검증 오류는
+[`src/video_preprocess/domain/`](../src/video_preprocess/domain/)에 구현되어 있다. 표준
+라이브러리 dataclass와 명시적 JSON 직렬화를 사용하는 결정은
+[`ADR-0002`](./adr/0002-use-stdlib-dataclasses-for-domain-contracts.md)에 기록한다.
+Artifact Store, Run Store, Executor와 Inference 계약은 아직 설계 상태이며 구현 완료로
+간주하지 않는다.
 
 ## 1. 계약 설계 원칙
 
@@ -139,6 +146,7 @@ Stage는 `StageTask`에 없는 전역 설정을 몰래 읽지 않는다. 환경�
   "schema_version": "1",
   "run_id": "run_123",
   "stage_run_id": "stage_456",
+  "attempt": 1,
   "status": "succeeded",
   "outputs": {
     "transcript": {"artifact_id": "...", "uri": "artifact://..."}
@@ -435,4 +443,3 @@ manifest는 모든 출력이 publish된 뒤 마지막에 원자적으로 기록�
 10. 구버전 payload 호환 또는 명확한 거부
 
 실제 모델 품질은 provider 계약 테스트와 분리해 sample/golden 통합 테스트로 검증한다.
-

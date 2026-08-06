@@ -1,8 +1,8 @@
 # 개발 상태와 세션 인수인계
 
 - 마지막 갱신: **2026-08-06**
-- 현재 단계: **Phase 0 — 기준선 고정 검증 마무리**
-- 다음 작업: **깨끗한 환경 설치 확인 후 Phase 1 계약 타입 설계**
+- 현재 단계: **Phase 1 — Domain 계약과 저장소 Port**
+- 다음 작업: **ArtifactStore·RunStore Protocol과 로컬 구현**
 
 이 문서는 개발 진행 상황의 단일 진입점이다. 새로운 세션은 이 문서를 먼저 읽고, 실제 코드와
 Git 상태를 확인한 뒤 작업을 시작한다.
@@ -16,6 +16,7 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - `src/pipeline/runner.py`: 11단계 순차 실행
 - `src/pipeline/context.py`: 경로·설정·JSON I/O 공유
 - `src/pipeline/stages/s01_*`~`s11_*`: 단계 구현
+- `src/video_preprocess/domain/`: 버전이 있는 Artifact·Stage 공개 계약
 - 로컬 파일 존재 여부를 기준으로 단계 스킵
 - STT, diarization, caption, embedding 단계가 모델을 직접 로드
 - Local/HTTP provider, Executor Port, Artifact Store, Run Store는 아직 구현되지 않음
@@ -36,7 +37,8 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - 목표 구조: [`06-target-architecture.md`](./06-target-architecture.md)
 - 실행·추론 계약: [`07-execution-inference-contracts.md`](./07-execution-inference-contracts.md)
 - 전체 계획: [`08-development-roadmap.md`](./08-development-roadmap.md)
-- 결정 기록: [`ADR-0001`](./adr/0001-separate-engine-executor-and-inference-providers.md)
+- 구조 결정: [`ADR-0001`](./adr/0001-separate-engine-executor-and-inference-providers.md)
+- 계약 구현 결정: [`ADR-0002`](./adr/0002-use-stdlib-dataclasses-for-domain-contracts.md)
 
 ## 3. 완료된 작업
 
@@ -61,13 +63,15 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - [x] 10~12주 마이그레이션 로드맵
 - [x] ADR-0001 승인 기록
 - [x] 세션 인수인계와 문서 갱신 규칙 정의
+- [x] 깨끗한 환경의 설치·테스트·preflight 기준선 검증
+- [x] Artifact·Stage domain 계약과 직렬화 테스트
 
 ## 4. 아직 구현되지 않은 작업
 
 - [x] 누락된 runtime/optional dependency 명세
 - [x] pytest와 최소 legacy fixture 및 단위 테스트
 - [x] runtime preflight와 `--preflight-only` CLI
-- [ ] domain 계약 타입
+- [x] domain 계약 타입
 - [ ] ArtifactStore와 RunStore
 - [ ] LocalInferenceProvider
 - [ ] PipelineEngine과 LocalExecutor
@@ -81,25 +85,25 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 문서가 존재한다고 구현된 것으로 간주하지 않는다. 완료 여부는 코드와 자동 테스트를 기준으로
 이 체크리스트에서 갱신한다.
 
-## 5. 다음 작업: Phase 0 종료와 Phase 1 착수
+## 5. 다음 작업: Local Store slice
 
 권장 순서:
 
-1. 임시 가상환경에서 `requirements-dev.txt` 설치 절차 재현
-2. 기본 pytest와 `--preflight-only` 검증
-3. Phase 0 결과를 기준선으로 확정
-4. Phase 1의 `ArtifactRef`, `StageSpec`, `StageTask`, `StageResult` 타입 설계
-5. dataclass와 Pydantic 중 공개 계약 구현 방식 결정
-6. 직렬화 round-trip과 schema version 테스트부터 구현
+1. `ArtifactStore`와 `RunStore` Protocol을 domain에 제3자 의존성 없이 정의
+2. SHA-256 checksum과 `artifact://` 로컬 URI 매핑 규칙 확정
+3. 기존 `output/<video_stem>/` 구조를 유지하는 `LocalArtifactStore` 구현
+4. 임시 파일을 같은 파일시스템에서 원자적으로 publish하고 checksum·크기를 검증
+5. run-level·stage-level JSON manifest를 마지막에 기록하는 `LocalRunStore` 구현
+6. legacy fixture reader와 부분 출력·checksum 불일치 테스트 추가
 
-현재 `.venv`에서는 전체 sample과 query까지 성공했다. 마지막으로 깨끗한 환경 설치를 확인한
-뒤 Phase 1로 이동한다.
+Phase 0은 깨끗한 임시 venv 설치와 21개 기존 테스트, preflight, `pip check`로 종료했다.
+Phase 1의 첫 slice인 공개 계약은 구현했지만 기존 runner에는 아직 연결하지 않았다. 다음
+slice에서도 CLI와 기존 산출물 경로는 유지한다.
 
 ## 6. 알려진 중요 문제
 
 | 우선순위 | 문제 | 영향 |
 |---|---|---|
-| P0 | `requirements.txt`에 직접 의존성 누락 | 새 환경에서 07·08·10 및 query 실패 가능 |
 | P0 | 파일 존재만으로 cache hit | 입력·설정·모델 변경 후 stale 결과 재사용 |
 | P0 | skipped diarization도 marker 생성 | credential 추가 후 자동 재시도되지 않음 |
 | P0 | 씬 50:50 경계에서 전사 중복 가능 | timeline과 검색 내용 왜곡 |
@@ -115,18 +119,15 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 
 ## 7. 기존 검증 기준선
 
-2026-08-06 문서화 전 점검 결과:
+2026-08-06 Phase 0·Phase 1 계약 slice 점검 결과:
 
-- Python 소스 18개 구문 검사 성공
-- 기존 `.venv`의 `pip check` 성공
+- 깨끗한 Python 3.13 임시 venv에 `requirements-dev.txt` 설치 성공
+- 깨끗한 venv에서 전체 테스트 39개와 `--preflight-only`, `pip check` 성공
 - 기존 SQLite index 3개 integrity check 성공
 - `sample.mp4`: 3개 씬, 3개 STT 세그먼트
 - `sample2.mp4`: 3개 씬, 4개 STT 세그먼트
 - 기존 query 예제에서 목표 씬 검색 확인
-- 자동 테스트 suite는 아직 없음
-
-기존 `.venv` 성공은 새 환경 설치 재현성을 보장하지 않는다. Phase 0에서 반드시 깨끗한 환경을
-기준으로 다시 검증한다.
+- domain 패키지가 제3자 라이브러리를 import하지 않는 경계 테스트 성공
 
 ## 8. 새 세션 시작 체크리스트
 
@@ -153,6 +154,20 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 
 최신 기록을 위에 추가한다. 긴 구현 설명은 PR이나 ADR에 두고 여기에는 다음 세션이 재개하는 데
 필요한 정보만 적는다.
+
+### 2026-08-06 — Phase 1 Artifact·Stage 계약
+
+- 목표: Engine과 Executor가 공유할 저장 위치 독립적이고 버전이 있는 계약 확립
+- 완료: `Checksum`, `ArtifactRef`, `StageSpec`, `StageTask`, `StageResult`, terminal status,
+  model 실행 정보와 계약 validation 예외 구현
+- 주요 결정: 공개 domain 타입은 frozen/slotted dataclass와 명시적 `to_dict()`·`from_dict()`를
+  사용하며 표준 라이브러리에만 의존함; ADR-0002 기록
+- 변경 파일: `src/video_preprocess/domain/`, `tests/domain/`, 계약·로드맵·상태 문서,
+  `docs/adr/0002-use-stdlib-dataclasses-for-domain-contracts.md`
+- 검증: 기존 `.venv`와 깨끗한 Python 3.13 임시 venv에서 pytest 39개 통과; 깨끗한
+  venv의 preflight와 `pip check` 성공
+- 호환성: 기존 runner, CLI와 산출물 형식은 변경하지 않았으며 새 계약은 아직 연결되지 않음
+- 다음 작업: ArtifactStore·RunStore Protocol, LocalArtifactStore와 LocalRunStore 구현
 
 ### 2026-08-06 — Phase 0 runtime preflight
 

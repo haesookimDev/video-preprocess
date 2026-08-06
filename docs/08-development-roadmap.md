@@ -1,6 +1,6 @@
 # 엔진·실행기 분리 개발 로드맵
 
-상태: **계획됨(Planned)**  
+상태: **진행 중 — Phase 1**
 기준일: 2026-08-06  
 대상 설계: [`06-target-architecture.md`](./06-target-architecture.md)  
 공개 계약: [`07-execution-inference-contracts.md`](./07-execution-inference-contracts.md)
@@ -97,8 +97,9 @@ HTTP Inference Provider로 지원한다.
 
 ### 작업
 
-- `ArtifactRef`, `StageSpec`, `StageTask`, `StageResult` 타입 구현
-- 오류 code와 공통 예외 계층 구현
+- [x] `ArtifactRef`, `StageSpec`, `StageTask`, `StageResult` 타입 구현
+- [x] 계약 validation 오류와 지원하지 않는 schema version 예외 구현
+- [x] 명시적 JSON 직렬화 round-trip과 domain dependency 경계 테스트
 - `ArtifactStore`와 `RunStore` Protocol 구현
 - 현재 출력 구조를 유지하는 `LocalArtifactStore` 구현
 - JSON manifest를 사용하는 `LocalRunStore` 구현
@@ -109,7 +110,8 @@ HTTP Inference Provider로 지원한다.
 
 ### 결정이 필요한 항목
 
-- dataclass와 Pydantic 중 공개 계약 타입 선택
+- 공개 계약은 표준 라이브러리 dataclass로 구현한다.
+  ([`ADR-0002`](./adr/0002-use-stdlib-dataclasses-for-domain-contracts.md))
 - checksum 알고리즘과 입력 영상 fingerprint 비용
 - manifest 저장 단위: run-level + stage-level 권장
 - artifact URI scheme과 로컬 매핑 규칙
@@ -382,4 +384,3 @@ nightly/manual job으로 분리한다.
 - cache, retry, timeout, cancel, skip 재평가가 테스트된다.
 - CLI와 API가 같은 Application Service를 사용한다.
 - 신규 session이 `STATUS.md`와 문서만으로 다음 작업을 재개할 수 있다.
-
