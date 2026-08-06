@@ -1,8 +1,8 @@
 # 개발 상태와 세션 인수인계
 
 - 마지막 갱신: **2026-08-06**
-- 현재 단계: **Phase 1 — Domain 계약과 저장소 Port**
-- 다음 작업: **ArtifactStore·RunStore Protocol과 로컬 구현**
+- 현재 단계: **Phase 2 — Local Inference Provider**
+- 다음 작업: **Inference 계약·Gateway와 embedding provider**
 
 이 문서는 개발 진행 상황의 단일 진입점이다. 새로운 세션은 이 문서를 먼저 읽고, 실제 코드와
 Git 상태를 확인한 뒤 작업을 시작한다.
@@ -17,9 +17,11 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - `src/pipeline/context.py`: 경로·설정·JSON I/O 공유
 - `src/pipeline/stages/s01_*`~`s11_*`: 단계 구현
 - `src/video_preprocess/domain/`: 버전이 있는 Artifact·Stage 공개 계약
+- `src/video_preprocess/storage/`: Artifact·Run Store Port와 로컬 구현
 - 로컬 파일 존재 여부를 기준으로 단계 스킵
 - STT, diarization, caption, embedding 단계가 모델을 직접 로드
-- Local/HTTP provider, Executor Port, Artifact Store, Run Store는 아직 구현되지 않음
+- Local/HTTP provider와 Executor Port는 아직 구현되지 않음
+- Local Store는 구현됐지만 기존 runner 연결은 Engine 전환 시점까지 보류
 
 기존 샘플 산출물은 `output/` 아래에 있으나 생성물이며 Git에 커밋하지 않는다.
 
@@ -39,6 +41,7 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - 전체 계획: [`08-development-roadmap.md`](./08-development-roadmap.md)
 - 구조 결정: [`ADR-0001`](./adr/0001-separate-engine-executor-and-inference-providers.md)
 - 계약 구현 결정: [`ADR-0002`](./adr/0002-use-stdlib-dataclasses-for-domain-contracts.md)
+- 로컬 저장 결정: [`ADR-0003`](./adr/0003-local-artifact-and-manifest-storage.md)
 
 ## 3. 완료된 작업
 
@@ -65,6 +68,7 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - [x] 세션 인수인계와 문서 갱신 규칙 정의
 - [x] 깨끗한 환경의 설치·테스트·preflight 기준선 검증
 - [x] Artifact·Stage domain 계약과 직렬화 테스트
+- [x] Local Artifact·Run Store와 legacy output adapter
 
 ## 4. 아직 구현되지 않은 작업
 
@@ -72,7 +76,7 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - [x] pytest와 최소 legacy fixture 및 단위 테스트
 - [x] runtime preflight와 `--preflight-only` CLI
 - [x] domain 계약 타입
-- [ ] ArtifactStore와 RunStore
+- [x] ArtifactStore와 RunStore
 - [ ] LocalInferenceProvider
 - [ ] PipelineEngine과 LocalExecutor
 - [ ] manifest 기반 cache
@@ -85,20 +89,20 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 문서가 존재한다고 구현된 것으로 간주하지 않는다. 완료 여부는 코드와 자동 테스트를 기준으로
 이 체크리스트에서 갱신한다.
 
-## 5. 다음 작업: Local Store slice
+## 5. 다음 작업: Local embedding provider slice
 
 권장 순서:
 
-1. `ArtifactStore`와 `RunStore` Protocol을 domain에 제3자 의존성 없이 정의
-2. SHA-256 checksum과 `artifact://` 로컬 URI 매핑 규칙 확정
-3. 기존 `output/<video_stem>/` 구조를 유지하는 `LocalArtifactStore` 구현
-4. 임시 파일을 같은 파일시스템에서 원자적으로 publish하고 checksum·크기를 검증
-5. run-level·stage-level JSON manifest를 마지막에 기록하는 `LocalRunStore` 구현
-6. legacy fixture reader와 부분 출력·checksum 불일치 테스트 추가
+1. `InferenceRequest`, `InferenceResponse`, capability와 표준 오류 타입 구현
+2. `InferenceProvider` Protocol과 alias 기반 `InferenceGateway` 구현
+3. fake provider로 정상화·capability·오류 contract test 작성
+4. `SentenceTransformer` lifecycle을 `LocalEmbeddingProvider`로 이동
+5. provider instance cache와 lazy load 동작 테스트
+6. `s10_index`와 query에 compatibility adapter를 연결해 기존 결과 구조 유지
 
-Phase 0은 깨끗한 임시 venv 설치와 21개 기존 테스트, preflight, `pip check`로 종료했다.
-Phase 1의 첫 slice인 공개 계약은 구현했지만 기존 runner에는 아직 연결하지 않았다. 다음
-slice에서도 CLI와 기존 산출물 경로는 유지한다.
+Phase 1은 공개 계약, SHA-256 Artifact Store, run/stage manifest, 원자적 publish와 legacy
+adapter까지 구현해 완료했다. 새 Store는 독립적으로 검증됐으며 현재 runner의 경로·출력 방식은
+아직 변경하지 않았다. Phase 2도 embedding 한 모델 slot만 먼저 이전한다.
 
 ## 6. 알려진 중요 문제
 
@@ -119,10 +123,11 @@ slice에서도 CLI와 기존 산출물 경로는 유지한다.
 
 ## 7. 기존 검증 기준선
 
-2026-08-06 Phase 0·Phase 1 계약 slice 점검 결과:
+2026-08-06 Phase 0·Phase 1 점검 결과:
 
 - 깨끗한 Python 3.13 임시 venv에 `requirements-dev.txt` 설치 성공
-- 깨끗한 venv에서 전체 테스트 39개와 `--preflight-only`, `pip check` 성공
+- 기존 `.venv`와 깨끗한 venv에서 전체 테스트 63개 성공
+- 깨끗한 venv에서 `--preflight-only`, `pip check` 성공
 - 기존 SQLite index 3개 integrity check 성공
 - `sample.mp4`: 3개 씬, 3개 STT 세그먼트
 - `sample2.mp4`: 3개 씬, 4개 STT 세그먼트
@@ -154,6 +159,19 @@ slice에서도 CLI와 기존 산출물 경로는 유지한다.
 
 최신 기록을 위에 추가한다. 긴 구현 설명은 PR이나 ADR에 두고 여기에는 다음 세션이 재개하는 데
 필요한 정보만 적는다.
+
+### 2026-08-06 — Phase 1 Local Artifact·Run Store
+
+- 목표: 기존 출력 경로를 유지하며 artifact 본문과 실행 manifest 저장을 Port로 분리
+- 완료: `ArtifactStore`, `RunStore`, `LocalArtifactStore`, `LocalRunStore`, run/stage manifest,
+  `LegacyOutputAdapter` 구현
+- 주요 결정: `artifact://<namespace>/<relative-path>`, SHA-256, `put`→`publish` 2단계,
+  run-level + stage-attempt-level manifest; ADR-0003 기록
+- 검증: pytest 63개 통과; 원자적 교체 실패 시 기존 파일 보존, 경로 탈출 거부, checksum 변조,
+  누락 output, legacy fixture와 manifest round-trip 테스트
+- 호환성: 물리 출력은 기존 `output/<video>/<stage>/...` 구조를 유지하고 내부 관리용
+  `_pending/`, `_manifests/`만 예약; 기존 runner는 아직 새 Store를 사용하지 않음
+- 다음 작업: Inference 계약·Gateway·fake contract test 후 embedding local provider 이전
 
 ### 2026-08-06 — Phase 1 Artifact·Stage 계약
 

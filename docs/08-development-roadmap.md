@@ -1,6 +1,6 @@
 # 엔진·실행기 분리 개발 로드맵
 
-상태: **진행 중 — Phase 1**
+상태: **진행 중 — Phase 2**
 기준일: 2026-08-06  
 대상 설계: [`06-target-architecture.md`](./06-target-architecture.md)  
 공개 계약: [`07-execution-inference-contracts.md`](./07-execution-inference-contracts.md)
@@ -100,21 +100,22 @@ HTTP Inference Provider로 지원한다.
 - [x] `ArtifactRef`, `StageSpec`, `StageTask`, `StageResult` 타입 구현
 - [x] 계약 validation 오류와 지원하지 않는 schema version 예외 구현
 - [x] 명시적 JSON 직렬화 round-trip과 domain dependency 경계 테스트
-- `ArtifactStore`와 `RunStore` Protocol 구현
-- 현재 출력 구조를 유지하는 `LocalArtifactStore` 구현
-- JSON manifest를 사용하는 `LocalRunStore` 구현
-- 임시 artifact → publish 원자적 쓰기 구현
-- schema version과 stage version 규칙 구현
-- 기존 JSON을 읽는 legacy adapter 구현
-- 직렬화 round-trip 및 checksum 테스트
+- [x] `ArtifactStore`와 `RunStore` Protocol 구현
+- [x] 현재 출력 구조를 유지하는 `LocalArtifactStore` 구현
+- [x] JSON manifest를 사용하는 `LocalRunStore` 구현
+- [x] 임시 artifact → publish 원자적 쓰기 구현
+- [x] schema version과 stage version 규칙 구현
+- [x] 기존 JSON을 읽는 legacy adapter 구현
+- [x] 직렬화 round-trip 및 checksum 테스트
 
 ### 결정이 필요한 항목
 
 - 공개 계약은 표준 라이브러리 dataclass로 구현한다.
   ([`ADR-0002`](./adr/0002-use-stdlib-dataclasses-for-domain-contracts.md))
-- checksum 알고리즘과 입력 영상 fingerprint 비용
-- manifest 저장 단위: run-level + stage-level 권장
-- artifact URI scheme과 로컬 매핑 규칙
+- checksum은 SHA-256이며 artifact write와 같은 streaming pass에서 계산한다.
+- manifest는 run-level + stage-attempt-level로 분리한다.
+- URI는 `artifact://<namespace>/<relative-path>`를 local root 아래 동일 경로로 매핑한다.
+  ([`ADR-0003`](./adr/0003-local-artifact-and-manifest-storage.md))
 
 ### 완료 조건
 

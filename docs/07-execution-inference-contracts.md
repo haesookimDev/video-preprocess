@@ -6,12 +6,14 @@
 이 문서는 구현 언어나 전송 방식보다 오래 유지되어야 하는 논리 계약을 정의한다.
 Python Protocol, HTTP OpenAPI, 작업 큐 메시지는 모두 이 계약을 동일하게 표현해야 한다.
 
-현재 `ArtifactRef`, `StageSpec`, `StageTask`, `StageResult`와 검증 오류는
+현재 `ArtifactRef`, `StageSpec`, `StageTask`, `StageResult`와 manifest 타입은
 [`src/video_preprocess/domain/`](../src/video_preprocess/domain/)에 구현되어 있다. 표준
 라이브러리 dataclass와 명시적 JSON 직렬화를 사용하는 결정은
 [`ADR-0002`](./adr/0002-use-stdlib-dataclasses-for-domain-contracts.md)에 기록한다.
-Artifact Store, Run Store, Executor와 Inference 계약은 아직 설계 상태이며 구현 완료로
-간주하지 않는다.
+Artifact·Run Store Port와 로컬 구현은
+[`src/video_preprocess/storage/`](../src/video_preprocess/storage/)에 있고 저장 규칙은
+[`ADR-0003`](./adr/0003-local-artifact-and-manifest-storage.md)에 기록한다. Executor와
+Inference 계약은 아직 설계 상태이며 구현 완료로 간주하지 않는다.
 
 ## 1. 계약 설계 원칙
 
@@ -74,15 +76,30 @@ ID는 로그, 이벤트, 상태 조회, 원격 요청에서 동일하게 전달�
 필수 동작:
 
 ```text
-put(stream, metadata) -> ArtifactRef
+put(stream, identity, relative_path, metadata) -> PendingArtifact
+publish(pending_artifact) -> ArtifactRef
+discard(pending_artifact) -> None
 open(artifact_ref) -> readable stream
 materialize(artifact_ref, workspace) -> local path
 exists(artifact_ref) -> bool
 verify(artifact_ref) -> verification result
-publish(temporary_ref) -> ArtifactRef
 ```
 
 삭제는 보존 정책과 연관되므로 초기 공통 Port에 넣지 않고 관리 기능으로 분리한다.
+`discard`는 공개 artifact 삭제가 아니라 publish되지 않은 임시 byte 정리만 담당한다.
+
+### 3.3 Local Artifact 규칙
+
+- URI: `artifact://<namespace>/<percent-encoded-relative-path>`
+- 물리 경로: 설정된 `root/<relative-path>`
+- checksum: SHA-256
+- 내부 예약 경로: `_pending/`, `_manifests/`
+- publish: root와 같은 파일시스템의 임시 파일을 `os.replace`로 원자적 교체
+- 기존 출력: `LegacyOutputAdapter`가 내용을 변경하지 않고 참조와 checksum을 생성
+
+namespace가 다르거나 절대 경로·상위 이동을 포함하는 URI는 처리하지 않는다. `open`은 읽기
+성능을 위해 자동 checksum 검사를 하지 않으며, 완료·cache 판정은 `verify`를 명시적으로
+호출한다.
 
 ## 4. Stage 계약
 
@@ -415,6 +432,27 @@ start/end time and metrics
 
 manifest는 모든 출력이 publish된 뒤 마지막에 원자적으로 기록한다. manifest만 존재하거나 출력
 일부가 누락된 상태는 완료로 간주하지 않는다.
+
+### 10.1 구현된 manifest 타입
+
+- `StageManifest`: `StageTask`, terminal `StageResult`, 시작·종료 시각, 선택적 cache key
+- `RunManifest`: run 상태, 입력 artifact, 설정, model binding, Stage attempt 참조
+- 모든 시각은 UTC offset이 포함된 ISO 8601 문자열
+- run은 `pending`, `running`, `succeeded`, `failed`, `cancelled` 상태 사용
+
+### 10.2 Run Store Port
+
+```text
+save_run(run_manifest) -> None
+load_run(run_id) -> RunManifest | None
+save_stage(stage_manifest) -> None
+load_stage(run_id, stage_attempt_ref) -> StageManifest | None
+is_stage_complete(run_id, stage_attempt_ref) -> bool
+```
+
+`LocalRunStore`는 output을 Artifact Store로 검증한 뒤 Stage manifest를 원자적으로 기록한다.
+성공한 run을 저장할 때 참조된 모든 Stage가 `succeeded` 또는 `skipped`이고 output 검증을
+통과해야 한다. manifest 이후 artifact가 사라지거나 변조되면 `is_stage_complete`는 false다.
 
 ## 11. 버전 호환 정책
 

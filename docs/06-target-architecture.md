@@ -220,11 +220,15 @@ manifest에는 요청한 binding과 실제 응답에 포함된 provider·model r
 
 Stage 사이에는 실제 파일 경로가 아니라 `ArtifactRef`를 전달한다.
 
+현재 로컬 기준 구현과 세부 결정은
+[`ADR-0003`](./adr/0003-local-artifact-and-manifest-storage.md)에 기록되어 있다.
+
 - 로컬 MVP: `LocalArtifactStore`가 현재 `output/<video>/` 구조를 유지한다.
 - 서비스 확장: 객체 스토리지 key나 안전한 다운로드 참조를 사용한다.
 - 원격 추론: 대용량 오디오·이미지를 JSON에 base64로 넣지 않는다.
 - 산출물 작성: 임시 위치에 저장한 뒤 성공 시 원자적으로 publish한다.
 - manifest: stage output 전체 목록과 checksum을 저장한다.
+- 로컬 내부 관리 경로: `_pending/`에 비공개 artifact, `_manifests/`에 run/stage JSON 저장
 
 Artifact Store 전환 전까지는 원격 서버에 로컬 절대 경로를 넘기지 않는다. 로컬 경로는
 다른 호스트에서 의미가 없으며 내부 파일 구조를 노출할 수 있다.
@@ -320,4 +324,3 @@ Big-bang 재작성은 하지 않는다. 계약과 로컬 구현을 먼저 만든
 - 원격 추론 실패·timeout·취소·retry가 계약 테스트로 검증된다.
 - 입력·설정·모델 변경에 따른 캐시 무효화가 자동 테스트된다.
 - 새 provider나 executor가 기존 Stage 수정 없이 등록된다.
-

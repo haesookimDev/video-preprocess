@@ -2,6 +2,12 @@
 
 from .artifacts import ArtifactRef, Checksum
 from .errors import ContractValidationError, UnsupportedSchemaVersion
+from .manifests import (
+    RunManifest,
+    RunStatus,
+    StageAttemptRef,
+    StageManifest,
+)
 from .stages import (
     ModelExecution,
     ResourceHints,
@@ -17,10 +23,13 @@ __all__ = [
     "ContractValidationError",
     "ModelExecution",
     "ResourceHints",
+    "RunManifest",
+    "RunStatus",
+    "StageAttemptRef",
+    "StageManifest",
     "StageResult",
     "StageSpec",
     "StageStatus",
     "StageTask",
     "UnsupportedSchemaVersion",
 ]
-
