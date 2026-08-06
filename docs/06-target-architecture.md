@@ -220,6 +220,11 @@ manifest에는 요청한 binding과 실제 응답에 포함된 provider·model r
 Gateway를 통해 호출한다. 비동기 Port와 동기 CLI 호환 방식은
 [`ADR-0004`](./adr/0004-async-inference-gateway-and-local-embedding-provider.md)에 기록한다.
 
+`caption.default`도 `LocalCaptionProvider`에 연결되어 있다. 현재 runner의 composition root가
+Caption Service와 legacy artifact registrar를 주입하고, `s08_captions`는 keyframe을
+ArtifactRef batch로 전달한다. 중첩 ArtifactRef 계약과 로컬 provider 결정은
+[`ADR-0005`](./adr/0005-artifact-batched-local-caption-provider.md)에 기록한다.
+
 ## 9. 산출물 저장 전략
 
 Stage 사이에는 실제 파일 경로가 아니라 `ArtifactRef`를 전달한다.

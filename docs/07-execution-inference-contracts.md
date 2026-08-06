@@ -14,9 +14,10 @@ Artifact·Run Store Port와 로컬 구현은
 [`src/video_preprocess/storage/`](../src/video_preprocess/storage/)에 있고 저장 규칙은
 [`ADR-0003`](./adr/0003-local-artifact-and-manifest-storage.md)에 기록한다. Executor와
 나머지 Provider 계약은 아직 설계 상태이며 구현 완료로 간주하지 않는다. Inference 공통 계약,
-Gateway와 첫 `LocalEmbeddingProvider`는
+Gateway, `LocalEmbeddingProvider`와 `LocalCaptionProvider`는
 [`src/video_preprocess/inference/`](../src/video_preprocess/inference/)에 구현되어 있고 결정은
-[`ADR-0004`](./adr/0004-async-inference-gateway-and-local-embedding-provider.md)에 기록한다.
+[`ADR-0004`](./adr/0004-async-inference-gateway-and-local-embedding-provider.md)와
+[`ADR-0005`](./adr/0005-artifact-batched-local-caption-provider.md)에 기록한다.
 
 ## 1. 계약 설계 원칙
 
@@ -280,8 +281,10 @@ pending → queued → running → succeeded
 VAD는 초기에는 Stage 내부 로컬 연산으로 유지할 수 있지만, 동일한 gateway를 통해 원격화할
 수 있도록 task schema를 예약한다.
 
-`inputs`는 `ArtifactRef`와 JSON 값을 함께 허용한다. 오디오·이미지처럼 큰 입력은 반드시
-artifact로 전달하고, text embedding의 `texts`처럼 작은 batch만 inline JSON을 사용한다.
+`inputs`는 `ArtifactRef`와 JSON 값을 함께 허용한다. JSON 배열·객체 안에도 ArtifactRef를
+중첩할 수 있으며 직렬화 시 각 참조를 동일한 artifact schema로 표현한다. 오디오·이미지처럼
+큰 입력은 반드시 artifact로 전달하고, text embedding의 `texts`처럼 작은 값만 inline JSON을
+사용한다.
 
 ### 6.2 InferenceResponse
 
@@ -318,6 +321,31 @@ Gateway는 response의 model 정보를 StageResult와 manifest로 전달한다.
 `outputs.dimension`, `usage.input_count`, model provider·resolved revision·runtime을 함께
 기록한다. 큰 batch의 artifact 출력은 이후 capability로 추가한다.
 
+현재 caption 요청·응답 규칙:
+
+```json
+{
+  "task": "image_captioning",
+  "model": {
+    "alias": "caption.default",
+    "name": "Salesforce/blip-image-captioning-base",
+    "revision": "default"
+  },
+  "inputs": {
+    "images": [
+      {"artifact_id": "keyframe_scene_001", "uri": "artifact://..."}
+    ]
+  },
+  "parameters": {"max_new_tokens": 40}
+}
+```
+
+- `inputs.images`: 1개 이상의 ArtifactRef 배열, 입력 순서 보존
+- 지원 media type: `image/jpeg`, `image/png`, `image/webp`
+- `max_new_tokens`: 1~512 정수
+- `outputs.captions`: 입력과 같은 개수·순서의 비어 있지 않은 문자열 배열
+- `usage.input_count`, `usage.batch_size`, effective provider·revision·runtime 기록
+
 ## 7. Provider 계약
 
 ```python
@@ -328,10 +356,11 @@ class InferenceProvider(Protocol):
     async def health(self) -> HealthStatus: ...
 ```
 
-현재 `InferenceGateway`는 alias binding, capability·batch·artifact 크기 검증, 전체 timeout,
-예외 정규화와 response ID 검증을 구현한다. 첫 binding은 `embedding.default`이며 local
-provider는 lazy model load, process 내 재사용, warmup hook과 idempotent 결과 cache를 제공한다.
-동기 CLI는 `EmbeddingService.embed()`, async service는 `embed_async()`를 사용한다.
+현재 `InferenceGateway`는 alias binding, capability·batch·중첩 artifact 크기 검증, 전체
+timeout, 예외 정규화와 response ID 검증을 구현한다. `embedding.default`와
+`caption.default`의 local provider는 lazy model load, process 내 재사용, warmup hook과
+idempotent 결과 cache를 제공한다. 동기 CLI/Stage는 task별 동기 Service를 사용하고 async
+application은 `embed_async()` 또는 `caption_async()`를 사용한다.
 
 ### 7.1 capability 확인
 
@@ -395,8 +424,8 @@ DELETE /v1/inference-jobs/{request_id}
 
 재시도는 exponential backoff와 jitter를 사용하고 최대 횟수와 전체 deadline을 모두 제한한다.
 현재 Gateway는 한 요청의 capability 확인과 inference를 합친 전체 timeout만 구현한다. retry,
-backoff와 circuit breaker는 HTTP Provider 단계에서 추가한다. Local embedding의 실행 thread는
-timeout 후 강제 중단할 수 없어 cancellation 미지원으로 capability에 표시한다.
+backoff와 circuit breaker는 HTTP Provider 단계에서 추가한다. Local embedding과 caption의
+실행 thread는 timeout 후 강제 중단할 수 없어 cancellation 미지원으로 capability에 표시한다.
 
 ## 9. Skip과 Fallback
 

@@ -65,7 +65,7 @@ flowchart TD
 | 05_vad | 프레임 단위 음성 확률 계산 → 발화 구간만 추출. 무음 구간을 STT에서 제외해 시간 절약 + Whisper 무음 환각 방지 | Silero VAD (ONNX, faster-whisper 내장) | 0.1s |
 | 06_stt | 인접 VAD 구간 병합(gap ≤ 0.5s) 후 구간별 전사. 구간 오프셋을 더해 원본 시간축으로 보정 | faster-whisper `base`(기본)/`small` (CTranslate2 int8) | 5.6s / 13.9s |
 | 07_diarize | 음성 구간을 화자 임베딩으로 변환 후 클러스터링 → 발화 턴별 화자 라벨 | pyannote `speaker-diarization-community-1` (HF 게이트) | 27.9s |
-| 08_captions | 키프레임을 VLM에 입력해 캡션 생성. 이미지(수백~수천 토큰)를 텍스트(수십 토큰)로 압축 | BLIP `image-captioning-base` | 3.0s |
+| 08_captions | keyframe ArtifactRef batch를 VLM Provider에 입력해 캡션 생성. 이미지(수백~수천 토큰)를 텍스트(수십 토큰)로 압축 | Local BLIP Provider `image-captioning-base` | 3.0s |
 | 09_timeline | 씬을 골격으로 병합. 전사→씬은 겹침 ≥ 50% 기준 귀속, 전사→화자는 최대 겹침 턴의 라벨 채택 | 규칙 기반 | 0.0s |
 | 10_index | 씬 카드 텍스트(캡션+전사)를 ① FTS5 역색인 ② 정규화 384차원 벡터로 이중 저장 | sentence-transformers `paraphrase-multilingual-MiniLM-L12-v2`, SQLite FTS5 | 0.2s |
 | 11_context | 포맷 규칙 전문 + 메타데이터 + 씬 목차 + 씬 카드 전문을 하나의 자기완결 문서로 조립 | 규칙 기반 | 0.0s |
@@ -78,3 +78,6 @@ flowchart TD
 - **질의 시점 선별**: 10_index + query.py (전처리는 전부, 입력은 top-k만)
 - **우아한 성능 저하**: 07_diarize는 토큰/오디오가 없으면 사유를 기록하고 스킵,
   나머지 파이프라인은 화자 라벨 없이 계속 동작
+
+`08_captions/captions.json`은 기존 `model`, `captions`를 유지하며 실제 실행 정보를 나타내는
+`provider`, `revision`, `runtime` 필드를 추가로 기록한다.

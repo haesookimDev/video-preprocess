@@ -2,7 +2,7 @@
 
 - 마지막 갱신: **2026-08-06**
 - 현재 단계: **Phase 2 — Local Inference Provider**
-- 다음 작업: **caption LocalInferenceProvider와 s08 adapter**
+- 다음 작업: **STT LocalInferenceProvider와 s06 adapter**
 
 이 문서는 개발 진행 상황의 단일 진입점이다. 새로운 세션은 이 문서를 먼저 읽고, 실제 코드와
 Git 상태를 확인한 뒤 작업을 시작한다.
@@ -19,10 +19,11 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - `src/video_preprocess/domain/`: 버전이 있는 Artifact·Stage 공개 계약
 - `src/video_preprocess/storage/`: Artifact·Run Store Port와 로컬 구현
 - 로컬 파일 존재 여부를 기준으로 단계 스킵
-- STT, diarization, caption 단계가 모델을 직접 로드
-- embedding은 `InferenceGateway`와 `LocalEmbeddingProvider`를 통해 실행
-- 임베딩 외 Local provider, HTTP provider, Executor Port는 아직 구현되지 않음
-- Local Store는 구현됐지만 기존 runner 연결은 Engine 전환 시점까지 보류
+- STT와 diarization 단계가 모델을 직접 로드
+- embedding과 caption은 `InferenceGateway`와 각 Local Provider를 통해 실행
+- STT·diarization Local provider, HTTP provider, Executor Port는 아직 구현되지 않음
+- Local Store는 구현됐고 caption compatibility adapter에서 기존 keyframe 등록에 사용하며,
+  전체 runner 연결은 Engine 전환 시점까지 보류
 
 기존 샘플 산출물은 `output/` 아래에 있으나 생성물이며 Git에 커밋하지 않는다.
 
@@ -45,6 +46,8 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - 로컬 저장 결정: [`ADR-0003`](./adr/0003-local-artifact-and-manifest-storage.md)
 - 추론·embedding 결정:
   [`ADR-0004`](./adr/0004-async-inference-gateway-and-local-embedding-provider.md)
+- caption ArtifactRef batch 결정:
+  [`ADR-0005`](./adr/0005-artifact-batched-local-caption-provider.md)
 
 ## 3. 완료된 작업
 
@@ -73,6 +76,7 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - [x] Artifact·Stage domain 계약과 직렬화 테스트
 - [x] Local Artifact·Run Store와 legacy output adapter
 - [x] Inference 공통 계약·Gateway와 local embedding provider
+- [x] ArtifactRef batch와 local caption provider·s08 adapter
 
 ## 4. 아직 구현되지 않은 작업
 
@@ -81,7 +85,9 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - [x] runtime preflight와 `--preflight-only` CLI
 - [x] domain 계약 타입
 - [x] ArtifactStore와 RunStore
-- [ ] LocalInferenceProvider
+- [x] LocalEmbeddingProvider
+- [x] LocalCaptionProvider
+- [ ] Local STT·diarization Provider
 - [ ] PipelineEngine과 LocalExecutor
 - [ ] manifest 기반 cache
 - [ ] HTTPInferenceProvider와 모델 서버 계약 구현
@@ -93,20 +99,20 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 문서가 존재한다고 구현된 것으로 간주하지 않는다. 완료 여부는 코드와 자동 테스트를 기준으로
 이 체크리스트에서 갱신한다.
 
-## 5. 다음 작업: Local caption provider slice
+## 5. 다음 작업: Local STT provider slice
 
 권장 순서:
 
-1. `image_captioning`의 keyframe `ArtifactRef` 입력과 caption 출력 규칙 확정
-2. BLIP processor/model을 lazy-load·재사용하는 `LocalCaptionProvider` 구현
-3. fake image loader와 model로 batch·오류·resolved revision contract test 작성
-4. `s08_captions`에서 transformers 직접 import와 model lifecycle 제거
-5. 기존 keyframe 경로를 ArtifactRef로 등록하는 compatibility adapter 연결
-6. sample caption 구조·개수와 기존 `captions.json` 호환 검증
+1. `speech_to_text`의 audio ArtifactRef, merged VAD chunk와 segment 출력 규칙 확정
+2. faster-whisper model과 audio decoder를 lazy-load·재사용하는 `LocalSTTProvider` 구현
+3. fake decoder/model로 language·timestamp·오류·resolved revision contract test 작성
+4. `s06_stt`에서 faster-whisper 직접 import와 model lifecycle 제거
+5. 기존 WAV 경로를 ArtifactRef로 등록하는 compatibility adapter 연결
+6. sample transcript 구조·segment 개수와 기존 `transcript.json` 호환 검증
 
-Inference 공통 envelope, 표준 오류, capability·health, alias Gateway와 embedding provider는
-구현됐다. `s10_index`와 query는 더 이상 SentenceTransformer를 직접 import하지 않으며 기존
-SQLite schema를 유지한다. 다음 slice도 caption 하나만 옮기고 STT·diarization은 건드리지 않는다.
+Caption은 keyframe ArtifactRef batch를 사용하며 `s08_captions`는 더 이상 PIL·transformers를
+직접 import하지 않는다. 기존 caption 필드는 유지하고 provider·resolved revision·runtime만
+추가했다. 다음 slice도 STT 하나만 옮기고 VAD·diarization은 건드리지 않는다.
 
 ## 6. 알려진 중요 문제
 
@@ -127,10 +133,13 @@ SQLite schema를 유지한다. 다음 slice도 caption 하나만 옮기고 STT·
 
 ## 7. 기존 검증 기준선
 
-2026-08-06 Phase 0~Phase 2 embedding slice 점검 결과:
+2026-08-06 Phase 0~Phase 2 caption slice 점검 결과:
 
 - 깨끗한 Python 3.13 임시 venv에 `requirements-dev.txt` 설치 성공
-- 기존 `.venv`와 깨끗한 venv에서 전체 테스트 85개 성공
+- embedding slice 당시 기존 `.venv`와 깨끗한 venv에서 전체 테스트 85개 성공
+- caption slice 기본 테스트 97개 성공
+- `sample.mp4 --force` 11단계 전체 실행 `ok`(34.6초), caption 3개와 downstream 산출물 확인
+- query `음성 구간 검출 --topk 2`가 기존과 동일하게 씬 02를 최상위로 반환
 - 깨끗한 venv에서 `--preflight-only`, `pip check` 성공
 - 기존 SQLite index 3개 integrity check 성공
 - `sample.mp4`: 3개 씬, 3개 STT 세그먼트
@@ -163,6 +172,23 @@ SQLite schema를 유지한다. 다음 slice도 caption 하나만 옮기고 STT·
 
 최신 기록을 위에 추가한다. 긴 구현 설명은 PR이나 ADR에 두고 여기에는 다음 세션이 재개하는 데
 필요한 정보만 적는다.
+
+### 2026-08-06 — Phase 2 local caption provider
+
+- 목표: keyframe을 경로가 아닌 ArtifactRef로 전달하고 s08에서 BLIP lifecycle 제거
+- 완료: 중첩 ArtifactRef inference 계약, Gateway batch·크기 검사, `CaptionService`,
+  `LocalCaptionProvider`, runner composition과 s08 compatibility adapter 구현
+- 주요 결정: `caption.default`, ordered ArtifactRef batch, 입력 checksum 선검증, lazy BLIP
+  processor/model, idempotent result cache, resolved HF commit 기록; ADR-0005
+- 검증: 기본 pytest 97개 통과; fake loader로 batch 순서·1회 load·오류·warmup 검증;
+  오프라인 실제 BLIP로 sample keyframe 3개 캡션을 기존 문자열과 동일하게 생성하고 commit
+  `82a37760796d32b1411fe092ab5d4e227313294b` 기록; sample 전체 11단계 `ok`(34.6초),
+  query top-1 씬 02 확인
+- 호환성: 기존 `model`, `captions`, scene/timestamp/keyframe/caption 필드를 유지하고
+  provider·revision·runtime만 additive하게 추가
+- 주의사항: local caption thread는 timeout 후 강제 중단할 수 없고 output tree별 composition은
+  서로 model cache를 공유하지 않음
+- 다음 작업: audio ArtifactRef를 사용하는 LocalSTTProvider와 s06 adapter
 
 ### 2026-08-06 — Phase 2 Inference Gateway·local embedding
 
