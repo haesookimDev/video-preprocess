@@ -17,8 +17,9 @@ DAG planner는 [`src/video_preprocess/engine/`](../src/video_preprocess/engine/)
 Executor Port와 LocalExecutor는
 [`src/video_preprocess/executors/`](../src/video_preprocess/executors/)에 구현됐다. 순차
 PipelineEngine과 상태 머신은
-[`src/video_preprocess/engine/`](../src/video_preprocess/engine/)에 구현됐지만 manifest cache,
-legacy Stage binding과 HTTP Provider는 아직 구현 완료로 간주하지 않는다. Inference 공통 계약,
+[`src/video_preprocess/engine/`](../src/video_preprocess/engine/)에 구현됐다. manifest cache key와
+decision 계층도 구현됐지만 RunStore/Engine 통합, legacy Stage binding과 HTTP Provider는 아직
+구현 완료로 간주하지 않는다. Inference 공통 계약,
 Gateway, `LocalEmbeddingProvider`, `LocalCaptionProvider`, `LocalSTTProvider`,
 `LocalDiarizationProvider`와 `LocalVADProvider`는
 [`src/video_preprocess/inference/`](../src/video_preprocess/inference/)에 구현되어 있고 결정은
@@ -654,6 +655,24 @@ is_stage_complete(run_id, stage_attempt_ref) -> bool
 `LocalRunStore`는 output을 Artifact Store로 검증한 뒤 Stage manifest를 원자적으로 기록한다.
 성공한 run을 저장할 때 참조된 모든 Stage가 `succeeded` 또는 `skipped`이고 output 검증을
 통과해야 한다. manifest 이후 artifact가 사라지거나 변조되면 `is_stage_complete`는 false다.
+
+### 10.3 Cache key와 decision
+
+현재 `stage-cache-v1:<sha256>` key는 StageTask schema, Stage name/version, input의 내용 식별자
+(kind, media type, size, checksum), config와 requested model binding을 canonical JSON으로 hash한다.
+run/stage ID, attempt, trace, idempotency key와 artifact 저장 URI는 결과 의미가 아니므로 제외한다.
+
+`ManifestCacheEvaluator`는 다음을 모두 만족할 때만 `hit`을 반환한다.
+
+- manifest task semantics와 저장된 cache key가 현재 task/key와 일치
+- result가 `succeeded`
+- 현재 기대하는 effective provider/model/revision/runtime과 기록된 `ModelExecution`이 일치
+- 현재 input과 저장 output의 존재, size와 checksum을 `ArtifactStore.verify`로 확인
+
+결과는 `hit`, `miss`, `forced`와 stable miss reason 목록이다. 모델 Stage의 현재 effective
+fingerprint를 resolve하지 못하면 안전하게 miss 처리한다. 구조화된 recheck fingerprint가 아직
+없으므로 모든 `skipped` manifest도 `SKIPPED_RECHECK_REQUIRED` miss다. 상세 결정은
+[`ADR-0012`](./adr/0012-content-addressed-manifest-cache-decisions.md)에 기록한다.
 
 ## 11. 버전 호환 정책
 

@@ -1,5 +1,13 @@
-"""Pipeline registry and deterministic DAG planning."""
+"""Pipeline planning, orchestration, and cache policy."""
 
+from .cache import (
+    CacheDecision,
+    CacheMiss,
+    CacheMissReason,
+    CacheStatus,
+    ManifestCacheEvaluator,
+    compute_stage_cache_key,
+)
 from .defaults import DEFAULT_STAGE_SPECS, create_default_registry
 from .errors import (
     DependencyCycleError,
@@ -24,6 +32,10 @@ from .pipeline import (
 from .registry import StageRegistry
 
 __all__ = [
+    "CacheDecision",
+    "CacheMiss",
+    "CacheMissReason",
+    "CacheStatus",
     "DAGPlanner",
     "DEFAULT_STAGE_SPECS",
     "DependencyCycleError",
@@ -33,9 +45,11 @@ __all__ = [
     "EngineInputError",
     "ExecutionPlan",
     "InvalidInputDependencyError",
+    "ManifestCacheEvaluator",
     "PipelineEngine",
     "PipelineRunResult",
     "PlanSelectionError",
+    "RunStateMachine",
     "StageRegistry",
     "StageExecutionRecord",
     "StageLifecycle",
@@ -43,5 +57,5 @@ __all__ = [
     "StateTransitionError",
     "UnknownDependencyError",
     "create_default_registry",
-    "RunStateMachine",
+    "compute_stage_cache_key",
 ]

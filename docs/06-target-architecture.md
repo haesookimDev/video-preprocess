@@ -190,7 +190,9 @@ from, to 선택과 plan 밖에서 필요한 `boundary_inputs` 규칙은
 최소 `PipelineEngine`은 plan 순서, StageTask identity, logical artifact 전달과 fail/cancel 중단을
 구현했다. 결정은
 [`ADR-0011`](./adr/0011-sequential-pipeline-engine-artifact-orchestration.md)에 기록한다.
-RunStore/cache와 legacy Stage binding은 아직 구현되지 않았다.
+Content-addressed Stage cache key와 manifest/artifact 검증 기반 cache decision 계층도 구현했으며
+결정은 [`ADR-0012`](./adr/0012-content-addressed-manifest-cache-decisions.md)에 기록한다.
+RunStore/cache의 PipelineEngine 통합과 legacy Stage binding은 아직 구현되지 않았다.
 
 ## 8. 설정과 모델 binding
 

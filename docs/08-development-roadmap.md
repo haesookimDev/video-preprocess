@@ -198,9 +198,10 @@ Phase 2는 2026-08-06에 VAD까지 Local Provider로 이동하고 sample 회귀�
 - [x] Executor Port와 순차 LocalExecutor 구현
 - [x] PipelineEngine 순차 StageTask 생성과 logical artifact orchestration 구현
 - stage timeout과 cancellation token 전달
-- manifest cache key 계산
-- cache miss 사유 기록
-- skipped 조건 재평가
+- [x] manifest cache key 계산과 artifact integrity 기반 decision 구현
+- [x] cache miss 사유 기록
+- [x] skipped 결과의 안전한 재평가 기본 정책 구현
+- RunStore manifest persistence와 PipelineEngine cache hit 통합
 - retry policy 구현
 - 선택 실행 CLI 구현
 
