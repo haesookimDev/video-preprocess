@@ -3,9 +3,15 @@
 import json
 import logging
 import sqlite3
+import sys
 from pathlib import Path
 
-from query import assemble_context, fts_search, rrf_fuse
+import numpy as np
+import query as query_module
+
+from query import assemble_context, embed_search, fts_search, rrf_fuse
+from video_preprocess.domain import EffectiveModel
+from video_preprocess.inference import EmbeddingBatch
 
 
 LOG = logging.getLogger("test.query")
@@ -36,6 +42,44 @@ def test_rrf_fuse_combines_rankings() -> None:
     fused = rrf_fuse([[1, 2], [2, 3]], LOG)
 
     assert fused == [2, 1, 3]
+
+
+def test_embed_search_uses_injected_service_and_existing_blob_schema() -> None:
+    db = sqlite3.connect(":memory:")
+    db.execute("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT)")
+    db.execute("INSERT INTO meta VALUES ('embed_model', 'fake/model')")
+    db.execute(
+        "CREATE TABLE embeddings (scene_id INTEGER PRIMARY KEY, vector BLOB)"
+    )
+    db.executemany(
+        "INSERT INTO embeddings VALUES (?, ?)",
+        [
+            (1, np.asarray([1.0, 0.0], dtype=np.float32).tobytes()),
+            (2, np.asarray([0.0, 1.0], dtype=np.float32).tobytes()),
+        ],
+    )
+
+    class FakeService:
+        def embed(self, texts, **kwargs) -> EmbeddingBatch:
+            assert texts == ["두 번째"]
+            return EmbeddingBatch(
+                vectors=((0.0, 1.0),),
+                dimension=2,
+                model=EffectiveModel(
+                    provider="fake",
+                    name="fake/model",
+                    revision="rev-1",
+                ),
+                usage={},
+                timing={},
+            )
+
+    try:
+        ranking = embed_search(db, "두 번째", LOG, FakeService())
+    finally:
+        db.close()
+
+    assert ranking == [2, 1]
 
 
 def test_assemble_context_places_best_scene_last(tmp_path: Path) -> None:
@@ -83,3 +127,24 @@ def test_assemble_context_places_best_scene_last(tmp_path: Path) -> None:
     scene_1_position = context.index("### 씬 01")
     assert scene_1_position < scene_2_position
     assert "(SPEAKER_00) 두 번째 내용" in context
+
+
+def test_main_creates_log_directory_for_external_index(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    index_dir = tmp_path / "10_index"
+    index_dir.mkdir()
+    sqlite3.connect(index_dir / "index.db").close()
+    monkeypatch.setattr(query_module, "setup_logging", lambda _: LOG)
+    monkeypatch.setattr(query_module, "fts_search", lambda *_: [])
+    monkeypatch.setattr(query_module, "embed_search", lambda *_: [])
+    monkeypatch.setattr(query_module, "assemble_context", lambda *_: "context")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["query.py", str(tmp_path), "질의"],
+    )
+
+    assert query_module.main() == 0
+    assert (tmp_path / "logs").is_dir()
