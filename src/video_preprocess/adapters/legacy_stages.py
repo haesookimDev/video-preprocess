@@ -273,7 +273,7 @@ def create_legacy_pipeline_bindings(
     *,
     stage_modules: Mapping[str, LegacyStageModule] | None = None,
 ) -> StageBindingRegistry:
-    """Bind all eleven legacy Stages behind one shared execution boundary."""
+    """Bind all legacy Stages with per-Stage context mutation guards."""
 
     modules = (
         {
@@ -314,7 +314,6 @@ def _create_binding_registry(
     registrar: LegacyArtifactRegistrar,
     definitions: Sequence[LegacyStageDefinition],
 ) -> StageBindingRegistry:
-    execution_lock = threading.Lock()
     return StageBindingRegistry(
         (
             definition.name,
@@ -322,7 +321,6 @@ def _create_binding_registry(
                 context,
                 registrar,
                 definition,
-                execution_lock=execution_lock,
             ),
         )
         for definition in definitions

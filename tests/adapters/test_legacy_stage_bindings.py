@@ -2,6 +2,7 @@
 
 import asyncio
 import hashlib
+import threading
 import zipfile
 from pathlib import Path
 from types import SimpleNamespace
@@ -12,6 +13,10 @@ from pipeline.context import PipelineContext
 from video_preprocess.adapters import (
     LegacyStageContractError,
     create_legacy_media_bindings,
+)
+from video_preprocess.adapters.legacy_stages import (
+    LegacyStageDefinition,
+    _create_binding_registry,
 )
 from video_preprocess.domain import ArtifactRef, Checksum, StageStatus, StageTask
 from video_preprocess.engine import (
@@ -270,6 +275,86 @@ def test_pipeline_engine_runs_first_four_legacy_bindings(
         "audio_metadata",
     }
     assert context.scene_threshold == 27.0
+
+
+def test_distinct_legacy_stages_can_overlap_with_separate_config_fields(
+    tmp_path: Path,
+) -> None:
+    video = tmp_path / "video.mp4"
+    video.write_bytes(b"video")
+    context = PipelineContext(video_path=video, out_root=tmp_path / "output")
+    barrier = threading.Barrier(2)
+    seen = []
+
+    def visual(ctx):
+        seen.append(("visual", ctx.scene_threshold))
+        barrier.wait(timeout=1)
+        return {}
+
+    def audio(ctx):
+        seen.append(("audio", ctx.vad_min_silence_ms))
+        barrier.wait(timeout=1)
+        return {}
+
+    class Registrar:
+        def register_file(self, *args, **kwargs):
+            raise AssertionError("test stages do not publish files")
+
+    definitions = (
+        LegacyStageDefinition(
+            name="visual",
+            stage_version="1.0.0",
+            module=SimpleNamespace(NAME="visual", run=visual),
+            inputs=(),
+            config_fields=("scene_threshold",),
+            model_bindings={},
+            output_resolver=lambda ctx, registrar, stage_task: {},
+        ),
+        LegacyStageDefinition(
+            name="audio",
+            stage_version="1.0.0",
+            module=SimpleNamespace(NAME="audio", run=audio),
+            inputs=(),
+            config_fields=("vad_min_silence_ms",),
+            model_bindings={},
+            output_resolver=lambda ctx, registrar, stage_task: {},
+        ),
+    )
+    bindings = _create_binding_registry(context, Registrar(), definitions)
+
+    async def scenario():
+        executor = LocalExecutor(bindings, max_concurrency=2)
+        handles = (
+            await executor.submit(
+                task(
+                    "visual",
+                    "1.0.0",
+                    {},
+                    config={"scene_threshold": 31.5},
+                )
+            ),
+            await executor.submit(
+                task(
+                    "audio",
+                    "1.0.0",
+                    {},
+                    config={"vad_min_silence_ms": 750},
+                )
+            ),
+        )
+        return await asyncio.gather(
+            *(executor.result(handle) for handle in handles)
+        )
+
+    results = asyncio.run(scenario())
+
+    assert [result.status for result in results] == [
+        StageStatus.SUCCEEDED,
+        StageStatus.SUCCEEDED,
+    ]
+    assert set(seen) == {("visual", 31.5), ("audio", 750)}
+    assert context.scene_threshold == 27.0
+    assert context.vad_min_silence_ms == 500
 
 
 def test_no_audio_uses_metadata_as_a_sentinel_and_ignores_stale_wav(
