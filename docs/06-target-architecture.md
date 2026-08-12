@@ -257,9 +257,12 @@ models:
 manifest에는 요청한 binding과 실제 응답에 포함된 provider·model revision을 모두
 기록한다. 자동 fallback이 발생하면 캐시 키와 실행 요약에도 반영한다.
 
-현재 `embedding.default`는 `LocalEmbeddingProvider`에 연결되어 있으며 `s10_index`와 query가
-Gateway를 통해 호출한다. 비동기 Port와 동기 CLI 호환 방식은
-[`ADR-0004`](./adr/0004-async-inference-gateway-and-local-embedding-provider.md)에 기록한다.
+현재 `embedding.default`는 배포 설정이 없으면 `LocalEmbeddingProvider`, endpoint 설정이 있으면
+`HTTPInferenceProvider`에 composition root가 연결한다. `s10_index`는 주입된 `EmbeddingService`만
+호출하며 concrete Provider를 import하지 않는다. pipeline과 query CLI는 같은 설정 adapter를 사용하고,
+remote effective model은 기존 Engine cache resolver에 연결된다. 비동기 Port와 동기 CLI 호환 방식은
+[`ADR-0004`](./adr/0004-async-inference-gateway-and-local-embedding-provider.md), 배포 선택은
+[`ADR-0023`](./adr/0023-alias-based-inference-deployment-settings.md)에 기록한다.
 
 `caption.default`도 `LocalCaptionProvider`에 연결되어 있다. 현재 runner의 composition root가
 Caption Service와 legacy artifact registrar를 주입하고, `s08_captions`는 keyframe을

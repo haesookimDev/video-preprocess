@@ -21,6 +21,8 @@ from video_preprocess.engine import (
     create_default_registry,
 )
 from video_preprocess.services import (
+    HTTPProviderSettings,
+    InferenceDeploymentSettings,
     LocalPipelineRuntimeFactory,
     PipelineApplicationService,
     PipelineRunRequest,
@@ -344,3 +346,34 @@ def test_local_preview_is_read_only_and_reports_missing_boundary(
     assert result.stages[0].status.value == "blocked"
     assert result.stages[0].blocked_inputs == ("timeline",)
     assert not output.exists()
+
+
+def test_local_runtime_composes_remote_embedding_alias_without_loading_model(
+    tmp_path: Path,
+) -> None:
+    video = tmp_path / "source.mp4"
+    video.write_bytes(b"video")
+    deployments = InferenceDeploymentSettings(
+        http_providers={
+            "embedding.default": HTTPProviderSettings(
+                endpoint="https://models.example.test"
+            )
+        }
+    )
+
+    runtime = LocalPipelineRuntimeFactory().create_preview(
+        PipelineRunRequest(
+            video_path=video,
+            output_root=tmp_path / "output",
+            deployments=deployments,
+        ),
+        run_id="run-123",
+        boundary_inputs=("video",),
+    )
+
+    resolver = runtime.engine.model_resolver
+    assert resolver is not None
+    gateway = resolver.gateways["embedding.default"]
+    provider = gateway._bindings["embedding.default"]
+    assert provider.__class__.__name__ == "HTTPInferenceProvider"
+    assert not (tmp_path / "output").exists()

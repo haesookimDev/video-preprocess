@@ -2,7 +2,7 @@
 
 - 마지막 갱신: **2026-08-12**
 - 현재 단계: **Phase 4 — HTTP Inference Provider**
-- 다음 작업: **embedding alias의 local/HTTP 배포 설정과 cache fingerprint E2E**
+- 다음 작업: **production inference server adapter와 실제 embedding backend E2E**
 
 이 문서는 개발 진행 상황의 단일 진입점이다. 새로운 세션은 이 문서를 먼저 읽고, 실제 코드와
 Git 상태를 확인한 뒤 작업을 시작한다.
@@ -26,8 +26,8 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - VAD, STT, diarization, caption과 embedding이 `InferenceGateway`와 Local Provider로 실행
 - 모든 모델 Stage에서 구체 ML library import와 model lifecycle 제거 완료
 - 기본 CLI는 Application Service를 통해 새 Engine과 01~11 binding을 실행
-- HTTP provider client는 구현됐지만 기본 composition은 아직 local provider만 사용
-- 모델 서버 production adapter와 pipeline API adapter는 아직 미구현
+- embedding은 설정에 따라 local 또는 HTTP provider client를 사용하며 기본값은 local
+- production inference server adapter와 pipeline API adapter는 아직 미구현
 - Local Store가 input copy, 단계 산출물과 run/stage manifest를 관리
 
 기존 샘플 산출물은 `output/` 아래에 있으나 생성물이며 Git에 커밋하지 않는다.
@@ -87,6 +87,8 @@ Git 상태를 확인한 뒤 작업을 시작한다.
   [`ADR-0021`](./adr/0021-engine-timeout-cancellation-retry-policy.md)
 - HTTP Inference v1 job transport 결정:
   [`ADR-0022`](./adr/0022-http-inference-v1-job-contract.md)
+- alias별 추론 배포 설정 결정:
+  [`ADR-0023`](./adr/0023-alias-based-inference-deployment-settings.md)
 
 ## 3. 완료된 작업
 
@@ -179,7 +181,8 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 3. [x] 외부 network나 실제 모델 없이 실행되는 local fake model server contract fixture를 추가한다.
 4. [x] `src/video_preprocess/inference/`에 HTTP Provider를 구현하고 timeout, 429, 5xx, 인증 실패와
    cancellation을 공통 `InferenceError`로 정규화한다.
-5. [ ] embedding alias를 첫 원격화 대상으로 local/HTTP 설정 전환과 cache fingerprint E2E를 검증한다.
+5. [x] embedding alias를 첫 원격화 대상으로 local/HTTP 설정 전환과 cache fingerprint E2E를 검증한다.
+6. [ ] production inference server adapter와 실제 embedding backend E2E를 구현한다.
 
 Phase 3는 11단계 Engine 실행, LocalExecutor, 선택 실행, read-only cache preview, 같은 Store의 run 간
 cache, cooperative timeout/cancel과 bounded retry까지 완료했다. `pipeline.runner`는 명시적
@@ -292,6 +295,20 @@ compatibility 구현으로만 남아 있으며 Phase 4에서도 CLI와 Stage가 
 
 최신 기록을 위에 추가한다. 긴 구현 설명은 PR이나 ADR에 두고 여기에는 다음 세션이 재개하는 데
 필요한 정보만 적는다.
+
+### 2026-08-12 — Phase 4 embedding local/HTTP deployment routing
+
+- 목표: 같은 10단계와 query를 수정하지 않고 `embedding.default` 배포 위치 선택
+- 완료: alias→HTTP typed 설정, 기본 local fallback, runtime composition, pipeline/query CLI endpoint와
+  token-env option, 공개 dry-run deployment view와 ADR-0023
+- 주요 결정: Pipeline 알고리즘 설정과 Provider 배포 설정을 분리하고 token은 runtime private field에만
+  유지; 선택한 remote 실패 시 local로 자동 fallback하지 않음
+- 검증: 기본 network-free suite 313 passed, 11 deselected; remote 실제 `s10_index`,
+  EmbeddingService와 capability→Engine model fingerprint loopback integration 전체 11 passed
+- 호환성: endpoint를 지정하지 않으면 기존 local embedding과 출력/cache 동작 유지; remote server는
+  `embedding.default` alias capability를 제공해야 함
+- 다음 작업: HTTP Inference v1 production server adapter, local embedding backend 연결과 실제 server
+  process E2E 후 Phase 4 완료 판정
 
 ### 2026-08-12 — embedding Stage provider 선택 제거
 

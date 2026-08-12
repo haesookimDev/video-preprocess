@@ -67,9 +67,9 @@ flowchart TD
 | 07_diarize | WAV ArtifactRef를 Diarization Provider에 전달. Provider가 화자 임베딩·클러스터링 후 발화 턴별 라벨 반환 | Local pyannote Provider `speaker-diarization-community-1` (HF 게이트) | 27.9s |
 | 08_captions | keyframe ArtifactRef batch를 VLM Provider에 입력해 캡션 생성. 이미지(수백~수천 토큰)를 텍스트(수십 토큰)로 압축 | Local BLIP Provider `image-captioning-base` | 3.0s |
 | 09_timeline | 씬을 골격으로 병합. 전사→씬은 겹침 ≥ 50% 기준 귀속, 전사→화자는 최대 겹침 턴의 라벨 채택 | 규칙 기반 | 0.0s |
-| 10_index | 씬 카드 텍스트(캡션+전사)를 ① FTS5 역색인 ② 정규화 384차원 벡터로 이중 저장 | sentence-transformers `paraphrase-multilingual-MiniLM-L12-v2`, SQLite FTS5 | 0.2s |
+| 10_index | 씬 카드 텍스트(캡션+전사)를 ① FTS5 역색인 ② 정규화 벡터로 이중 저장 | 주입된 `embedding.default` Local/HTTP Provider, SQLite FTS5 | local 기준 0.2s |
 | 11_context | 포맷 규칙 전문 + 메타데이터 + 씬 목차 + 씬 카드 전문을 하나의 자기완결 문서로 조립 | 규칙 기반 | 0.0s |
-| query.py | 키워드(bm25)·의미(코사인) 순위를 RRF(k=60)로 융합 → top-k 씬 + 앞뒤 문맥으로 축약 컨텍스트 조립 | MiniLM 임베딩 (질의 인코딩) | ~10s (모델 로드 포함) |
+| query.py | 키워드(bm25)·의미(코사인) 순위를 RRF(k=60)로 융합 → top-k 씬 + 앞뒤 문맥으로 축약 컨텍스트 조립 | index와 같은 `embedding.default` Local/HTTP Provider | local cold start ~10s |
 
 ## 설계 대응 관계
 

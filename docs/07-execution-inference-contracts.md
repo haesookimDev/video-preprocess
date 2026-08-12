@@ -679,6 +679,18 @@ network-free suite와 분리한다.
 - 인증 token은 private provider 설정과 `Authorization` header에만 존재하며 오류 details에 넣지 않는다.
 - ArtifactRef는 provider에 설정한 shared Store namespace allowlist와 일치할 때만 전송한다.
 
+### 7.3 alias 배포 설정
+
+`PipelineSettings`의 model 이름은 Stage 알고리즘 설정이고 `PipelineRunRequest.deployments`는 실행
+환경 설정이다. `InferenceDeploymentSettings.http_providers`에 alias가 있으면 HTTP, 없으면 local
+binding을 조합한다. 현재 적용 alias는 `embedding.default`다.
+
+`HTTPProviderSettings`는 endpoint, remote Artifact namespace allowlist, request/operation timeout,
+poll 간격, capability TTL과 retry policy를 가진다. bearer token은 runtime field로만 주입하며
+`repr`, `public_dict`, dry-run, manifest와 cache config에 포함하지 않는다. endpoint 설정을 공개 출력할
+수는 있지만 URL credential, query와 fragment는 허용하지 않는다. 상세 결정은
+[`ADR-0023`](./adr/0023-alias-based-inference-deployment-settings.md)에 기록한다.
+
 ## 8. 오류 계약과 재시도
 
 공통 오류 객체:

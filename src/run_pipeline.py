@@ -9,6 +9,7 @@ import argparse
 import asyncio
 import hashlib
 import json
+import os
 import sys
 from dataclasses import replace
 from pathlib import Path
@@ -47,6 +48,16 @@ def main() -> int:
                         help="일시적 실패의 Stage 최대 시도 수 (기본: 1)")
     parser.add_argument("--retry-backoff-sec", type=float, default=0.0,
                         help="첫 재시도 전 대기 초 (기본: 0)")
+    parser.add_argument("--embedding-endpoint", default=None,
+                        help="embedding.default HTTP Inference v1 endpoint")
+    parser.add_argument("--embedding-token-env", default=None,
+                        help="HTTP bearer token을 읽을 환경변수 이름")
+    parser.add_argument(
+        "--embedding-artifact-namespace",
+        action="append",
+        default=[],
+        help="원격 embedding이 접근할 Artifact Store namespace",
+    )
     parser.add_argument("--preflight-only", action="store_true",
                         help="실행 환경만 검사하고 종료")
     args = parser.parse_args()
@@ -71,6 +82,7 @@ def main() -> int:
 
     # 무거운 단계 모듈은 runtime factory가 실제 실행 시점에만 로드한다.
     from video_preprocess.engine import DAGPlanner, create_default_registry
+    from pipeline.deployment import embedding_deployments_from_environment
     from video_preprocess.services import (
         LocalPipelineRuntimeFactory,
         PipelineApplicationService,
@@ -81,6 +93,12 @@ def main() -> int:
     output_root = (args.out / args.video.stem).resolve()
     run_id = args.run_id or _local_run_id(output_root)
     try:
+        deployments = embedding_deployments_from_environment(
+            endpoint=args.embedding_endpoint,
+            token_env=args.embedding_token_env,
+            artifact_namespaces=args.embedding_artifact_namespace,
+            environ=os.environ,
+        )
         request = PipelineRunRequest(
             video_path=args.video.resolve(),
             output_root=output_root,
@@ -92,6 +110,7 @@ def main() -> int:
             stage_timeout_sec=args.stage_timeout_sec,
             max_stage_attempts=args.max_stage_attempts,
             retry_backoff_sec=args.retry_backoff_sec,
+            deployments=deployments,
             settings=PipelineSettings(
                 whisper_model=args.whisper_model,
                 language=args.language,
@@ -123,6 +142,9 @@ def main() -> int:
                         "max_stage_attempts": request.max_stage_attempts,
                         "retry_backoff_sec": request.retry_backoff_sec,
                     },
+                    "inference_deployments": (
+                        request.deployments.public_dict()
+                    ),
                     "cache_decisions": [
                         _preview_stage_payload(record)
                         for record in preview.stages

@@ -16,6 +16,7 @@ flowchart LR
     EXECUTOR --> STAGES[01~11 Stage bindings]
     STAGES --> GATEWAY[Inference Gateway]
     GATEWAY --> LOCAL[Local Providers]
+    GATEWAY -. endpoint 설정 .-> HTTP[HTTP Inference Provider]
     ENGINE --> STORES[Artifact / Run Stores]
 ```
 
@@ -30,11 +31,12 @@ flowchart LR
 - offline snapshot·immutable revision·VAD asset 기반 local model fingerprint 확인
 - Stage timeout, cooperative cancellation과 분류된 bounded retry
 - HTTP Inference v1 client, async job submit/poll/cancel, retry와 circuit breaker
+- `embedding.default`의 local/HTTP 배포 설정과 원격 effective model cache fingerprint
 - 기존 JSON·Markdown·SQLite 출력 구조와 query CLI
 
 아직 구현되지 않은 범위:
 
-- embedding local/HTTP 배포 설정과 production 모델 서버 adapter
+- production 모델 서버 adapter와 embedding 외 alias의 HTTP 배포 연결
 - REST API·queue adapter와 RemoteExecutor
 
 정확한 완료 상태와 다음 작업은 [docs/STATUS.md](docs/STATUS.md)를 기준으로 한다.
@@ -130,6 +132,9 @@ sed -n '1,120p' output/sample/11_context/context.md
 | `--stage-timeout-sec N` | 각 Stage timeout. 기본값은 제한 없음 |
 | `--max-stage-attempts N` | 일시적 실패의 Stage별 최대 시도 수. 기본값은 1 |
 | `--retry-backoff-sec N` | 첫 재시도 전 대기 시간. 기본값은 0초 |
+| `--embedding-endpoint URL` | `embedding.default`를 HTTP Inference v1 endpoint에 연결 |
+| `--embedding-token-env NAME` | bearer token 값을 읽을 환경변수 이름 |
+| `--embedding-artifact-namespace NAME` | endpoint가 읽을 수 있는 Artifact namespace. 반복 가능 |
 | `--whisper-model MODEL` | faster-whisper 모델. 기본값은 `base` |
 | `--language CODE` | STT 언어 고정. 생략하면 자동 감지 |
 | `--scene-threshold N` | 씬 변화 임계값. 낮을수록 민감 |
@@ -145,6 +150,26 @@ sed -n '1,120p' output/sample/11_context/context.md
 `REQUIRED_INPUT_UNAVAILABLE`로 차단한다. 로드된 모델, immutable revision, offline local snapshot과
 VAD asset은 실행 전에 fingerprint를 확인한다. 온라인의 변경 가능한 `main/default`처럼 현재
 revision을 확정할 수 없는 Stage는 안전하게 `EFFECTIVE_MODELS_UNAVAILABLE` miss로 표시한다.
+
+### 원격 embedding
+
+endpoint를 지정하지 않으면 기존 LocalEmbeddingProvider를 사용한다. 원격 실행은 서버가 HTTP
+Inference v1과 `embedding.default` capability를 제공할 때 다음처럼 선택한다. token 값은 CLI 인수에
+넣지 않고 환경변수로 전달하며 dry-run, manifest와 로그에 기록되지 않는다.
+
+```bash
+export MODEL_SERVER_TOKEN=replace-me
+.venv/bin/python src/run_pipeline.py samples/sample.mp4 \
+  --embedding-endpoint http://127.0.0.1:8080 \
+  --embedding-token-env MODEL_SERVER_TOKEN
+
+.venv/bin/python src/query.py output/sample "음성 구간 검출" \
+  --embedding-endpoint http://127.0.0.1:8080 \
+  --embedding-token-env MODEL_SERVER_TOKEN
+```
+
+원격 Provider 실패 시 local 모델로 자동 fallback하지 않는다. 성공 응답의 실제 provider, model,
+resolved revision과 runtime은 기존 index metadata와 Engine cache 판정에 사용된다.
 
 timeout은 attempt의 cooperative cancellation을 요청하고 Stage가 안전한 반환 경계에 도달한 뒤
 `STAGE_TIMEOUT`으로 기록한다. 따라서 token을 확인하지 않는 기존 sync/native 호출은 설정한 시간에
@@ -249,7 +274,8 @@ loopback port를 여는 HTTP contract와 production client integration test는 �
 ```bash
 .venv/bin/python -m pytest -o addopts='' \
   tests/contracts/test_fake_inference_server.py \
-  tests/inference/test_http_provider_integration.py
+  tests/inference/test_http_provider_integration.py \
+  tests/inference/test_embedding_deployment_integration.py
 ```
 
 미디어·모델 통합 변경은 `samples/sample.mp4` 전체 실행과 query까지 별도로 검증한다.

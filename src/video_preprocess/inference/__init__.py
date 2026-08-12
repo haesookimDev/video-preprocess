@@ -2,6 +2,11 @@
 
 from .caption import CaptionBatch, CaptionService
 from .diarization import DiarizationBatch, DiarizationService, SpeakerTurn
+from .deployment import (
+    HTTPProviderSettings,
+    InferenceDeploymentSettings,
+    create_configured_embedding_service,
+)
 from .embedding import EmbeddingBatch, EmbeddingService
 from .errors import InferenceCallError, ProviderConfigurationError
 from .gateway import InferenceGateway
@@ -21,7 +26,9 @@ __all__ = [
     "InferenceCallError",
     "InferenceGateway",
     "HTTPInferenceProvider",
+    "HTTPProviderSettings",
     "HTTPRetryPolicy",
+    "InferenceDeploymentSettings",
     "GatewayEffectiveModelResolver",
     "InferenceProvider",
     "ProviderConfigurationError",
@@ -33,4 +40,5 @@ __all__ = [
     "TranscriptionBatch",
     "VADBatch",
     "VADService",
+    "create_configured_embedding_service",
 ]

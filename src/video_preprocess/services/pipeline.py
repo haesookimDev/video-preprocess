@@ -17,6 +17,7 @@ from video_preprocess.engine import (
     RetryPolicy,
 )
 from video_preprocess.executors import CancellationToken
+from video_preprocess.inference import InferenceDeploymentSettings
 from video_preprocess.engine.planner import ExecutionPlan
 
 
@@ -81,6 +82,9 @@ class PipelineRunRequest:
     video_path: Path
     output_root: Path
     settings: PipelineSettings = field(default_factory=PipelineSettings)
+    deployments: InferenceDeploymentSettings = field(
+        default_factory=InferenceDeploymentSettings
+    )
     run_id: str | None = None
     trace_id: str | None = None
     stage: str | None = None
@@ -96,6 +100,10 @@ class PipelineRunRequest:
         object.__setattr__(self, "output_root", Path(self.output_root))
         if not isinstance(self.settings, PipelineSettings):
             raise TypeError("settings must be PipelineSettings")
+        if not isinstance(self.deployments, InferenceDeploymentSettings):
+            raise TypeError(
+                "deployments must be InferenceDeploymentSettings"
+            )
         for field_name in (
             "run_id",
             "trace_id",

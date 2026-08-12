@@ -9,6 +9,7 @@ LLM 호출은 하지 않는다 (조립까지가 프로토타입 범위).
 """
 
 import argparse
+import os
 import sqlite3
 import sys
 from datetime import datetime
@@ -17,7 +18,11 @@ from pathlib import Path
 import numpy as np
 
 from pipeline.logging_setup import setup_logging
-from video_preprocess.inference import EmbeddingService
+from pipeline.deployment import embedding_deployments_from_environment
+from video_preprocess.inference import (
+    EmbeddingService,
+    create_configured_embedding_service,
+)
 from video_preprocess.inference.local import get_local_embedding_service
 
 RRF_K = 60  # Reciprocal Rank Fusion 상수
@@ -146,7 +151,22 @@ def main() -> int:
                         help="파이프라인 출력 디렉토리 (예: output/sample)")
     parser.add_argument("query", help="질의 문장")
     parser.add_argument("--topk", type=int, default=3)
+    parser.add_argument("--embedding-endpoint", default=None,
+                        help="embedding.default HTTP Inference v1 endpoint")
+    parser.add_argument("--embedding-token-env", default=None,
+                        help="HTTP bearer token을 읽을 환경변수 이름")
     args = parser.parse_args()
+
+    try:
+        deployments = embedding_deployments_from_environment(
+            endpoint=args.embedding_endpoint,
+            token_env=args.embedding_token_env,
+            artifact_namespaces=(),
+            environ=os.environ,
+        )
+    except (TypeError, ValueError) as exc:
+        print(f"오류: {exc}", file=sys.stderr)
+        return 2
 
     out_root = args.out_root.resolve()
     db_path = out_root / "10_index" / "index.db"
@@ -162,8 +182,26 @@ def main() -> int:
     log.info("질의: %s (topk=%d)", args.query, args.topk)
 
     db = sqlite3.connect(db_path)
+    embedding_service = None
+    if deployments.http_provider("embedding.default") is not None:
+        model_name = _meta_value(db, "embed_model")
+        if model_name is None:
+            print("오류: index meta에 embed_model이 없습니다", file=sys.stderr)
+            db.close()
+            return 1
+        revision = _meta_value(db, "embed_revision")
+        embedding_service = create_configured_embedding_service(
+            model_name,
+            deployments=deployments,
+            revision=None if revision in {None, "default"} else revision,
+        )
     fts_ranking = fts_search(db, args.query, log)
-    embed_ranking = embed_search(db, args.query, log)
+    embed_ranking = embed_search(
+        db,
+        args.query,
+        log,
+        embedding_service,
+    )
     log.info("FTS 히트 %d개, 임베딩 후보 %d개",
              len(fts_ranking), len(embed_ranking))
 

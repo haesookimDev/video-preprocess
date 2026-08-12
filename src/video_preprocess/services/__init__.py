@@ -1,6 +1,10 @@
 """Application services and deployment-specific composition roots."""
 
 from .local import LocalPipelineRuntimeFactory
+from video_preprocess.inference import (
+    HTTPProviderSettings,
+    InferenceDeploymentSettings,
+)
 from .pipeline import (
     PipelineApplicationService,
     PipelineRunRequest,
@@ -12,6 +16,8 @@ from .pipeline import (
 
 __all__ = [
     "LocalPipelineRuntimeFactory",
+    "HTTPProviderSettings",
+    "InferenceDeploymentSettings",
     "PipelineApplicationService",
     "PipelineRunRequest",
     "PipelineRuntime",

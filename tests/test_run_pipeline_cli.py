@@ -176,3 +176,71 @@ def test_compatibility_summary_preserves_status_metrics_and_outputs(
     assert saved["status"] == "ok"
     assert saved["stages"][0]["status"] == "ok"
     assert saved["stages"][0]["result"] == {"duration_sec": 10.0}
+
+
+def test_remote_embedding_dry_run_reports_redacted_deployment(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    ready_preflight(monkeypatch)
+    video = tmp_path / "video.mp4"
+    video.write_bytes(b"video")
+    monkeypatch.setenv("MODEL_SERVER_TOKEN", "private-token")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_pipeline.py",
+            str(video),
+            "--stage",
+            "10_index",
+            "--dry-run",
+            "--embedding-endpoint",
+            "https://models.example.test",
+            "--embedding-token-env",
+            "MODEL_SERVER_TOKEN",
+        ],
+    )
+
+    assert run_pipeline.main() == 0
+    output = capsys.readouterr().out
+    payload = json.loads(output)
+
+    assert payload["inference_deployments"]["embedding.default"] == {
+        "provider": "http",
+        "endpoint": "https://models.example.test",
+        "allowed_artifact_namespaces": [],
+        "request_timeout_sec": 300.0,
+    }
+    assert "private-token" not in output
+    assert "MODEL_SERVER_TOKEN" not in output
+
+
+def test_remote_embedding_requires_configured_token_environment(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    ready_preflight(monkeypatch)
+    video = tmp_path / "video.mp4"
+    video.write_bytes(b"video")
+    monkeypatch.delenv("MISSING_MODEL_TOKEN", raising=False)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_pipeline.py",
+            str(video),
+            "--dry-run",
+            "--embedding-endpoint",
+            "https://models.example.test",
+            "--embedding-token-env",
+            "MISSING_MODEL_TOKEN",
+        ],
+    )
+
+    assert run_pipeline.main() == 2
+    error = capsys.readouterr().err
+    assert "environment variable is empty" in error
+    assert "private-token" not in error

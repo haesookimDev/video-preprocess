@@ -270,6 +270,8 @@ run cancellation과 분류된 bounded retry는 attempt별 manifest를 보존하�
 - [x] idempotency header/body와 conflict 계약 확정
 - [x] deadline, retry, backoff, circuit breaker 정책 구현
 - [x] local fake server로 contract test
+- [x] embedding alias local/HTTP typed deployment 설정과 CLI 전환
+- [x] remote effective model fingerprint의 Engine resolver 연결
 - [x] fake model server와 production HTTP Provider/EmbeddingService end-to-end 검증
 - [ ] production model server adapter와 실제 embedding backend end-to-end 검증
 

@@ -14,13 +14,16 @@ from video_preprocess.adapters import create_legacy_pipeline_bindings
 from video_preprocess.domain import ArtifactRef, Checksum
 from video_preprocess.engine import ManifestCacheEvaluator, PipelineEngine
 from video_preprocess.executors import LocalExecutor
-from video_preprocess.inference import GatewayEffectiveModelResolver
+from video_preprocess.inference import (
+    GatewayEffectiveModelResolver,
+    InferenceDeploymentSettings,
+    create_configured_embedding_service,
+)
 from video_preprocess.inference.local import (
     create_local_caption_service,
     create_local_diarization_service,
     create_local_stt_service,
     create_local_vad_service,
-    get_local_embedding_service,
 )
 from video_preprocess.storage import (
     LocalArtifactStore,
@@ -75,13 +78,11 @@ class LocalPipelineRuntimeFactory:
             if project_root is None
             else Path(project_root).resolve()
         )
-        self.context_configurer = (
-            self._configure_local_inference
-            if context_configurer is None
-            else context_configurer
-        )
+        self.context_configurer = context_configurer
         self._uses_default_inference = context_configurer is None
-        if not callable(self.context_configurer):
+        if self.context_configurer is not None and not callable(
+            self.context_configurer
+        ):
             raise TypeError("context_configurer must be callable")
 
     def create(
@@ -125,7 +126,14 @@ class LocalPipelineRuntimeFactory:
         )
         setup_logging(context.log_dir / f"run_{run_id}.log")
         context.artifact_registrar = LegacyOutputAdapter(artifact_store)
-        self.context_configurer(context, artifact_store)
+        if self.context_configurer is None:
+            self._configure_inference(
+                context,
+                artifact_store,
+                request.deployments,
+            )
+        else:
+            self.context_configurer(context, artifact_store)
         model_resolver = self._model_resolver(
             context.caption_service,
             context.stt_service,
@@ -193,7 +201,10 @@ class LocalPipelineRuntimeFactory:
                     token=load_hf_token(self.project_root),
                 ),
                 create_local_vad_service(artifact_store),
-                get_local_embedding_service(settings.embed_model),
+                create_configured_embedding_service(
+                    settings.embed_model,
+                    deployments=request.deployments,
+                ),
             )
         engine = PipelineEngine(
             _PreviewExecutor(),
@@ -203,10 +214,11 @@ class LocalPipelineRuntimeFactory:
         )
         return PipelineRuntime(engine=engine, artifacts=artifacts)
 
-    def _configure_local_inference(
+    def _configure_inference(
         self,
         context: PipelineContext,
         artifact_store: LocalArtifactStore,
+        deployments: InferenceDeploymentSettings,
     ) -> None:
         context.caption_service = create_local_caption_service(
             context.caption_model,
@@ -222,8 +234,9 @@ class LocalPipelineRuntimeFactory:
             token=load_hf_token(self.project_root),
         )
         context.vad_service = create_local_vad_service(artifact_store)
-        context.embedding_service = get_local_embedding_service(
-            context.embed_model
+        context.embedding_service = create_configured_embedding_service(
+            context.embed_model,
+            deployments=deployments,
         )
 
     @staticmethod

@@ -104,6 +104,7 @@ class FakeInferenceService:
         self,
         *,
         auth_token: str | None = None,
+        alias: str = "embedding.remote",
         responder: Responder = _default_responder,
     ) -> None:
         self.auth_token = auth_token
@@ -111,14 +112,14 @@ class FakeInferenceService:
         self.capability = ProviderCapabilities(
             provider="fake.http.embedding",
             tasks=(InferenceTask.TEXT_EMBEDDING,),
-            model_aliases=("embedding.remote",),
+            model_aliases=(alias,),
             input_media_types=("text/plain",),
             features=("normalized_vectors", "inline_batch"),
             max_batch_size=128,
             supports_cancellation=True,
             supports_async_jobs=True,
             effective_models={
-                "embedding.remote": EffectiveModel(
+                alias: EffectiveModel(
                     provider="http.embedding",
                     name="example/embedding",
                     revision="fake-commit-1",
@@ -268,10 +269,12 @@ class FakeInferenceServer:
         self,
         *,
         auth_token: str | None = None,
+        alias: str = "embedding.remote",
         responder: Responder = _default_responder,
     ) -> None:
         self.service = FakeInferenceService(
             auth_token=auth_token,
+            alias=alias,
             responder=responder,
         )
         handler = self._handler_type(self.service)
