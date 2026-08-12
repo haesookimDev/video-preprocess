@@ -98,13 +98,17 @@ def main() -> int:
             forced = tuple(sorted(set(request.force_stages) | set(plan.stage_names)))
             request = replace(request, force_stages=forced)
         if args.dry_run:
+            preview = asyncio.run(service.preview(request))
             print(json.dumps(
                 {
                     "run_id": run_id,
                     "stages": list(plan.stage_names),
                     "boundary_inputs": list(plan.boundary_inputs),
                     "force_stages": list(request.force_stages),
-                    "cache_decisions": "evaluated_at_runtime",
+                    "cache_decisions": [
+                        _preview_stage_payload(record)
+                        for record in preview.stages
+                    ],
                 },
                 ensure_ascii=False,
                 indent=2,
@@ -125,6 +129,33 @@ def main() -> int:
         f"(run_id={result.run_id}, stages={len(result.stages)})"
     )
     return 0 if summary["status"] == "ok" else 1
+
+
+def _preview_stage_payload(record) -> dict[str, object]:
+    reasons = []
+    if record.cache_decision is not None:
+        reasons.extend(
+            {
+                "code": miss.reason.value,
+                "subject": miss.subject,
+                "detail": miss.detail,
+            }
+            for miss in record.cache_decision.misses
+        )
+    reasons.extend(
+        {
+            "code": "REQUIRED_INPUT_UNAVAILABLE",
+            "subject": input_name,
+            "detail": None,
+        }
+        for input_name in record.blocked_inputs
+    )
+    return {
+        "stage": record.stage,
+        "status": record.status.value,
+        "will_execute": record.will_execute,
+        "reasons": reasons,
+    }
 
 
 def _local_run_id(output_root: Path) -> str:

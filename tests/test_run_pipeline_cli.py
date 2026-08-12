@@ -16,7 +16,7 @@ def ready_preflight(monkeypatch):
     monkeypatch.setattr(run_pipeline, "run_preflight", lambda _: report)
 
 
-def test_dry_run_prints_exact_plan_without_composing_runtime(
+def test_dry_run_prints_cache_aware_exact_plan_without_writes(
     tmp_path: Path,
     monkeypatch,
     capsys,
@@ -44,7 +44,21 @@ def test_dry_run_prints_exact_plan_without_composing_runtime(
     assert exit_code == 0
     assert payload["stages"] == ["10_index"]
     assert payload["boundary_inputs"] == ["timeline"]
-    assert payload["cache_decisions"] == "evaluated_at_runtime"
+    assert payload["cache_decisions"] == [
+        {
+            "stage": "10_index",
+            "status": "blocked",
+            "will_execute": False,
+            "reasons": [
+                {
+                    "code": "REQUIRED_INPUT_UNAVAILABLE",
+                    "subject": "timeline",
+                    "detail": None,
+                }
+            ],
+        }
+    ]
+    assert not (tmp_path / "output" / "video").exists()
 
 
 def test_force_dry_run_marks_every_planned_stage(
@@ -66,6 +80,9 @@ def test_force_dry_run_marks_every_planned_stage(
 
     assert len(payload["stages"]) == 11
     assert payload["force_stages"] == payload["stages"]
+    assert payload["cache_decisions"][0]["status"] == "forced"
+    assert payload["cache_decisions"][0]["will_execute"] is True
+    assert payload["cache_decisions"][1]["status"] == "blocked"
 
 
 def test_invalid_selection_is_a_cli_input_error(

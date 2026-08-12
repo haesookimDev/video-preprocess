@@ -34,18 +34,30 @@ def _id_segment(value: object, field_name: str) -> str:
 class LocalRunStore:
     """Persists run and Stage manifests after artifact verification."""
 
-    def __init__(self, root: Path, artifacts: ArtifactStore) -> None:
+    def __init__(
+        self,
+        root: Path,
+        artifacts: ArtifactStore,
+        *,
+        read_only: bool = False,
+    ) -> None:
+        if not isinstance(read_only, bool):
+            raise TypeError("read_only must be a boolean")
         self.root = Path(root).resolve()
-        self.root.mkdir(parents=True, exist_ok=True)
+        self.read_only = read_only
+        if not read_only:
+            self.root.mkdir(parents=True, exist_ok=True)
         self.manifest_root = self.root / "_manifests"
         if self.manifest_root.is_symlink():
             raise ManifestFormatError(
                 "reserved _manifests directory must not be a symbolic link"
             )
-        self.manifest_root.mkdir(parents=True, exist_ok=True)
+        if not read_only:
+            self.manifest_root.mkdir(parents=True, exist_ok=True)
         self.artifacts = artifacts
 
     def save_run(self, manifest: RunManifest) -> None:
+        self._require_writable()
         if not isinstance(manifest, RunManifest):
             raise TypeError("manifest must be a RunManifest")
         if manifest.status is RunStatus.SUCCEEDED:
@@ -80,6 +92,7 @@ class LocalRunStore:
         return manifest
 
     def save_stage(self, manifest: StageManifest) -> None:
+        self._require_writable()
         if not isinstance(manifest, StageManifest):
             raise TypeError("manifest must be a StageManifest")
         for output_name, artifact_ref in manifest.result.outputs.items():
@@ -138,6 +151,10 @@ class LocalRunStore:
 
     def _run_directory(self, run_id: str) -> Path:
         return self.manifest_root / _id_segment(run_id, "run_id")
+
+    def _require_writable(self) -> None:
+        if self.read_only:
+            raise StorageError("run store is read-only")
 
     def _run_path(self, run_id: str) -> Path:
         return self._safe_manifest_path(

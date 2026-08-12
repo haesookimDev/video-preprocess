@@ -25,6 +25,7 @@ flowchart LR
 - 입력·설정·모델 binding·산출물 checksum 기반 manifest cache
 - VAD, STT, diarization, caption, embedding Local Inference Provider
 - 전체·단계별·from/to 선택 실행과 같은 local run 재개
+- Stage별 cache 상태·실행 예상·stable reason을 제공하는 read-only dry-run
 - 기존 JSON·Markdown·SQLite 출력 구조와 query CLI
 
 아직 구현되지 않은 범위:
@@ -32,7 +33,7 @@ flowchart LR
 - HTTP Inference Provider와 모델 서버
 - REST API·queue adapter와 RemoteExecutor
 - run 사이의 global content-addressed cache
-- Stage별 cache 사유를 보여주는 완전한 dry-run preview
+- 실행 전 local model fingerprint 자동 확인
 
 정확한 완료 상태와 다음 작업은 [docs/STATUS.md](docs/STATUS.md)를 기준으로 한다.
 
@@ -123,7 +124,7 @@ sed -n '1,120p' output/sample/11_context/context.md
 | `--force-stage NAME` | 지정 Stage의 cache 무시. 여러 번 지정 가능 |
 | `--force` | 현재 plan의 모든 Stage cache 무시 |
 | `--run-id ID` | 같은 manifest를 재개할 논리 run ID |
-| `--dry-run` | Stage plan·boundary·force 대상을 JSON으로 출력하고 종료 |
+| `--dry-run` | Stage별 cache 상태·실행 예상·reason을 JSON으로 출력하고 종료 |
 | `--whisper-model MODEL` | faster-whisper 모델. 기본값은 `base` |
 | `--language CODE` | STT 언어 고정. 생략하면 자동 감지 |
 | `--scene-threshold N` | 씬 변화 임계값. 낮을수록 민감 |
@@ -133,8 +134,11 @@ sed -n '1,120p' output/sample/11_context/context.md
 이전 manifest에 필요한 boundary artifact가 있고 현재 영상 checksum과 일치할 때만 허용된다.
 처음 실행하는 output이라면 전체 실행 또는 필요한 상위 단계를 포함한 `--to-stage`부터 수행한다.
 
-현재 `--dry-run`은 cache hit/miss를 추측하지 않고 `evaluated_at_runtime`으로 표시한다. Stage별
-cache decision과 stable miss reason 출력은 다음 Phase 3 작업이다.
+`--dry-run`은 output·manifest를 만들지 않는 read-only 경로다. 각 Stage를 `hit`, `miss`,
+`forced`, `blocked`로 표시하고 `will_execute`와 stable reason code를 출력한다. 상위 Stage가
+실행되어야 새 output checksum을 알 수 있으면 stale downstream manifest를 추정하지 않고
+`REQUIRED_INPUT_UNAVAILABLE`로 차단한다. 현재 model fingerprint를 실행 전에 확정할 수 없는
+Stage는 안전하게 `EFFECTIVE_MODELS_UNAVAILABLE` miss로 표시한다.
 
 ## 11단계 파이프라인
 

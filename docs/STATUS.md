@@ -2,7 +2,7 @@
 
 - 마지막 갱신: **2026-08-12**
 - 현재 단계: **Phase 3 — Pipeline Engine과 LocalExecutor**
-- 다음 작업: **cache-aware local/CLI dry-run과 effective model resolver**
+- 다음 작업: **local effective model resolver**
 
 이 문서는 개발 진행 상황의 단일 진입점이다. 새로운 세션은 이 문서를 먼저 읽고, 실제 코드와
 Git 상태를 확인한 뒤 작업을 시작한다.
@@ -121,6 +121,7 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - [x] pipeline Application Service와 local Engine/Store/inference composition root
 - [x] 기본 CLI의 Engine 전환과 stage/from/to/force/run-id/basic dry-run
 - [x] Engine의 read-only cache preview와 downstream blocked 판정
+- [x] Application Service/CLI cache-aware read-only dry-run
 
 ## 4. 아직 구현되지 않은 작업
 
@@ -160,12 +161,13 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 
 1. [x] Engine의 task/cache preview가 실제 실행과 동일한 task identity·입력 전파 규칙을 사용하도록 공개 API 추가
 2. local provider의 현재 effective provider/model/revision/runtime을 안전하게 resolve하는 adapter 구현
-3. `--dry-run`에 Stage별 `hit/miss/forced`, stable reason과 예상 실행 여부 출력
+3. [x] `--dry-run`에 Stage별 `hit/miss/forced/blocked`, stable reason과 예상 실행 여부 출력
 4. model 미로드·credential 변경 시 거짓 hit 없이 reason을 표시하는 contract test 추가
 5. 이후 global cache index와 run 간 content-addressed manifest 조회를 구현
 
-기본 CLI 전환은 완료됐고, `pipeline.runner`는 명시적 compatibility 구현으로만 남아 있다. basic
-dry-run은 plan/boundary/force를 보여주지만 cache decision은 아직 runtime 평가로 표시한다.
+기본 CLI 전환은 완료됐고, `pipeline.runner`는 명시적 compatibility 구현으로만 남아 있다.
+dry-run은 read-only Store와 실제 cache evaluator를 사용하며 model fingerprint를 사전 확정할 수
+없는 Stage는 `EFFECTIVE_MODELS_UNAVAILABLE` miss로 표시한다.
 
 ## 6. 알려진 중요 문제
 
@@ -273,6 +275,19 @@ dry-run은 plan/boundary/force를 보여주지만 cache decision은 아직 runti
 
 최신 기록을 위에 추가한다. 긴 구현 설명은 PR이나 ADR에 두고 여기에는 다음 세션이 재개하는 데
 필요한 정보만 적는다.
+
+### 2026-08-12 — Phase 3 cache-aware local/CLI dry-run
+
+- 목표: Engine preview를 Application Service와 기본 CLI에 연결하되 dry-run의 무상태 보장 유지
+- 완료: read-only Local Artifact/Run Store, source video fingerprint와 boundary 검사,
+  `cache_decisions` Stage 배열과 stable reason JSON 출력 구현
+- 주요 결정: 부분 실행 boundary가 없으면 preview 자체를 실패시키지 않고 해당 Stage를
+  `REQUIRED_INPUT_UNAVAILABLE` blocked로 표시
+- 검증: 관련 Engine/service/CLI/storage 테스트 43개 통과; 실제 sample dry-run에서 01~04 hit,
+  model Stage safe miss와 downstream blocked 확인
+- 호환성: `cache_decisions`가 문자열 `evaluated_at_runtime`에서 구조화된 배열로 구체화됨;
+  dry-run은 output root를 생성하지 않음
+- 다음 작업: local provider의 effective model fingerprint resolver와 안전한 미확정 처리
 
 ### 2026-08-12 — Phase 3 Engine cache preview API
 

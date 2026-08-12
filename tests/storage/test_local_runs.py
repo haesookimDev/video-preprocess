@@ -21,6 +21,7 @@ from video_preprocess.storage import (
     IncompleteRunError,
     LocalArtifactStore,
     LocalRunStore,
+    StorageError,
 )
 
 
@@ -184,3 +185,24 @@ def test_atomic_run_update_preserves_previous_manifest_on_failure(
     run_directory = tmp_path / "_manifests" / "id-run_123"
     assert list(run_directory.glob(".run.json.*.tmp")) == []
 
+
+def test_read_only_run_store_does_not_create_layout(tmp_path: Path) -> None:
+    root = tmp_path / "missing"
+    artifacts = LocalArtifactStore(
+        root,
+        namespace="preview",
+        read_only=True,
+    )
+    store = LocalRunStore(root, artifacts, read_only=True)
+
+    assert store.load_run("missing") is None
+    assert not root.exists()
+    with pytest.raises(StorageError, match="read-only"):
+        store.save_run(
+            RunManifest(
+                run_id="run-preview",
+                status=RunStatus.RUNNING,
+                started_at="2026-08-12T00:00:00Z",
+                updated_at="2026-08-12T00:00:00Z",
+            )
+        )

@@ -10,7 +10,11 @@ from pathlib import Path
 from typing import Protocol
 
 from video_preprocess.domain import ArtifactRef
-from video_preprocess.engine import DAGPlanner, PipelineRunResult
+from video_preprocess.engine import (
+    DAGPlanner,
+    PipelinePreviewResult,
+    PipelineRunResult,
+)
 from video_preprocess.engine.planner import ExecutionPlan
 
 
@@ -127,6 +131,18 @@ class PipelineExecutionEngine(Protocol):
         force_stages: Collection[str],
     ) -> PipelineRunResult: ...
 
+    async def preview(
+        self,
+        plan,
+        *,
+        run_id: str,
+        trace_id: str,
+        artifacts: Mapping[str, ArtifactRef],
+        stage_configs: Mapping[str, Mapping[str, object]],
+        model_bindings: Mapping[str, Mapping[str, str]],
+        force_stages: Collection[str],
+    ) -> PipelinePreviewResult: ...
+
 
 @dataclass(frozen=True, slots=True)
 class PipelineRuntime:
@@ -156,6 +172,14 @@ class PipelineRuntimeFactory(Protocol):
         boundary_inputs: Collection[str],
     ) -> PipelineRuntime: ...
 
+    def create_preview(
+        self,
+        request: PipelineRunRequest,
+        *,
+        run_id: str,
+        boundary_inputs: Collection[str],
+    ) -> PipelineRuntime: ...
+
 
 IdentifierFactory = Callable[[], str]
 
@@ -173,8 +197,11 @@ class PipelineApplicationService:
     ) -> None:
         if not isinstance(planner, DAGPlanner):
             raise TypeError("planner must be a DAGPlanner")
-        if not callable(getattr(runtime_factory, "create", None)):
-            raise TypeError("runtime_factory must implement create")
+        for method_name in ("create", "create_preview"):
+            if not callable(getattr(runtime_factory, method_name, None)):
+                raise TypeError(
+                    f"runtime_factory must implement {method_name}"
+                )
         self.planner = planner
         self.runtime_factory = runtime_factory
         self.run_id_factory = run_id_factory or _new_run_id
@@ -201,18 +228,42 @@ class PipelineApplicationService:
                 "runtime could not resolve boundary input: "
                 + ", ".join(missing)
             )
-        planned = set(plan.stage_names)
-        stage_configs = {
-            name: values
-            for name, values in request.settings.stage_configs().items()
-            if name in planned
-        }
-        model_bindings = {
-            name: values
-            for name, values in request.settings.model_bindings().items()
-            if name in planned
-        }
+        stage_configs, model_bindings = self._stage_options(request, plan)
         return await runtime.engine.run(
+            plan,
+            run_id=run_id,
+            trace_id=trace_id,
+            artifacts=runtime.artifacts,
+            stage_configs=stage_configs,
+            model_bindings=model_bindings,
+            force_stages=request.force_stages,
+        )
+
+    async def preview(
+        self,
+        request: PipelineRunRequest,
+    ) -> PipelinePreviewResult:
+        """Return the read-only cache disposition for one request."""
+
+        plan = self.plan(request)
+        run_id = request.run_id or self._new_identifier(
+            self.run_id_factory,
+            "run_id",
+        )
+        trace_id = request.trace_id or self._new_identifier(
+            self.trace_id_factory,
+            "trace_id",
+        )
+        runtime = self.runtime_factory.create_preview(
+            request,
+            run_id=run_id,
+            boundary_inputs=plan.boundary_inputs,
+        )
+        preview = getattr(runtime.engine, "preview", None)
+        if not callable(preview):
+            raise TypeError("preview runtime engine must implement preview")
+        stage_configs, model_bindings = self._stage_options(request, plan)
+        return await preview(
             plan,
             run_id=run_id,
             trace_id=trace_id,
@@ -236,6 +287,24 @@ class PipelineApplicationService:
             from_stage=request.from_stage,
             to_stage=request.to_stage,
         )
+
+    @staticmethod
+    def _stage_options(
+        request: PipelineRunRequest,
+        plan: ExecutionPlan,
+    ) -> tuple[dict[str, dict[str, object]], dict[str, dict[str, str]]]:
+        planned = set(plan.stage_names)
+        stage_configs = {
+            name: values
+            for name, values in request.settings.stage_configs().items()
+            if name in planned
+        }
+        model_bindings = {
+            name: values
+            for name, values in request.settings.model_bindings().items()
+            if name in planned
+        }
+        return stage_configs, model_bindings
 
     @staticmethod
     def _new_identifier(

@@ -18,8 +18,9 @@ Executor Port와 LocalExecutor는
 [`src/video_preprocess/executors/`](../src/video_preprocess/executors/)에 구현됐다. 순차
 PipelineEngine과 상태 머신은
 [`src/video_preprocess/engine/`](../src/video_preprocess/engine/)에 구현됐다. manifest cache key와
-decision, RunStore journal과 같은 run의 cache resume도 구현됐다. 전체 01~11 legacy Stage binding도
-구현됐으며 global cache index, 기본 CLI 연결과 HTTP Provider는 아직 구현 완료로 간주하지 않는다.
+decision, RunStore journal과 같은 run의 cache resume도 구현됐다. 전체 01~11 legacy Stage binding과
+기본 CLI/cache-aware preview도 구현됐으며 global cache index와 HTTP Provider는 아직 구현 완료로
+간주하지 않는다.
 Inference 공통 계약,
 Gateway, `LocalEmbeddingProvider`, `LocalCaptionProvider`, `LocalSTTProvider`,
 `LocalDiarizationProvider`와 `LocalVADProvider`는
@@ -326,8 +327,8 @@ model Stage 결과를 무리하게 재사용하지 않는다. 상세 결정은
 Application Service와 Engine이 소유한다. Engine의 read-only `preview()`는 실제 실행과 같은 task
 identity와 cache evaluator를 사용하되 manifest를 저장하거나 Executor에 제출하지 않는다. 검증된
 hit output만 downstream에 전달하며 upstream miss 또는 force로 새 output checksum을 알 수 없는
-Stage는 `blocked`와 누락 logical input을 반환한다. local runtime과 CLI 연결은 다음 slice다. 상세
-결정은
+Stage는 `blocked`와 누락 logical input을 반환한다. local preview runtime은 Artifact/Run Store를
+read-only로 열고 입력 영상은 복사하지 않은 채 동일한 content fingerprint로 표현한다. 상세 결정은
 [`ADR-0018`](./adr/0018-engine-backed-cli-and-local-run-resume.md)에 기록한다.
 
 ## 5. Executor 계약

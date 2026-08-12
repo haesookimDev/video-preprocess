@@ -14,6 +14,7 @@ from video_preprocess.storage import (
     LegacyOutputAdapter,
     LocalArtifactStore,
     PendingArtifactError,
+    StorageError,
 )
 
 
@@ -223,3 +224,20 @@ def test_register_existing_reads_legacy_output_without_rewrite(
     metadata = legacy.load_json(artifact)
     assert isinstance(metadata, dict)
     assert metadata["summary"]["duration_sec"] == 30.0
+
+
+def test_read_only_artifact_store_does_not_create_layout(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "missing"
+    store = LocalArtifactStore(root, namespace="preview", read_only=True)
+
+    assert not root.exists()
+    with pytest.raises(StorageError, match="read-only"):
+        store.put(
+            io.BytesIO(b"data"),
+            artifact_id="data",
+            relative_path="data.bin",
+            kind="binary",
+            media_type="application/octet-stream",
+        )

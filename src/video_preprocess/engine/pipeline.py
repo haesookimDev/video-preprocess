@@ -314,6 +314,7 @@ class PipelineEngine:
             bindings,
             normalized_attempts,
             forced,
+            require_boundary=False,
         )
         self._validate_task_payloads(
             plan,
@@ -804,6 +805,8 @@ class PipelineEngine:
         bindings: Mapping[str, Mapping[str, object]],
         attempts: Mapping[str, object],
         forced: Collection[str],
+        *,
+        require_boundary: bool = True,
     ) -> None:
         stage_names = set(plan.stage_names)
         for field_name, mapping in (
@@ -822,7 +825,7 @@ class PipelineEngine:
                 f"force_stages contains unplanned stage: {unknown_forced[0]}"
             )
         missing_boundary = sorted(set(plan.boundary_inputs) - set(artifacts))
-        if missing_boundary:
+        if require_boundary and missing_boundary:
             raise EngineInputError(
                 "missing plan boundary input: " + ", ".join(missing_boundary)
             )

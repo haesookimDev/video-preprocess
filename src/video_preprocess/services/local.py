@@ -11,6 +11,7 @@ from pipeline.context import PipelineContext
 from pipeline.logging_setup import setup_logging
 from pipeline.preflight import load_hf_token
 from video_preprocess.adapters import create_legacy_pipeline_bindings
+from video_preprocess.domain import ArtifactRef, Checksum
 from video_preprocess.engine import ManifestCacheEvaluator, PipelineEngine
 from video_preprocess.executors import LocalExecutor
 from video_preprocess.inference.local import (
@@ -36,6 +37,22 @@ ContextConfigurer = Callable[
     [PipelineContext, LocalArtifactStore],
     None,
 ]
+
+
+class _PreviewExecutor:
+    """Executor guard used by runtimes that must remain read-only."""
+
+    async def submit(self, task):
+        raise RuntimeError("preview runtime cannot submit Stage tasks")
+
+    async def status(self, handle):
+        raise RuntimeError("preview runtime has no execution status")
+
+    async def result(self, handle):
+        raise RuntimeError("preview runtime has no execution results")
+
+    async def cancel(self, handle):
+        raise RuntimeError("preview runtime has no executions to cancel")
 
 
 class LocalPipelineRuntimeFactory:
@@ -73,9 +90,7 @@ class LocalPipelineRuntimeFactory:
     ) -> PipelineRuntime:
         output_root = request.output_root.resolve()
         output_root.mkdir(parents=True, exist_ok=True)
-        namespace = "local-" + hashlib.sha256(
-            str(output_root).encode("utf-8")
-        ).hexdigest()[:16]
+        namespace = self._namespace(output_root)
         artifact_store = LocalArtifactStore(
             output_root,
             namespace=namespace,
@@ -115,6 +130,42 @@ class LocalPipelineRuntimeFactory:
         )
         engine = PipelineEngine(
             LocalExecutor(bindings),
+            run_store=run_store,
+            cache_evaluator=ManifestCacheEvaluator(artifact_store),
+        )
+        return PipelineRuntime(engine=engine, artifacts=artifacts)
+
+    def create_preview(
+        self,
+        request: PipelineRunRequest,
+        *,
+        run_id: str,
+        boundary_inputs: Collection[str],
+    ) -> PipelineRuntime:
+        """Compose only read ports needed for cache-aware preview."""
+
+        output_root = request.output_root.resolve()
+        namespace = self._namespace(output_root)
+        artifact_store = LocalArtifactStore(
+            output_root,
+            namespace=namespace,
+            read_only=True,
+        )
+        run_store = LocalRunStore(
+            output_root,
+            artifact_store,
+            read_only=True,
+        )
+        video = self._describe_video(request.video_path, namespace)
+        artifacts = self._inspect_boundary_artifacts(
+            run_store,
+            artifact_store,
+            run_id=run_id,
+            boundary_inputs=boundary_inputs,
+            video=video,
+        )
+        engine = PipelineEngine(
+            _PreviewExecutor(),
             run_store=run_store,
             cache_evaluator=ManifestCacheEvaluator(artifact_store),
         )
@@ -162,6 +213,35 @@ class LocalPipelineRuntimeFactory:
         return artifact_store.publish(pending)
 
     @staticmethod
+    def _describe_video(video_path: Path, namespace: str) -> ArtifactRef:
+        resolved = video_path.resolve()
+        digest = hashlib.sha256()
+        size_bytes = 0
+        with resolved.open("rb") as handle:
+            while chunk := handle.read(1024 * 1024):
+                digest.update(chunk)
+                size_bytes += len(chunk)
+        media_type = mimetypes.guess_type(resolved.name)[0]
+        if media_type is None:
+            media_type = "application/octet-stream"
+        suffix = resolved.suffix.lower() or ".bin"
+        return ArtifactRef(
+            artifact_id="input-video",
+            kind="video",
+            uri=f"artifact://{namespace}/00_input/video{suffix}",
+            media_type=media_type,
+            size_bytes=size_bytes,
+            checksum=Checksum("sha256", digest.hexdigest()),
+            metadata={"source_name": resolved.name},
+        )
+
+    @staticmethod
+    def _namespace(output_root: Path) -> str:
+        return "local-" + hashlib.sha256(
+            str(output_root).encode("utf-8")
+        ).hexdigest()[:16]
+
+    @staticmethod
     def _restore_boundary_artifacts(
         run_store: LocalRunStore,
         artifact_store: LocalArtifactStore,
@@ -200,5 +280,41 @@ class LocalPipelineRuntimeFactory:
                 continue
             verification = artifact_store.verify(ref)
             if verification.ok:
+                artifacts[name] = ref
+        return artifacts
+
+    @staticmethod
+    def _inspect_boundary_artifacts(
+        run_store: LocalRunStore,
+        artifact_store: LocalArtifactStore,
+        *,
+        run_id: str,
+        boundary_inputs: Collection[str],
+        video: ArtifactRef,
+    ) -> dict[str, ArtifactRef]:
+        artifacts = {"video": video}
+        required = set(boundary_inputs) - {"video"}
+        if not required:
+            return artifacts
+        previous_run = run_store.load_run(run_id)
+        if previous_run is None:
+            return artifacts
+        previous_video = previous_run.input_artifacts.get("video")
+        if (
+            previous_video is None
+            or previous_video.size_bytes != video.size_bytes
+            or previous_video.checksum != video.checksum
+        ):
+            return artifacts
+        candidates = dict(previous_run.input_artifacts)
+        for stage_reference in previous_run.stages:
+            manifest = run_store.load_stage(run_id, stage_reference)
+            if manifest is not None:
+                candidates.update(manifest.result.outputs)
+        for name in sorted(required):
+            ref = candidates.get(name)
+            if ref is None:
+                continue
+            if artifact_store.verify(ref).ok:
                 artifacts[name] = ref
         return artifacts

@@ -112,5 +112,7 @@ PipelineEngine→LocalExecutor에서 실행한다. 입력 영상은 cache integr
 .venv/bin/python src/run_pipeline.py samples/sample.mp4 --dry-run
 ```
 
-`--force`는 선택된 plan 전체를 강제하고 `--force-stage`는 지정 단계만 강제한다. 현재 dry-run은
-Stage 순서, boundary input과 force 대상을 출력하며 cache hit/miss reason 사전 평가는 후속 작업이다.
+`--force`는 선택된 plan 전체를 강제하고 `--force-stage`는 지정 단계만 강제한다. dry-run은
+Artifact/Run Store를 read-only로 열고 실제 task/cache identity로 `hit`, `miss`, `forced`, `blocked`,
+예상 실행 여부와 stable reason을 출력한다. 검증된 hit output만 다음 Stage 입력으로 전달하므로
+상위 Stage를 실행해야 checksum을 알 수 있는 경우 downstream은 `blocked`다.

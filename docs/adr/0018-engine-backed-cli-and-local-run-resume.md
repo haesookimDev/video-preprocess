@@ -30,6 +30,12 @@ basic `--dry-run`은 runtime을 조립하거나 Stage를 실행하지 않고 pla
 출력한다. 현재 Engine에는 sequential task/cache preview API가 없으므로 cache decision은
 `evaluated_at_runtime`이라고 명시하고 hit/miss를 추정하지 않는다.
 
+후속 Phase 3 slice에서 Engine의 read-only preview API가 추가됐다. CLI dry-run은 이제
+Application Service의 preview 유스케이스를 호출하고 Local Artifact/Run Store를 read-only로 열어
+`hit`, `miss`, `forced`, `blocked`, 예상 실행 여부와 stable reason을 출력한다. 입력 영상은 output에
+복사하지 않고 동일한 checksum/URI semantics의 참조로 기술한다. 검증된 hit output만 downstream에
+전파하므로 새 output을 알 수 없는 Stage는 stale manifest로 추정하지 않는다.
+
 Engine result는 기존 위치의 `run_summary.json`에 status, metrics, logical output URI와 cache 상태를
 담은 compatibility view로 저장한다. 상세 상태와 timing의 원본은 `_manifests/`다.
 

@@ -15,6 +15,7 @@ from video_preprocess.domain import (
 )
 from video_preprocess.engine import (
     DAGPlanner,
+    PipelinePreviewResult,
     PipelineRunResult,
     StageRegistry,
     create_default_registry,
@@ -56,6 +57,14 @@ class RecordingEngine:
             transitions=(RunStatus.PENDING, RunStatus.RUNNING, RunStatus.SUCCEEDED),
         )
 
+    async def preview(self, plan, **options):
+        self.calls.append((plan, options))
+        return PipelinePreviewResult(
+            run_id=options["run_id"],
+            stages=(),
+            artifacts=dict(options["artifacts"]),
+        )
+
 
 class RecordingRuntimeFactory:
     def __init__(self, engine, artifacts):
@@ -64,6 +73,10 @@ class RecordingRuntimeFactory:
         self.calls = []
 
     def create(self, request, *, run_id, boundary_inputs):
+        self.calls.append((request, run_id, tuple(boundary_inputs)))
+        return PipelineRuntime(self.engine, self.artifacts)
+
+    def create_preview(self, request, *, run_id, boundary_inputs):
         self.calls.append((request, run_id, tuple(boundary_inputs)))
         return PipelineRuntime(self.engine, self.artifacts)
 
@@ -263,3 +276,31 @@ def test_local_runtime_requires_manifest_for_partial_execution(
             run_id="run-123",
             boundary_inputs=("timeline",),
         )
+
+
+def test_local_preview_is_read_only_and_reports_missing_boundary(
+    tmp_path: Path,
+) -> None:
+    video = tmp_path / "source.mp4"
+    video.write_bytes(b"video")
+    output = tmp_path / "output"
+    service = PipelineApplicationService(
+        DAGPlanner(create_default_registry()),
+        LocalPipelineRuntimeFactory(),
+    )
+
+    result = asyncio.run(
+        service.preview(
+            PipelineRunRequest(
+                video_path=video,
+                output_root=output,
+                run_id="run-123",
+                trace_id="trace-123",
+                stage="10_index",
+            )
+        )
+    )
+
+    assert result.stages[0].status.value == "blocked"
+    assert result.stages[0].blocked_inputs == ("timeline",)
+    assert not output.exists()

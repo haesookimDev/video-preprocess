@@ -22,6 +22,7 @@ from .errors import (
     InvalidArtifactPathError,
     InvalidArtifactURIError,
     PendingArtifactError,
+    StorageError,
     UnsupportedChecksumError,
 )
 
@@ -88,21 +89,32 @@ def _inspect_file(path: Path) -> tuple[int, Checksum]:
 class LocalArtifactStore:
     """Maps one safe artifact namespace onto a local output directory."""
 
-    def __init__(self, root: Path, *, namespace: str) -> None:
+    def __init__(
+        self,
+        root: Path,
+        *,
+        namespace: str,
+        read_only: bool = False,
+    ) -> None:
         namespace = _require_text(namespace, "namespace")
         if not _NAMESPACE_PATTERN.fullmatch(namespace):
             raise ValueError(
                 "namespace must contain only letters, digits, '.', '_', or '-'"
             )
+        if not isinstance(read_only, bool):
+            raise TypeError("read_only must be a boolean")
         self.root = Path(root).resolve()
-        self.root.mkdir(parents=True, exist_ok=True)
+        self.read_only = read_only
+        if not read_only:
+            self.root.mkdir(parents=True, exist_ok=True)
         self.namespace = namespace
         self._pending_dir = self.root / "_pending"
         if self._pending_dir.is_symlink():
             raise InvalidArtifactPathError(
                 "reserved _pending directory must not be a symbolic link"
             )
-        self._pending_dir.mkdir(parents=True, exist_ok=True)
+        if not read_only:
+            self._pending_dir.mkdir(parents=True, exist_ok=True)
         try:
             self._pending_dir.resolve().relative_to(self.root)
         except ValueError as exc:
@@ -122,6 +134,8 @@ class LocalArtifactStore:
         metadata: Mapping[str, JSONValue] | None = None,
     ) -> PendingArtifact:
         """Copy bytes to a private temporary file without publishing them."""
+
+        self._require_writable()
 
         artifact_id = _require_text(artifact_id, "artifact_id")
         relative = _normalize_relative_path(relative_path)
@@ -164,6 +178,8 @@ class LocalArtifactStore:
     def publish(self, pending: PendingArtifact) -> ArtifactRef:
         """Atomically move a known pending artifact into its public path."""
 
+        self._require_writable()
+
         expected = self._pending.get(pending.token)
         if expected is None or expected != pending:
             raise PendingArtifactError(
@@ -191,6 +207,8 @@ class LocalArtifactStore:
 
     def discard(self, pending: PendingArtifact) -> None:
         """Remove unpublished bytes; published artifacts are never deleted."""
+
+        self._require_writable()
 
         expected = self._pending.get(pending.token)
         if expected is None or expected != pending:
@@ -326,6 +344,10 @@ class LocalArtifactStore:
         if len(matches) != 1:
             return None
         return matches[0]
+
+    def _require_writable(self) -> None:
+        if self.read_only:
+            raise StorageError("artifact store is read-only")
 
     def _target_path(self, relative: PurePosixPath) -> Path:
         target = self.root.joinpath(*relative.parts)
