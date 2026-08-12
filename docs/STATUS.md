@@ -1,8 +1,8 @@
 # 개발 상태와 세션 인수인계
 
 - 마지막 갱신: **2026-08-12**
-- 현재 단계: **Phase 4 — HTTP Inference Provider**
-- 다음 작업: **production inference server adapter와 실제 embedding backend E2E**
+- 현재 단계: **Phase 4 완료 — HTTP Inference Provider**
+- 다음 작업: **Phase 5 — pipeline run REST API 공개 schema와 adapter 첫 slice**
 
 이 문서는 개발 진행 상황의 단일 진입점이다. 새로운 세션은 이 문서를 먼저 읽고, 실제 코드와
 Git 상태를 확인한 뒤 작업을 시작한다.
@@ -27,7 +27,8 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - 모든 모델 Stage에서 구체 ML library import와 model lifecycle 제거 완료
 - 기본 CLI는 Application Service를 통해 새 Engine과 01~11 binding을 실행
 - embedding은 설정에 따라 local 또는 HTTP provider client를 사용하며 기본값은 local
-- production inference server adapter와 pipeline API adapter는 아직 미구현
+- production embedding inference server adapter와 실행 CLI 구현 완료
+- pipeline REST API와 queue adapter는 아직 미구현
 - Local Store가 input copy, 단계 산출물과 run/stage manifest를 관리
 
 기존 샘플 산출물은 `output/` 아래에 있으나 생성물이며 Git에 커밋하지 않는다.
@@ -89,6 +90,8 @@ Git 상태를 확인한 뒤 작업을 시작한다.
   [`ADR-0022`](./adr/0022-http-inference-v1-job-contract.md)
 - alias별 추론 배포 설정 결정:
   [`ADR-0023`](./adr/0023-alias-based-inference-deployment-settings.md)
+- reference inference server runtime 결정:
+  [`ADR-0024`](./adr/0024-reference-inference-server-runtime.md)
 
 ## 3. 완료된 작업
 
@@ -160,7 +163,7 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - [x] legacy 09~11 Engine/LocalExecutor compatibility path
 - [x] global cache index와 run 간 cache 재사용
 - [x] HTTPInferenceProvider client와 모델 서버 계약 구현
-- [ ] production inference model server adapter
+- [x] production inference model server adapter
 - [x] Pipeline Application Service와 local runtime factory
 - [x] Application Service 기반 선택 실행 CLI
 - [ ] API adapter
@@ -171,9 +174,9 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 문서가 존재한다고 구현된 것으로 간주하지 않는다. 완료 여부는 코드와 자동 테스트를 기준으로
 이 체크리스트에서 갱신한다.
 
-## 5. 다음 작업: Phase 4 HTTP Inference 계약 slice
+## 5. Phase 4 완료와 Phase 5 인수인계
 
-권장 순서:
+Phase 4 완료 순서:
 
 1. [x] `docs/openapi/inference-v1.yaml`에 health, capability, async job, cancel과 공통 오류 schema를 고정한다.
 2. [x] 공유 Artifact Store URI, idempotency key, deadline과 effective model metadata의 전송 규칙을
@@ -182,12 +185,24 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 4. [x] `src/video_preprocess/inference/`에 HTTP Provider를 구현하고 timeout, 429, 5xx, 인증 실패와
    cancellation을 공통 `InferenceError`로 정규화한다.
 5. [x] embedding alias를 첫 원격화 대상으로 local/HTTP 설정 전환과 cache fingerprint E2E를 검증한다.
-6. [ ] production inference server adapter와 실제 embedding backend E2E를 구현한다.
+6. [x] production inference server adapter와 실제 embedding backend E2E를 구현한다.
 
 Phase 3는 11단계 Engine 실행, LocalExecutor, 선택 실행, read-only cache preview, 같은 Store의 run 간
 cache, cooperative timeout/cancel과 bounded retry까지 완료했다. `pipeline.runner`는 명시적
 compatibility 구현으로만 남아 있으며 Phase 4에서도 CLI와 Stage가 concrete provider를 선택하지 않는
 경계를 유지한다.
+
+Phase 4는 HTTP Inference v1 client/server, fake contract server, embedding local/HTTP routing,
+remote effective model cache fingerprint와 실제 SentenceTransformer HTTP E2E까지 완료했다. 다음
+세션은 Phase 5에서 기존 `PipelineApplicationService`를 호출하는 REST API 공개 schema부터 시작한다.
+
+Phase 5 첫 slice:
+
+1. `POST /v1/pipeline-runs`, `GET /v1/pipeline-runs/{run_id}`와
+   `DELETE /v1/pipeline-runs/{run_id}` 공개 schema를 OpenAPI로 확정한다.
+2. API request가 `PipelineRunRequest`로 변환되고 CLI와 같은 `PipelineApplicationService`를 호출하는
+   adapter boundary를 만든다.
+3. fake runtime으로 create/status/cancel/result와 idempotency contract를 network-free 테스트한다.
 
 ## 6. 알려진 중요 문제
 
@@ -295,6 +310,22 @@ compatibility 구현으로만 남아 있으며 Phase 4에서도 CLI와 Stage가 
 
 최신 기록을 위에 추가한다. 긴 구현 설명은 PR이나 ADR에 두고 여기에는 다음 세션이 재개하는 데
 필요한 정보만 적는다.
+
+### 2026-08-12 — Phase 4 production inference server와 완료 검증
+
+- 목표: test fixture가 아닌 배포 가능한 server adapter로 실제 embedding backend 제공
+- 완료: 전용 async Provider runtime, bounded in-memory job/idempotency registry, health/capability,
+  submit/poll/cancel, bearer auth, capacity 429와 `serve_inference.py`; ADR-0024
+- 주요 결정: reference server는 단일 alias/process이며 terminal job부터 bounded prune; durable queue와
+  multi-replica 운영은 후속 adapter로 분리
+- 검증: 기본 network-free suite 318 passed, 13 deselected; 전체 non-model integration 12 passed;
+  cached 실제 multilingual SentenceTransformer offline HTTP E2E 1 passed
+- 실제 회귀: offline `sample.mp4 --force --run-id phase4-http-final` RunManifest 11단계 succeeded;
+  동일 run 재개 11단계 `ok`; query `음성 구간 검출 --topk 2` 씬 02 top-1; SQLite integrity `ok`;
+  `pip check`와 preflight 성공
+- 호환성: 기본 pipeline/query는 local embedding 유지; server job은 process restart 시 복구되지 않으며
+  non-loopback 배포는 bearer auth와 외부 TLS 종료가 필요
+- 다음 작업: Phase 5 pipeline run REST API 공개 schema, create/status/cancel/result adapter
 
 ### 2026-08-12 — Phase 4 embedding local/HTTP deployment routing
 

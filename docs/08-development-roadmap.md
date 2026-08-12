@@ -1,6 +1,6 @@
 # 엔진·실행기 분리 개발 로드맵
 
-상태: **진행 중 — Phase 4**
+상태: **Phase 4 완료 — 다음 Phase 5**
 기준일: 2026-08-12
 대상 설계: [`06-target-architecture.md`](./06-target-architecture.md)  
 공개 계약: [`07-execution-inference-contracts.md`](./07-execution-inference-contracts.md)
@@ -273,7 +273,7 @@ run cancellation과 분류된 bounded retry는 attempt별 manifest를 보존하�
 - [x] embedding alias local/HTTP typed deployment 설정과 CLI 전환
 - [x] remote effective model fingerprint의 Engine resolver 연결
 - [x] fake model server와 production HTTP Provider/EmbeddingService end-to-end 검증
-- [ ] production model server adapter와 실제 embedding backend end-to-end 검증
+- [x] production model server adapter와 실제 embedding backend end-to-end 검증
 
 ### 첫 원격화 대상
 
@@ -287,6 +287,11 @@ caption 또는 embedding을 권장한다. 출력이 비교적 작고 STT·diariz
 - 동일 idempotency key가 중복 추론을 만들지 않는다.
 - 대용량 미디어와 비밀값이 로그·manifest에 노출되지 않는다.
 - 원격 응답의 effective model revision이 cache key에 반영된다.
+
+Phase 4는 2026-08-12에 완료했다. HTTP Inference v1 OpenAPI, production client/reference server,
+embedding alias local/HTTP 설정, 오류·재시도·취소·멱등성·보안 경계와 remote cache fingerprint를
+검증했다. 기본 suite 318개, non-model HTTP integration 12개와 cached 실제 multilingual
+SentenceTransformer HTTP E2E 1개가 통과했다.
 
 ## 9. Phase 5: 외부 서비스 연동
 

@@ -17,6 +17,7 @@ flowchart LR
     STAGES --> GATEWAY[Inference Gateway]
     GATEWAY --> LOCAL[Local Providers]
     GATEWAY -. endpoint 설정 .-> HTTP[HTTP Inference Provider]
+    HTTP --> SERVER[Inference v1 Model Server]
     ENGINE --> STORES[Artifact / Run Stores]
 ```
 
@@ -32,11 +33,12 @@ flowchart LR
 - Stage timeout, cooperative cancellation과 분류된 bounded retry
 - HTTP Inference v1 client, async job submit/poll/cancel, retry와 circuit breaker
 - `embedding.default`의 local/HTTP 배포 설정과 원격 effective model cache fingerprint
+- LocalEmbeddingProvider를 공개하는 production HTTP server adapter와 실행 CLI
 - 기존 JSON·Markdown·SQLite 출력 구조와 query CLI
 
 아직 구현되지 않은 범위:
 
-- production 모델 서버 adapter와 embedding 외 alias의 HTTP 배포 연결
+- embedding 외 alias의 HTTP 배포 연결
 - REST API·queue adapter와 RemoteExecutor
 
 정확한 완료 상태와 다음 작업은 [docs/STATUS.md](docs/STATUS.md)를 기준으로 한다.
@@ -159,6 +161,15 @@ Inference v1과 `embedding.default` capability를 제공할 때 다음처럼 선
 
 ```bash
 export MODEL_SERVER_TOKEN=replace-me
+
+# 첫 terminal: 실제 local embedding backend를 HTTP Inference v1으로 제공
+.venv/bin/python src/serve_inference.py \
+  --host 127.0.0.1 \
+  --port 8080 \
+  --auth-token-env MODEL_SERVER_TOKEN \
+  --warmup
+
+# 두 번째 terminal: 같은 Stage를 remote embedding 설정으로 실행
 .venv/bin/python src/run_pipeline.py samples/sample.mp4 \
   --embedding-endpoint http://127.0.0.1:8080 \
   --embedding-token-env MODEL_SERVER_TOKEN
@@ -170,6 +181,10 @@ export MODEL_SERVER_TOKEN=replace-me
 
 원격 Provider 실패 시 local 모델로 자동 fallback하지 않는다. 성공 응답의 실제 provider, model,
 resolved revision과 runtime은 기존 index metadata와 Engine cache 판정에 사용된다.
+
+server는 기본적으로 loopback에 bind하고 process-local bounded job registry를 사용한다. 재시작 시 job과
+idempotency record는 복구되지 않는다. 외부 interface에 bind할 때는 bearer credential을 필수로
+설정하고 reverse proxy나 service mesh에서 TLS를 종료해야 한다.
 
 timeout은 attempt의 cooperative cancellation을 요청하고 Stage가 안전한 반환 경계에 도달한 뒤
 `STAGE_TIMEOUT`으로 기록한다. 따라서 token을 확인하지 않는 기존 sync/native 호출은 설정한 시간에
@@ -275,7 +290,16 @@ loopback port를 여는 HTTP contract와 production client integration test는 �
 .venv/bin/python -m pytest -o addopts='' \
   tests/contracts/test_fake_inference_server.py \
   tests/inference/test_http_provider_integration.py \
-  tests/inference/test_embedding_deployment_integration.py
+  tests/inference/test_embedding_deployment_integration.py \
+  tests/inference/test_http_server_integration.py
+```
+
+cached 실제 SentenceTransformer까지 포함한 server E2E는 명시적으로 실행한다.
+
+```bash
+HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
+  .venv/bin/python -m pytest -o addopts='' \
+  tests/inference/test_http_server_model.py
 ```
 
 미디어·모델 통합 변경은 `samples/sample.mp4` 전체 실행과 query까지 별도로 검증한다.

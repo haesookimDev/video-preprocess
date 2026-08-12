@@ -691,6 +691,18 @@ poll 간격, capability TTL과 retry policy를 가진다. bearer token은 runtim
 수는 있지만 URL credential, query와 fragment는 허용하지 않는다. 상세 결정은
 [`ADR-0023`](./adr/0023-alias-based-inference-deployment-settings.md)에 기록한다.
 
+### 7.4 reference server 동작
+
+`InferenceHTTPService`는 한 alias의 Provider를 전용 async runtime에 연결하고 bounded in-memory job과
+idempotency index를 관리한다. capacity가 가득 차면 terminal job을 오래된 순서로 제거하며 제거할 수
+없으면 `PROVIDER_RATE_LIMITED`/429를 반환한다. process restart 후 job 복구는 보장하지 않는다.
+
+`DELETE`는 Gateway cooperative cancel 뒤 server task를 취소하고 `CANCELLED` terminal response를
+저장한다. native/local model thread는 강제 종료하지 않는다. capability 응답은 Provider의 optional
+effective model을 합쳐 client cache resolver에 전달한다. CLI bearer token은 환경변수에서 읽고 응답,
+로그와 startup message에 넣지 않는다. 운영 제약은
+[`ADR-0024`](./adr/0024-reference-inference-server-runtime.md)에 기록한다.
+
 ## 8. 오류 계약과 재시도
 
 공통 오류 객체:

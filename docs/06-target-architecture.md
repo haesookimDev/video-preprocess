@@ -264,6 +264,12 @@ remote effective model은 기존 Engine cache resolver에 연결된다. 비동�
 [`ADR-0004`](./adr/0004-async-inference-gateway-and-local-embedding-provider.md), 배포 선택은
 [`ADR-0023`](./adr/0023-alias-based-inference-deployment-settings.md)에 기록한다.
 
+`serve_inference.py`는 `LocalEmbeddingProvider`를 HTTP Inference v1으로 공개하는 reference server다.
+HTTP handler와 Provider coroutine 사이에 전용 event loop를 두고 bounded in-memory job registry가
+queued/running/terminal, idempotency와 cooperative cancel을 관리한다. 이는 배포 가능한 단일 process
+adapter이며 durable queue나 multi-replica scheduler를 대신하지 않는다. runtime 결정과 제약은
+[`ADR-0024`](./adr/0024-reference-inference-server-runtime.md)에 기록한다.
+
 `caption.default`도 `LocalCaptionProvider`에 연결되어 있다. 현재 runner의 composition root가
 Caption Service와 legacy artifact registrar를 주입하고, `s08_captions`는 keyframe을
 ArtifactRef batch로 전달한다. 중첩 ArtifactRef 계약과 로컬 provider 결정은

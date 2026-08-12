@@ -2,9 +2,9 @@
 
 ## Project Structure & Module Organization
 
-The Python entry points are `src/run_pipeline.py` for preprocessing and `src/query.py` for searching an existing index. Shared orchestration, configuration, and logging live in `src/pipeline/`. Processing steps are ordered modules under `src/pipeline/stages/`, named `s01_probe.py` through `s11_context.py`. Each stage exposes `NAME`, `OUTPUT`, and `run(ctx)` and is registered in `pipeline/runner.py`. Design notes are in `docs/`; small media fixtures are in `samples/`. Generated artifacts belong under `output/<video_stem>/` and must not be committed.
+The Python entry points are `src/run_pipeline.py` for preprocessing, `src/query.py` for searching an existing index, and `src/serve_inference.py` for exposing a local embedding backend through HTTP Inference v1. Shared orchestration, configuration, and logging live in `src/pipeline/`. Processing steps are ordered modules under `src/pipeline/stages/`, named `s01_probe.py` through `s11_context.py`. Each stage exposes `NAME`, `OUTPUT`, and `run(ctx)` and is registered in `pipeline/runner.py`. Design notes are in `docs/`; small media fixtures are in `samples/`. Generated artifacts belong under `output/<video_stem>/` and must not be committed.
 
-The current code is a local single-process MVP. The approved target architecture separates the Pipeline Engine, Executor, Artifact/Run Stores, and local/HTTP Inference Providers. Do not treat the target package layout as already implemented. Use `docs/STATUS.md` to distinguish current behavior from planned work.
+The current pipeline Engine and Executor remain local, while embedding inference can be selected as local or HTTP and a single-process reference inference server is implemented. The approved target architecture separates the Pipeline Engine, Executor, Artifact/Run Stores, and local/HTTP Inference Providers. Do not treat the remaining target package layout as already implemented. Use `docs/STATUS.md` to distinguish current behavior from planned work.
 
 ## Setup, Run, and Development Commands
 
