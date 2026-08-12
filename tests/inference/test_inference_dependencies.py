@@ -28,6 +28,20 @@ def test_embedding_consumers_do_not_import_sentence_transformers() -> None:
         assert "sentence_transformers" not in _imported_roots(consumer)
 
 
+def test_index_stage_does_not_select_a_concrete_inference_provider() -> None:
+    stage = (
+        PROJECT_ROOT
+        / "src"
+        / "pipeline"
+        / "stages"
+        / "s10_index.py"
+    )
+
+    assert "video_preprocess.inference.local" not in stage.read_text(
+        encoding="utf-8"
+    )
+
+
 def test_sentence_transformer_import_is_lazy_inside_local_loader() -> None:
     provider_path = (
         PROJECT_ROOT

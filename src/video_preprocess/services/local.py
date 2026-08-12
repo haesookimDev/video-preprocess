@@ -131,7 +131,7 @@ class LocalPipelineRuntimeFactory:
             context.stt_service,
             context.diarization_service,
             context.vad_service,
-            get_local_embedding_service(context.embed_model),
+            context.embedding_service,
         )
         bindings = create_legacy_pipeline_bindings(
             context,
@@ -222,6 +222,9 @@ class LocalPipelineRuntimeFactory:
             token=load_hf_token(self.project_root),
         )
         context.vad_service = create_local_vad_service(artifact_store)
+        context.embedding_service = get_local_embedding_service(
+            context.embed_model
+        )
 
     @staticmethod
     def _model_resolver(*services) -> GatewayEffectiveModelResolver | None:

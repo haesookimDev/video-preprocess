@@ -293,6 +293,16 @@ compatibility 구현으로만 남아 있으며 Phase 4에서도 CLI와 Stage가 
 최신 기록을 위에 추가한다. 긴 구현 설명은 PR이나 ADR에 두고 여기에는 다음 세션이 재개하는 데
 필요한 정보만 적는다.
 
+### 2026-08-12 — embedding Stage provider 선택 제거
+
+- 목표: local/HTTP binding 전환 전에 Stage가 concrete provider를 선택하던 잔여 결합 제거
+- 완료: `PipelineContext.embedding_service` 주입 지점과 local runtime composition을 추가하고
+  `s10_index`의 `get_local_embedding_service` 직접 import·생성을 제거
+- 검증: index Stage 주입/누락 테스트와 concrete local provider dependency boundary 테스트
+- 호환성: 기본 local runtime은 동일 cached embedding service를 주입하며 SQLite schema와 model
+  metadata 출력은 변경 없음; custom runtime은 10단계 실행 전에 service를 명시해야 함
+- 다음 작업: alias별 typed HTTP deployment 설정과 CLI local/HTTP 선택
+
 ### 2026-08-12 — Phase 4 HTTP Inference Provider client
 
 - 목표: 공통 Inference 계약을 변경하지 않고 remote async job을 호출하는 provider 구현

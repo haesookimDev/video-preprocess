@@ -11,6 +11,7 @@ if TYPE_CHECKING:
     from video_preprocess.inference import (
         CaptionService,
         DiarizationService,
+        EmbeddingService,
         STTService,
         VADService,
     )
@@ -49,6 +50,10 @@ class PipelineContext:
         repr=False,
     )
     vad_service: VADService | None = field(
+        default=None,
+        repr=False,
+    )
+    embedding_service: EmbeddingService | None = field(
         default=None,
         repr=False,
     )

@@ -14,8 +14,6 @@ import time
 
 import numpy as np
 
-from video_preprocess.inference.local import get_local_embedding_service
-
 from ..context import PipelineContext
 from ..logging_setup import stage_logger
 
@@ -42,7 +40,9 @@ def run(ctx: PipelineContext) -> dict:
     texts = [_card_text(c) for c in cards]
 
     log.info("임베딩 provider 준비: embedding.default → %s", ctx.embed_model)
-    embedding_service = get_local_embedding_service(ctx.embed_model)
+    embedding_service = ctx.embedding_service
+    if embedding_service is None:
+        raise RuntimeError("embedding service is not configured")
     t0 = time.monotonic()
     batch = embedding_service.embed(
         texts,

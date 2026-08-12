@@ -32,7 +32,6 @@ class FakeEmbeddingService:
 
 def test_index_stage_keeps_sqlite_schema_with_provider_metadata(
     tmp_path: Path,
-    monkeypatch,
 ) -> None:
     context = PipelineContext(
         video_path=tmp_path / "sample.mp4",
@@ -63,11 +62,7 @@ def test_index_stage_keeps_sqlite_schema_with_provider_metadata(
         encoding="utf-8",
     )
     service = FakeEmbeddingService()
-    monkeypatch.setattr(
-        s10_index,
-        "get_local_embedding_service",
-        lambda _: service,
-    )
+    context.embedding_service = service
 
     result = s10_index.run(context)
 
@@ -86,3 +81,23 @@ def test_index_stage_keeps_sqlite_schema_with_provider_metadata(
     assert meta["embed_revision"] == "rev-1"
     assert embedding_count == 2
 
+
+def test_index_stage_requires_composed_embedding_service(
+    tmp_path: Path,
+) -> None:
+    context = PipelineContext(
+        video_path=tmp_path / "sample.mp4",
+        out_root=tmp_path / "output" / "sample",
+    )
+    timeline_dir = context.stage_dir("09_timeline")
+    (timeline_dir / "timeline.json").write_text(
+        json.dumps({"scene_cards": []}),
+        encoding="utf-8",
+    )
+
+    try:
+        s10_index.run(context)
+    except RuntimeError as exc:
+        assert str(exc) == "embedding service is not configured"
+    else:
+        raise AssertionError("missing embedding service was accepted")
