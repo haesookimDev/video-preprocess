@@ -74,6 +74,12 @@ Phase 6의 additive query 필드 `min_similarity`는 keyword hit가 없는 seman
 `no_answer=true`를 반환한다. 기존 v1 request는 기본값으로 동작하고 새 response 필드는 additive다.
 결정은 [`ADR-0027`](./adr/0027-normalized-hybrid-retrieval-threshold.md)에 기록한다.
 
+retrieval evaluation dataset v1은 30~50개의 고유 `case_id`를 요구한다. 답변 질의는 하나 이상의
+`relevant_scene_ids`, 무관 질의는 `expect_no_answer=true` 중 하나만 가진다. evaluator는 답변 case의
+Recall@k와 MRR, 전체 predicted no-answer의 precision과 무관 case의 recall을 계산하고 case별 expected/
+returned scene ID를 함께 출력한다. 기본 test는 fake QueryService로 metric을 검증하고 실제 model
+baseline은 명시적인 offline 실행으로 분리한다.
+
 local reference server는 `--retain-terminal-runs`로 최근 terminal API snapshot 수를 제한한다. 이
 정리는 API 조회/idempotency control record에만 적용하며 Engine manifest와 artifact body를 삭제하지
 않는다. 보존 범위를 지난 run은 `404`이고 같은 idempotency key는 새 실행으로 사용할 수 있다.

@@ -267,6 +267,9 @@ class QueryService:
         self.embedding_factory = embedding_factory or self._embedding_service
         if not callable(self.embedding_factory):
             raise TypeError("embedding_factory must be callable")
+        self._embedding_service_cache: dict[
+            tuple[str, str | None], EmbeddingService
+        ] = {}
         self.log = logger or logging.getLogger("video_preprocess.query")
 
     async def query(self, request: PipelineQueryRequest) -> PipelineQueryResult:
@@ -296,7 +299,7 @@ class QueryService:
                 requested_revision = (
                     None if revision in {None, "default"} else revision
                 )
-                embedding_service = self.embedding_factory(
+                embedding_service = self._cached_embedding_service(
                     model_name,
                     requested_revision,
                 )
@@ -383,6 +386,18 @@ class QueryService:
             deployments=self.deployments,
             revision=revision,
         )
+
+    def _cached_embedding_service(
+        self,
+        model_name: str,
+        revision: str | None,
+    ) -> EmbeddingService:
+        key = (model_name, revision)
+        service = self._embedding_service_cache.get(key)
+        if service is None:
+            service = self.embedding_factory(model_name, revision)
+            self._embedding_service_cache[key] = service
+        return service
 
 
 def _fmt_ts(sec: float) -> str:

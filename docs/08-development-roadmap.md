@@ -359,7 +359,11 @@ query top-1 씬 02를 확인했다. queue consumer와 direct upload는 초기 �
 - [x] 문자 n-gram FTS
 - [x] 유사도 하한과 관련 결과 없음 판정
 - [x] 점수·선택 근거 JSON 출력
-- 30~50개 평가 질의로 Recall@k, MRR, no-answer precision 측정
+- [x] 30~50개 평가 질의로 Recall@k, MRR, no-answer precision 측정
+
+sample 기준 dataset은 36개(정답 질의 24, no-answer 12)이며 실제 multilingual embedding model에서
+Recall@3 1.0, MRR 0.9583, no-answer precision/recall 1.0을 기록했다. evaluator는 case별 반환 scene과
+aggregate metric을 JSON으로 출력하며 같은 process에서 embedding service를 재사용한다.
 
 ### 컨텍스트
 

@@ -204,6 +204,29 @@ def test_query_service_rejects_semantic_only_results_below_threshold(
     assert "질의 관련 씬 카드" in result.context
 
 
+def test_query_service_reuses_embedding_service_within_process(
+    tmp_path: Path,
+) -> None:
+    write_query_fixture(tmp_path)
+    factory_calls = []
+
+    def factory(model_name, revision):
+        factory_calls.append((model_name, revision))
+        return FakeEmbeddingService()
+
+    service = QueryService(
+        FixedQueryTargetResolver(tmp_path),
+        embedding_factory=factory,
+        logger=LOG,
+    )
+    request = PipelineQueryRequest("run-test", "두 번째")
+
+    asyncio.run(service.query(request))
+    asyncio.run(service.query(request))
+
+    assert factory_calls == [("fake/model", "rev-1")]
+
+
 def test_query_service_classifies_missing_or_invalid_index(
     tmp_path: Path,
 ) -> None:

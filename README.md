@@ -355,6 +355,16 @@ HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
   .venv/bin/python src/query.py output/sample "음성 구간 검출" --topk 2
 ```
 
+고정 평가 dataset으로 Recall@3, MRR과 no-answer precision/recall을 재현할 수 있다. bundled sample
+dataset은 정답 질의 24개와 무관 질의 12개로 구성된다.
+
+```bash
+HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
+  .venv/bin/python src/evaluate_retrieval.py \
+  output/sample tests/fixtures/retrieval_v1/sample_queries.json \
+  --topk 3 --min-similarity 0.35
+```
+
 ## 개발과 검증
 
 기본 테스트는 모델 weight를 다운로드하거나 network를 요구하지 않는다.

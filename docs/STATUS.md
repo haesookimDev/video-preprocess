@@ -176,7 +176,7 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - [x] Application Service 기반 선택 실행 CLI
 - [x] API adapter
 - [x] 타임라인 경계 정합성 개선
-- [ ] 한국어 검색과 평가 체계
+- [x] 한국어 검색과 평가 체계
 - [ ] 실제 token budget
 
 문서가 존재한다고 구현된 것으로 간주하지 않는다. 완료 여부는 코드와 자동 테스트를 기준으로
@@ -239,8 +239,11 @@ Phase 6 timeline slice는 09 timeline의 모든 구간을 반개구간 `[start, 
 
 다음 slice는 10 index와 공통 QueryService에 Unicode·공백·문장부호 정규화, 한국어 문자 n-gram
 keyword signal과 embedding 유사도 하한을 추가했다. match JSON에는 keyword/semantic 순위·점수와
-선택 근거를 기록하고 threshold를 통과한 신호가 없으면 `no_answer=true`를 반환한다. 다음 slice는
-고정 평가 질의 30~50개로 Recall@3, MRR과 no-answer precision을 측정하는 harness와 baseline을 만든다.
+선택 근거를 기록하고 threshold를 통과한 신호가 없으면 `no_answer=true`를 반환한다. 36개 고정 sample
+질의 평가에서 Recall@3 1.0, MRR 0.9583, no-answer precision/recall 1.0을 측정했다.
+
+다음 slice는 대상 tokenizer의 실제 token count로 static/query context를 제한하고, 인접 scene 확장,
+중복 제거, 낮은 우선순위 card 제거와 사용·제외 통계를 구현한다.
 
 ## 6. 알려진 중요 문제
 
@@ -347,6 +350,19 @@ keyword signal과 embedding 유사도 하한을 추가했다. match JSON에는 k
 
 최신 기록을 위에 추가한다. 긴 구현 설명은 PR이나 ADR에 두고 여기에는 다음 세션이 재개하는 데
 필요한 정보만 적는다.
+
+### 2026-08-12 — Phase 6 retrieval 평가 dataset과 baseline
+
+- 목표: 검색 개선을 재현 가능한 Recall@3·MRR·no-answer 지표로 검증
+- 완료: 엄격한 v1 dataset loader, 36개 sample 질의(정답 24/무관 12), async evaluation service,
+  `evaluate_retrieval.py`, case별 결과와 aggregate metric JSON, process 내 embedding service 재사용
+- 검증: unit 13 passed; offline 실제 multilingual model/sample 36개에서 Recall@3 1.0,
+  MRR 0.9583, no-answer precision 1.0, no-answer recall 1.0; 새 Stage 09~10 포함 sample 전체 11단계 ok
+- 관찰: 일부 광범위 질의(`첫 장면에서...`, `검출 테스트`)는 정답이 2위라 MRR이 1.0은 아니지만
+  Recall@3 목표 0.9를 충족; macOS FFmpeg dylib·pyannote warning은 기존과 동일
+- 호환성: evaluator는 30~50개 case를 요구하고 모델/네트워크 없는 unit test와 실제 model 실행을 분리;
+  같은 QueryService process의 동일 model/revision은 재사용하되 별도 CLI process cold load는 유지
+- 다음 작업: 실제 tokenizer 기반 context token budget, 인접 scene 확장·dedup·제외 통계
 
 ### 2026-08-12 — Phase 6 한국어 hybrid retrieval과 no-answer
 

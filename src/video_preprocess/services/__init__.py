@@ -43,6 +43,12 @@ from .query import (
     QueryServiceError,
     QueryServiceInputError,
 )
+from .retrieval_evaluation import (
+    RetrievalEvaluationCase,
+    RetrievalEvaluationReport,
+    evaluate_retrieval,
+    load_evaluation_cases,
+)
 
 __all__ = [
     "LocalPipelineRuntimeFactory",
@@ -80,4 +86,8 @@ __all__ = [
     "QueryService",
     "QueryServiceError",
     "QueryServiceInputError",
+    "RetrievalEvaluationCase",
+    "RetrievalEvaluationReport",
+    "evaluate_retrieval",
+    "load_evaluation_cases",
 ]
