@@ -297,11 +297,11 @@ SentenceTransformer HTTP E2E 1개가 통과했다.
 
 ### 작업
 
-- [ ] `PipelineService` 유스케이스 구현
-  - 실행 생성
-  - 실행 취소
-  - 상태·진행률 조회
-  - 결과 artifact 조회
+- [x] `PipelineService` 유스케이스 구현
+  - [x] 실행 생성
+  - [x] 실행 취소
+  - [x] 상태·진행률 조회
+  - [x] 결과 artifact 조회
 - [ ] `QueryService` 구현
 - [ ] 기존 CLI를 Service adapter로 변경
 - [ ] REST API adapter 추가

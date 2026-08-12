@@ -2,7 +2,7 @@
 
 - 마지막 갱신: **2026-08-12**
 - 현재 단계: **Phase 5 진행 중 — 외부 서비스 연동**
-- 다음 작업: **영속 PipelineRun service와 create/status/cancel/artifact use case 구현**
+- 다음 작업: **REST adapter와 API server composition/CLI 구현**
 
 이 문서는 개발 진행 상황의 단일 진입점이다. 새로운 세션은 이 문서를 먼저 읽고, 실제 코드와
 Git 상태를 확인한 뒤 작업을 시작한다.
@@ -201,9 +201,18 @@ remote effective model cache fingerprint와 실제 SentenceTransformer HTTP E2E�
 Phase 5 첫 slice:
 
 1. [x] pipeline run 생성·상태·취소·artifact·query 공개 schema를 OpenAPI v1로 확정한다.
-2. [ ] API request가 `PipelineRunRequest`로 변환되고 CLI와 같은 `PipelineApplicationService`를 호출하는
+2. [x] API request가 `PipelineRunRequest`로 변환되고 CLI와 같은 `PipelineApplicationService`를 호출하는
    영속 service boundary를 만든다.
-3. [ ] fake runtime으로 create/status/cancel/result와 idempotency contract를 network-free 테스트한다.
+3. [x] fake runtime으로 create/status/cancel/result와 idempotency contract를 network-free 테스트한다.
+
+영속 service 구현 범위:
+
+- `PipelineRunService`가 create/status/cancel/artifact use case와 background task/cancellation을 소유한다.
+- `LocalPipelineRunRepository`가 공개 snapshot과 idempotency fingerprint를 원자적 JSON으로 저장한다.
+- `LocalMediaCatalog`가 absolute path, traversal과 root 밖 symlink target을 거부한다.
+- `LocalPipelineProgressReader`가 Engine run/stage manifest를 읽어 현재 단계·attempt·warning·부분 artifact를
+  공개 snapshot에 투영한다.
+- process restart 후 남은 queued/running snapshot은 `RUN_INTERRUPTED` terminal failure로 조정한다.
 
 ## 6. 알려진 중요 문제
 
@@ -311,6 +320,18 @@ Phase 5 첫 slice:
 
 최신 기록을 위에 추가한다. 긴 구현 설명은 PR이나 ADR에 두고 여기에는 다음 세션이 재개하는 데
 필요한 정보만 적는다.
+
+### 2026-08-12 — Phase 5 공개 계약과 영속 PipelineRun service
+
+- 목표: 외부 caller가 로컬 경로 없이 pipeline run을 만들고 프로세스와 분리된 상태를 조회
+- 완료: Pipeline OpenAPI v1, ADR-0025, 원자적 API snapshot repository, media catalog,
+  create/status/cancel/artifact use case, Engine manifest 진행률 투영과 restart reconciliation
+- 주요 결정: 공개 입력은 `media_id`, 결과는 `artifact://`; header/body 멱등성 키를 일치시키고
+  restart 중 비종료 local run은 자동 재실행 대신 `RUN_INTERRUPTED`로 종료
+- 검증: `.venv/bin/python -m pytest` — 331 passed, 13 deselected; compileall과 diff check 성공
+- 호환성: 기존 pipeline CLI와 Engine 계약은 변경하지 않음; 초기 reference service는 단일 process이고
+  media는 사전에 catalog root에 등록되어야 하며 직접 upload/분산 queue는 후속 adapter 범위
+- 다음 작업: stdlib REST adapter, bearer/body limit/error mapping과 `serve_pipeline.py` composition/CLI
 
 ### 2026-08-12 — Phase 4 production inference server와 완료 검증
 
