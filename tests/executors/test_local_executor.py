@@ -8,7 +8,9 @@ import pytest
 
 from video_preprocess.domain import StageResult, StageStatus, StageTask
 from video_preprocess.executors import (
+    CancellationToken,
     DuplicateSubmissionError,
+    ExecutionControl,
     ExecutionHandle,
     ExecutionState,
     IdempotencyConflictError,
@@ -140,6 +142,28 @@ def test_sync_runner_executes_off_event_loop_thread() -> None:
 
         assert result.status is StageStatus.SUCCEEDED
         assert runner_threads[0] != loop_thread
+
+    asyncio.run(scenario())
+
+
+def test_executor_passes_execution_control_to_aware_runner() -> None:
+    async def scenario():
+        seen = []
+
+        async def runner(task, control):
+            seen.append(control)
+            return make_result(task)
+
+        executor = LocalExecutor(
+            StageBindingRegistry([("test_stage", runner)])
+        )
+        control = ExecutionControl(timeout_sec=12.5)
+        result = await executor.result(
+            await executor.submit(make_task(), control=control)
+        )
+
+        assert result.status is StageStatus.SUCCEEDED
+        assert seen == [control]
 
     asyncio.run(scenario())
 
@@ -336,6 +360,51 @@ def test_cancel_running_task_discards_runner_result() -> None:
 
         assert result.status is StageStatus.CANCELLED
         assert (await executor.status(handle)).state is ExecutionState.CANCELLED
+
+    asyncio.run(scenario())
+
+
+def test_cancellation_token_skips_queued_and_notifies_running_runner() -> None:
+    async def scenario():
+        token = CancellationToken()
+        token.cancel()
+        queued_calls = 0
+
+        async def queued_runner(task, control):
+            nonlocal queued_calls
+            queued_calls += 1
+            return make_result(task)
+
+        queued_executor = LocalExecutor(
+            StageBindingRegistry([("test_stage", queued_runner)])
+        )
+        queued = await queued_executor.submit(
+            make_task(),
+            control=ExecutionControl(cancellation=token),
+        )
+        queued_result = await queued_executor.result(queued)
+
+        started = asyncio.Event()
+        observed = asyncio.Event()
+
+        async def running_runner(task, control):
+            started.set()
+            await control.cancellation.wait()
+            observed.set()
+            return make_result(task)
+
+        running_executor = LocalExecutor(
+            StageBindingRegistry([("test_stage", running_runner)])
+        )
+        running = await running_executor.submit(make_task())
+        await started.wait()
+        await running_executor.cancel(running)
+        running_result = await running_executor.result(running)
+
+        assert queued_result.status is StageStatus.CANCELLED
+        assert queued_calls == 0
+        assert observed.is_set()
+        assert running_result.status is StageStatus.CANCELLED
 
     asyncio.run(scenario())
 

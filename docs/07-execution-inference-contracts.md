@@ -337,7 +337,12 @@ Executor는 `StageTask` 실행 위치를 추상화한다.
 
 ```python
 class Executor(Protocol):
-    async def submit(self, task: StageTask) -> ExecutionHandle: ...
+    async def submit(
+        self,
+        task: StageTask,
+        *,
+        control: ExecutionControl | None = None,
+    ) -> ExecutionHandle: ...
     async def status(self, handle: ExecutionHandle) -> ExecutionStatus: ...
     async def result(self, handle: ExecutionHandle) -> StageResult: ...
     async def cancel(self, handle: ExecutionHandle) -> None: ...
@@ -357,9 +362,15 @@ class Executor(Protocol):
   반환된 결과를 폐기해 `cancelled`로 완료한다.
 - ML 모델 인스턴스, Stage 순서와 retry 정책은 관리하지 않는다.
 
+`ExecutionControl`은 manifest에 직렬화하지 않는 attempt별 실행 문맥이며 선택적 `timeout_sec`와
+thread-safe `CancellationToken`을 갖는다. control-aware Stage runner는 `(task, control)`을 받고 기존
+runner는 `(task)` 호출을 유지한다. LocalExecutor cancel은 token을 먼저 설정하며 queued runner는
+호출하지 않고 running runner는 cooperative signal을 관찰할 수 있다. token을 무시하는 sync/native
+호출은 안전하게 강제 종료하지 않고 반환 결과를 폐기하는 기존 경계를 유지한다.
+
 현재 handle/job은 in-memory이며 같은 service event loop lifecycle에서 사용한다. Engine의
-run/stage terminal manifest는 저장되지만 Executor handle status는 저장하지 않는다. Stage별 timeout,
-cancellation token과 persisted job status는 후속 slice다. 결정 근거는
+run/stage terminal manifest는 저장되지만 Executor handle status는 저장하지 않는다. Engine의 Stage별
+timeout/cancel orchestration과 persisted job status는 후속 slice다. 결정 근거는
 [`ADR-0010`](./adr/0010-async-sequential-local-executor.md)에 기록한다.
 
 ### 5.2 RemoteExecutor

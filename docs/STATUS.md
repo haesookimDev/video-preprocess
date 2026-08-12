@@ -128,6 +128,7 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - [x] Application Service/CLI cache-aware read-only dry-run
 - [x] local provider effective model fingerprint resolver
 - [x] global cache index와 run 간 content-addressed 재사용
+- [x] Executor `ExecutionControl`과 cooperative cancellation token 전달
 
 ## 4. 아직 구현되지 않은 작업
 
@@ -281,6 +282,17 @@ dry-run은 read-only Store와 실제 cache evaluator를 사용하며 model finge
 
 최신 기록을 위에 추가한다. 긴 구현 설명은 PR이나 ADR에 두고 여기에는 다음 세션이 재개하는 데
 필요한 정보만 적는다.
+
+### 2026-08-12 — Phase 3 Executor cooperative cancellation control
+
+- 목표: Engine policy가 deadline과 취소 신호를 Stage runner까지 전달할 비직렬화 실행 문맥 추가
+- 완료: `ExecutionControl`, thread-safe `CancellationToken`, control-aware runner 호출과 legacy
+  one-argument runner 호환 구현
+- 주요 결정: cancel은 queued 실행을 시작하지 않고 running sync/native 호출은 강제 종료하지 않으며
+  cooperative token을 먼저 전달한 뒤 반환 결과를 폐기
+- 검증: Executor 계약/구현 테스트 22개 통과; queued pre-cancel과 running token 관찰 확인
+- 호환성: 기존 `submit(task)`와 `(task)` Stage runner를 그대로 지원하며 control은 manifest 비포함
+- 다음 작업: Engine Stage timeout/cancel orchestration과 bounded retry attempts
 
 ### 2026-08-12 — Phase 3 Run Store global cache index
 

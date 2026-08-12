@@ -2,6 +2,8 @@
 
 from .bindings import StageBindingRegistry, StageRunner
 from .contracts import (
+    CancellationToken,
+    ExecutionControl,
     ExecutionHandle,
     ExecutionState,
     ExecutionStatus,
@@ -20,6 +22,8 @@ from .local import LocalExecutor
 __all__ = [
     "DuplicateStageBindingError",
     "DuplicateSubmissionError",
+    "CancellationToken",
+    "ExecutionControl",
     "ExecutionHandle",
     "ExecutionState",
     "ExecutionStatus",

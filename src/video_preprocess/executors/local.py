@@ -10,7 +10,12 @@ from dataclasses import dataclass
 from video_preprocess.domain import StageResult, StageStatus, StageTask
 
 from .bindings import StageBindingRegistry, StageRunner
-from .contracts import ExecutionHandle, ExecutionState, ExecutionStatus
+from .contracts import (
+    ExecutionControl,
+    ExecutionHandle,
+    ExecutionState,
+    ExecutionStatus,
+)
 from .errors import (
     DuplicateSubmissionError,
     IdempotencyConflictError,
@@ -24,6 +29,7 @@ class _Job:
     handle: ExecutionHandle
     runner: StageRunner
     completion: asyncio.Future[StageResult]
+    control: ExecutionControl
     state: ExecutionState = ExecutionState.QUEUED
     cancel_requested: bool = False
 
@@ -41,7 +47,12 @@ class LocalExecutor:
         self._attempts: dict[tuple[str, int], str] = {}
         self._background_tasks: set[asyncio.Task[None]] = set()
 
-    async def submit(self, task: StageTask) -> ExecutionHandle:
+    async def submit(
+        self,
+        task: StageTask,
+        *,
+        control: ExecutionControl | None = None,
+    ) -> ExecutionHandle:
         if not isinstance(task, StageTask):
             raise TypeError("task must be a StageTask")
         runner = self.bindings.get(task.stage)
@@ -53,6 +64,11 @@ class LocalExecutor:
                     "idempotency key was reused for a different StageTask"
                 )
             return existing.handle
+
+        if control is None:
+            control = ExecutionControl()
+        elif not isinstance(control, ExecutionControl):
+            raise TypeError("control must be an ExecutionControl or None")
 
         attempt_key = (task.stage_run_id, task.attempt)
         existing_attempt_id = self._attempts.get(attempt_key)
@@ -73,6 +89,7 @@ class LocalExecutor:
             handle=handle,
             runner=runner,
             completion=completion,
+            control=control,
         )
         self._jobs[execution_id] = job
         self._idempotency[task.idempotency_key] = execution_id
@@ -87,7 +104,9 @@ class LocalExecutor:
         return ExecutionStatus(
             handle=job.handle,
             state=job.state,
-            cancel_requested=job.cancel_requested,
+            cancel_requested=(
+                job.cancel_requested or job.control.cancellation.cancelled
+            ),
         )
 
     async def result(self, handle: ExecutionHandle) -> StageResult:
@@ -99,6 +118,7 @@ class LocalExecutor:
         if job.state.terminal:
             return
         job.cancel_requested = True
+        job.control.cancellation.cancel()
         if job.state is ExecutionState.QUEUED:
             self._finish(job, self._cancelled_result(job.task))
 
@@ -107,12 +127,16 @@ class LocalExecutor:
             async with self._serial_lock:
                 if job.completion.done():
                     return
-                if job.cancel_requested:
+                if job.cancel_requested or job.control.cancellation.cancelled:
                     self._finish(job, self._cancelled_result(job.task))
                     return
                 job.state = ExecutionState.RUNNING
                 try:
-                    result = await self._call_runner(job.runner, job.task)
+                    result = await self._call_runner(
+                        job.runner,
+                        job.task,
+                        job.control,
+                    )
                 except Exception as exc:
                     result = self._failed_result(
                         job.task,
@@ -120,7 +144,7 @@ class LocalExecutor:
                         "stage runner raised an exception",
                         warning=f"error_type={type(exc).__name__}",
                     )
-                if job.cancel_requested:
+                if job.cancel_requested or job.control.cancellation.cancelled:
                     result = self._cancelled_result(job.task)
                 else:
                     result = self._normalize_result(job.task, result)
@@ -134,17 +158,35 @@ class LocalExecutor:
     async def _call_runner(
         runner: StageRunner,
         task: StageTask,
+        control: ExecutionControl,
     ) -> object:
         call = runner
+        arguments = LocalExecutor._runner_arguments(call, task, control)
         if not inspect.iscoroutinefunction(call):
             call_method = getattr(call, "__call__", None)
             if inspect.iscoroutinefunction(call_method):
-                return await call(task)
-            result = await asyncio.to_thread(call, task)
+                return await call(*arguments)
+            result = await asyncio.to_thread(call, *arguments)
             if inspect.isawaitable(result):
                 return await result
             return result
-        return await call(task)
+        return await call(*arguments)
+
+    @staticmethod
+    def _runner_arguments(
+        runner: StageRunner,
+        task: StageTask,
+        control: ExecutionControl,
+    ) -> tuple[object, ...]:
+        try:
+            signature = inspect.signature(runner)
+        except (TypeError, ValueError):
+            return (task,)
+        try:
+            signature.bind(task, control)
+        except TypeError:
+            return (task,)
+        return task, control
 
     @classmethod
     def _normalize_result(

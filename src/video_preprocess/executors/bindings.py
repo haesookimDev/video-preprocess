@@ -6,10 +6,18 @@ from collections.abc import Awaitable, Callable, Iterable
 
 from video_preprocess.domain import StageResult, StageTask
 
+from .contracts import ExecutionControl
+
 from .errors import DuplicateStageBindingError, UnknownStageBindingError
 
 
-StageRunner = Callable[[StageTask], StageResult | Awaitable[StageResult]]
+StageRunner = (
+    Callable[[StageTask], StageResult | Awaitable[StageResult]]
+    | Callable[
+        [StageTask, ExecutionControl],
+        StageResult | Awaitable[StageResult],
+    ]
+)
 
 
 class StageBindingRegistry:

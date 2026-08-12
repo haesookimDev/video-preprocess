@@ -47,6 +47,11 @@ cancel 흐름을 사용하려면 먼저 local 실행 위치를 Port 뒤로 옮�
   종료하지 않으며 runner가 돌아오면 결과를 폐기하고 `CANCELLED`로 완료한다.
 - Stage cancellation token과 timeout 전달은 후속 Engine policy slice에서 추가한다.
 
+후속 Phase 3 slice에서 `ExecutionControl`과 thread-safe `CancellationToken`을 Executor submit의
+optional context로 추가했다. control-aware runner는 `(task, control)`, 기존 runner는 `(task)`로
+호출한다. LocalExecutor cancel은 token을 먼저 설정하지만 sync/native 호출을 강제 종료하지 않는
+원래 안전 경계는 유지한다. timeout 판정과 retry는 Engine policy가 소유한다.
+
 ## 고려한 대안
 
 ### `submit`이 StageResult를 반환할 때까지 대기
