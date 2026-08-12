@@ -1,8 +1,8 @@
 # 개발 상태와 세션 인수인계
 
 - 마지막 갱신: **2026-08-12**
-- 현재 단계: **Phase 3 — Pipeline Engine과 LocalExecutor**
-- 다음 작업: **Phase 3 전체 회귀와 완료 기준 정리**
+- 현재 단계: **Phase 3 완료 — Phase 4 시작 대기**
+- 다음 작업: **Phase 4 HTTP Inference OpenAPI v1과 fake server contract 확정**
 
 이 문서는 개발 진행 상황의 단일 진입점이다. 새로운 세션은 이 문서를 먼저 읽고, 실제 코드와
 Git 상태를 확인한 뒤 작업을 시작한다.
@@ -165,19 +165,22 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 문서가 존재한다고 구현된 것으로 간주하지 않는다. 완료 여부는 코드와 자동 테스트를 기준으로
 이 체크리스트에서 갱신한다.
 
-## 5. 다음 작업: cache-aware dry-run과 model fingerprint slice
+## 5. 다음 작업: Phase 4 HTTP Inference 계약 slice
 
 권장 순서:
 
-1. [x] Engine의 task/cache preview가 실제 실행과 동일한 task identity·입력 전파 규칙을 사용하도록 공개 API 추가
-2. [x] local provider의 현재 effective provider/model/revision/runtime을 안전하게 resolve하는 adapter 구현
-3. [x] `--dry-run`에 Stage별 `hit/miss/forced/blocked`, stable reason과 예상 실행 여부 출력
-4. [x] model 미로드·credential 변경 시 거짓 hit 없이 reason을 표시하는 contract test 추가
-5. [x] global cache index와 run 간 content-addressed manifest 조회를 구현
+1. `docs/openapi/inference-v1.yaml`에 health, capability, async job, cancel과 공통 오류 schema를 고정한다.
+2. 공유 Artifact Store URI, idempotency key, deadline과 effective model metadata의 전송 규칙을
+   `docs/07-execution-inference-contracts.md`와 새 ADR에 확정한다.
+3. 외부 network나 실제 모델 없이 실행되는 local fake model server contract fixture를 추가한다.
+4. `src/video_preprocess/inference/`에 HTTP Provider를 구현하고 timeout, 429, 5xx, 인증 실패와
+   cancellation을 공통 `InferenceError`로 정규화한다.
+5. embedding alias를 첫 원격화 대상으로 local/HTTP 설정 전환과 cache fingerprint E2E를 검증한다.
 
-기본 CLI 전환은 완료됐고, `pipeline.runner`는 명시적 compatibility 구현으로만 남아 있다.
-dry-run은 read-only Store와 실제 cache evaluator를 사용하며 model fingerprint를 사전 확정할 수
-없는 Stage는 `EFFECTIVE_MODELS_UNAVAILABLE` miss로 표시한다.
+Phase 3는 11단계 Engine 실행, LocalExecutor, 선택 실행, read-only cache preview, 같은 Store의 run 간
+cache, cooperative timeout/cancel과 bounded retry까지 완료했다. `pipeline.runner`는 명시적
+compatibility 구현으로만 남아 있으며 Phase 4에서도 CLI와 Stage가 concrete provider를 선택하지 않는
+경계를 유지한다.
 
 ## 6. 알려진 중요 문제
 
@@ -285,6 +288,21 @@ dry-run은 read-only Store와 실제 cache evaluator를 사용하며 model finge
 
 최신 기록을 위에 추가한다. 긴 구현 설명은 PR이나 ADR에 두고 여기에는 다음 세션이 재개하는 데
 필요한 정보만 적는다.
+
+### 2026-08-12 — Phase 3 완료
+
+- 목표: Engine·LocalExecutor 전환의 전체 회귀와 Phase 3 완료 조건 확정
+- 완료: 11단계 기본 CLI, read-only cache preview, run 간 cache, 실행 정책과 기존 출력/query 호환을
+  최종 검증하고 Phase 4 HTTP Inference 계약을 다음 작업으로 지정
+- 검증: `.venv/bin/python -m pytest` — 282 passed; `.venv/bin/pip check` — 성공;
+  `src/run_pipeline.py --preflight-only` — 전체 OK
+- 실제 회귀: offline `sample.mp4 --force --run-id phase3-policy-final` — 11단계 `ok`;
+  새 run dry-run — 11단계 모두 global cache hit; query `음성 구간 검출 --topk 2` — 씬 02 top-1;
+  SQLite `PRAGMA integrity_check` — `ok`
+- 호환성: 기존 단계별 JSON·Markdown·SQLite 경로와 positional CLI 유지; run summary에 attempt가
+  추가됐고 기본 timeout 없음·최대 1 attempt라 기존 실행 정책 유지
+- 알려진 환경 경고: macOS OpenCV/PyAV FFmpeg dylib 중복 경고는 P2로 유지
+- 다음 작업: Phase 4 OpenAPI v1, artifact/idempotency/error 계약과 local fake server fixture
 
 ### 2026-08-12 — Phase 3 Engine timeout·cancel·retry policy
 

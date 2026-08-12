@@ -1,7 +1,7 @@
 # 엔진·실행기 분리 개발 로드맵
 
-상태: **진행 중 — Phase 3**
-기준일: 2026-08-06  
+상태: **Phase 3 완료 — Phase 4 시작 대기**
+기준일: 2026-08-12
 대상 설계: [`06-target-architecture.md`](./06-target-architecture.md)  
 공개 계약: [`07-execution-inference-contracts.md`](./07-execution-inference-contracts.md)
 
@@ -245,6 +245,11 @@ Phase 2는 2026-08-06에 VAD까지 Local Provider로 이동하고 sample 회귀�
 - `--dry-run`이 실행·스킵과 그 이유를 보여준다.
 - 영향받는 단계와 하위 단계만 다시 실행된다.
 - 실패 중간 산출물이 이전 성공 결과를 덮어쓰지 않는다.
+
+Phase 3는 2026-08-12에 완료했다. 기본 테스트 282개, offline sample 11단계 강제 실행,
+새 run의 11단계 global cache hit, query top-1 회귀와 SQLite integrity를 확인했다. Stage timeout,
+run cancellation과 분류된 bounded retry는 attempt별 manifest를 보존하고 기본값에서는 기존 실행
+동작을 유지한다. 다음 작업은 Phase 4의 OpenAPI v1과 local fake model server contract다.
 
 ## 8. Phase 4: HTTP Inference Provider
 

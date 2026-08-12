@@ -182,7 +182,7 @@ flowchart LR
 검증하고 stable name 사전순 tie-break로 deterministic topological plan을 만든다. exact,
 from, to 선택과 plan 밖에서 필요한 `boundary_inputs` 규칙은
 [`ADR-0009`](./adr/0009-deterministic-stage-registry-and-dag-planner.md)에 기록한다. 기존 runner
-연결은 아직 하지 않았다.
+대신 01~11 compatibility binding이 이 plan을 실행하며, 기존 runner는 호환 구현으로만 남아 있다.
 
 `LocalExecutor`는 injected Stage runner를 `StageTask`로 submit하고 단일 local execution slot에서
 순차 실행한다. async handle, idempotency, 결과 identity와 취소 경계는
@@ -210,7 +210,7 @@ LocalExecutor, 11-stage compatibility binding과 local inference service를 조�
 [`ADR-0017`](./adr/0017-pipeline-application-service-and-local-runtime.md)에 기록한다.
 
 기본 CLI도 이 Application Service를 호출하며 stage/from/to/force 선택을 request로만 변환한다.
-local workspace 기반 run 재개와 basic dry-run 결정은
+local workspace 기반 run 재개와 cache-aware read-only dry-run 결정은
 [`ADR-0018`](./adr/0018-engine-backed-cli-and-local-run-resume.md)에 기록한다. API와 queue adapter는
 같은 service boundary에 추가하고 Engine이나 Stage를 직접 조립하지 않는다.
 
