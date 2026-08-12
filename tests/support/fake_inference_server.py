@@ -117,6 +117,14 @@ class FakeInferenceService:
             max_batch_size=128,
             supports_cancellation=True,
             supports_async_jobs=True,
+            effective_models={
+                "embedding.remote": EffectiveModel(
+                    provider="http.embedding",
+                    name="example/embedding",
+                    revision="fake-commit-1",
+                    runtime="fake-inference/1.0",
+                )
+            },
         )
         self.health = ProviderHealth(
             provider="fake.http.embedding",

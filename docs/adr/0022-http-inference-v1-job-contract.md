@@ -45,6 +45,8 @@ response로만 표현하면 polling, 취소와 중복 제출 복구가 어렵다
 ### 결과와 오류
 
 - 성공 응답은 effective provider, model, resolved revision과 선택적 runtime을 반드시 포함한다.
+- capability는 추론 없이 확정 가능한 alias별 effective model만 `effective_models`에 포함하며,
+  미확정 alias는 생략해 cache가 안전하게 miss하도록 한다.
 - HTTP 오류 body도 공통 `InferenceFailure`이며 안정적인 code와 retryable 여부를 보존한다.
 - 429와 일시적 5xx는 `Retry-After`를 사용할 수 있다. 인증, 권한, 입력, idempotency conflict는
   자동 재시도하지 않는다.

@@ -625,6 +625,7 @@ class ProviderCapabilities:
     max_artifact_bytes: int | None = None
     supports_cancellation: bool = False
     supports_async_jobs: bool = False
+    effective_models: Mapping[str, EffectiveModel] = field(default_factory=dict)
     schema_version: str = SCHEMA_VERSION
 
     def __post_init__(self) -> None:
@@ -676,6 +677,28 @@ class ProviderCapabilities:
                 raise ContractValidationError(
                     field_name, "must be a boolean"
                 )
+        effective_models = require_mapping(
+            self.effective_models,
+            "effective_models",
+        )
+        normalized_models = {}
+        for alias, model in effective_models.items():
+            normalized_alias = require_string(
+                alias,
+                "effective_models.key",
+            )
+            if normalized_alias not in self.model_aliases:
+                raise ContractValidationError(
+                    f"effective_models.{normalized_alias}",
+                    "alias must be declared in model_aliases",
+                )
+            if not isinstance(model, EffectiveModel):
+                raise ContractValidationError(
+                    f"effective_models.{normalized_alias}",
+                    "must be an EffectiveModel instance",
+                )
+            normalized_models[normalized_alias] = model
+        object.__setattr__(self, "effective_models", normalized_models)
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -689,6 +712,10 @@ class ProviderCapabilities:
             "max_artifact_bytes": self.max_artifact_bytes,
             "supports_cancellation": self.supports_cancellation,
             "supports_async_jobs": self.supports_async_jobs,
+            "effective_models": {
+                alias: model.to_dict()
+                for alias, model in self.effective_models.items()
+            },
         }
 
     @classmethod
@@ -724,6 +751,18 @@ class ProviderCapabilities:
                 "supports_cancellation", False
             ),
             supports_async_jobs=mapping.get("supports_async_jobs", False),
+            effective_models={
+                alias: EffectiveModel.from_dict(
+                    require_mapping(
+                        model,
+                        f"effective_models.{alias}",
+                    )
+                )
+                for alias, model in require_mapping(
+                    mapping.get("effective_models", {}),
+                    "effective_models",
+                ).items()
+            },
         )
 
 

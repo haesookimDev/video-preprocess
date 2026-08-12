@@ -100,6 +100,9 @@ def test_health_and_capabilities_use_domain_contracts() -> None:
     capabilities = ProviderCapabilities.from_dict(capability_body)
     assert capabilities.supports_async_jobs
     assert capabilities.supports_cancellation
+    assert capabilities.effective_models["embedding.remote"].revision == (
+        "fake-commit-1"
+    )
 
 
 def test_submit_poll_and_terminal_response_flow() -> None:

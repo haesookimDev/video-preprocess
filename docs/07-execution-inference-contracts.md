@@ -624,6 +624,7 @@ Stage slot별 `ModelExecution`으로 변환하며 한 slot이라도 미확정이
 - 동기·비동기 처리 방식
 - contract version
 - 현재 서비스 가능 여부
+- alias별 현재 effective provider·model·revision·runtime
 
 Engine은 모델별 세부 capability를 해석하지 않는다. Gateway가 binding 검증과 provider 선택을
 담당하고, 실행 전에 지원하지 않는 조합을 명확하게 거부한다.
@@ -653,6 +654,8 @@ DELETE /v1/inference-jobs/{request_id}
   늘리지 않는다.
 - `DELETE`는 cooperative cancel이며 같은 요청 반복과 terminal job에 idempotent하다.
 - success response의 effective provider/model/resolved revision/runtime은 Python 계약과 동일하다.
+- `/capabilities.effective_models`는 추론을 시작하지 않고 확정 가능한 alias fingerprint만 포함한다.
+  누락된 alias는 안전한 cache miss이며 client가 요청값을 effective revision으로 추정하지 않는다.
 
 Artifact 전송은 v1에서 공유 Store 방식만 지원한다. 대용량 입력은 publish된 `artifact://` 참조로
 보내고 서버는 허용 namespace, size와 checksum을 검증한다. `file://`, 호스트 절대 경로, base64 media,

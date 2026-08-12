@@ -149,6 +149,14 @@ def test_capabilities_and_health_round_trip() -> None:
         input_media_types=["text/plain"],
         features=["normalized_vectors"],
         max_batch_size=128,
+        effective_models={
+            "embedding.default": EffectiveModel(
+                provider="local.embedding",
+                name="example/model",
+                revision="commit-123",
+                runtime="sentence-transformers/5.0",
+            )
+        },
     )
     health = ProviderHealth(
         provider="local.embedding",
@@ -158,3 +166,21 @@ def test_capabilities_and_health_round_trip() -> None:
 
     assert ProviderCapabilities.from_dict(capabilities.to_dict()) == capabilities
     assert ProviderHealth.from_dict(health.to_dict()) == health
+
+
+def test_capabilities_reject_effective_model_for_undeclared_alias() -> None:
+    with pytest.raises(ContractValidationError) as exc_info:
+        ProviderCapabilities(
+            provider="http.embedding",
+            tasks=[InferenceTask.TEXT_EMBEDDING],
+            model_aliases=["embedding.remote"],
+            effective_models={
+                "embedding.missing": EffectiveModel(
+                    provider="http.embedding",
+                    name="example/model",
+                    revision="commit-123",
+                )
+            },
+        )
+
+    assert exc_info.value.field == "effective_models.embedding.missing"

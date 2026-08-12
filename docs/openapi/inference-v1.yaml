@@ -548,6 +548,7 @@ components:
         - max_artifact_bytes
         - supports_cancellation
         - supports_async_jobs
+        - effective_models
       properties:
         schema_version:
           $ref: "#/components/schemas/SchemaVersion"
@@ -595,6 +596,11 @@ components:
           type: boolean
         supports_async_jobs:
           type: boolean
+        effective_models:
+          type: object
+          description: Alias fingerprints resolvable without starting model inference.
+          additionalProperties:
+            $ref: "#/components/schemas/EffectiveModel"
       example:
         schema_version: "1"
         provider: http.embedding
@@ -606,6 +612,12 @@ components:
         max_artifact_bytes: null
         supports_cancellation: true
         supports_async_jobs: true
+        effective_models:
+          embedding.remote:
+            provider: http.embedding
+            name: paraphrase-multilingual-MiniLM-L12-v2
+            revision: commit-abc123
+            runtime: sentence-transformers/5.1
     ProviderHealth:
       type: object
       additionalProperties: false

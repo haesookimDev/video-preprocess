@@ -291,6 +291,15 @@ compatibility 구현으로만 남아 있으며 Phase 4에서도 CLI와 Stage가 
 최신 기록을 위에 추가한다. 긴 구현 설명은 PR이나 ADR에 두고 여기에는 다음 세션이 재개하는 데
 필요한 정보만 적는다.
 
+### 2026-08-12 — Phase 4 remote effective model capability
+
+- 목표: HTTP deployment의 현재 model revision을 실행 전 안전하게 cache evaluator에 제공
+- 완료: `ProviderCapabilities.effective_models` alias map과 OpenAPI schema, fake server fingerprint
+- 주요 결정: model inference 없이 증명할 수 있는 alias만 포함하고 미확정 alias는 생략해 safe miss
+- 검증: domain/OpenAPI 기본 contract test와 fake HTTP capability round-trip
+- 호환성: 선택 필드 기본값은 빈 map이며 기존 Local Provider 생성자는 변경 없이 동작
+- 다음 작업: HTTP Provider가 capability fingerprint를 `effective_model()`로 노출
+
 ### 2026-08-12 — Phase 4 local fake inference server
 
 - 목표: 외부 endpoint·model 없이 OpenAPI v1의 실제 HTTP 상호작용을 반복 검증할 fixture 구축
