@@ -228,6 +228,11 @@ components:
         caption_model: {type: string, minLength: 1}
         embed_model: {type: string, minLength: 1}
         diarize_model: {type: string, minLength: 1}
+        max_context_tokens:
+          type: [integer, 'null']
+          minimum: 128
+          default: null
+        context_tokenizer_model: {type: [string, 'null'], minLength: 1}
     ExecutionPolicy:
       type: object
       additionalProperties: false
@@ -336,11 +341,20 @@ components:
           maximum: 1
           default: 0.35
           description: Minimum cosine similarity for semantic-only matches.
+        max_context_tokens:
+          type: integer
+          minimum: 128
+          default: 4096
+        adjacent_scenes:
+          type: integer
+          minimum: 0
+          maximum: 5
+          default: 1
     PipelineQueryResponse:
       type: object
       additionalProperties: false
       required: [schema_version, run_id, query, normalized_query, no_answer,
-                 context, matches]
+                 context, context_stats, matches]
       properties:
         schema_version: {type: string, const: '1'}
         run_id: {type: string}
@@ -348,6 +362,7 @@ components:
         normalized_query: {type: string}
         no_answer: {type: boolean}
         context: {type: string}
+        context_stats: {$ref: '#/components/schemas/ContextStats'}
         matches:
           type: array
           items: {$ref: '#/components/schemas/QueryMatch'}
@@ -371,6 +386,32 @@ components:
         reasons:
           type: array
           items: {type: string, enum: [keyword, semantic]}
+    ContextStats:
+      type: object
+      additionalProperties: false
+      required: [tokenizer_model, max_tokens, token_count,
+                 requested_scene_ids, expanded_scene_ids,
+                 included_scene_ids, excluded_scene_ids,
+                 truncated_scene_ids]
+      properties:
+        tokenizer_model: {type: string}
+        max_tokens: {type: integer, minimum: 1}
+        token_count: {type: integer, minimum: 0}
+        requested_scene_ids:
+          type: array
+          items: {type: integer, minimum: 1}
+        expanded_scene_ids:
+          type: array
+          items: {type: integer, minimum: 1}
+        included_scene_ids:
+          type: array
+          items: {type: integer, minimum: 1}
+        excluded_scene_ids:
+          type: array
+          items: {type: integer, minimum: 1}
+        truncated_scene_ids:
+          type: array
+          items: {type: integer, minimum: 1}
     ArtifactRef:
       type: object
       additionalProperties: false

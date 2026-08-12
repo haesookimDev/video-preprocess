@@ -520,10 +520,10 @@ def _final_definitions(
         ),
         LegacyStageDefinition(
             name="11_context",
-            stage_version="1.0.0",
+            stage_version="1.1.0",
             module=modules["11_context"],
             inputs=(metadata, diarization, timeline),
-            config_fields=(),
+            config_fields=("max_context_tokens", "context_tokenizer_model"),
             model_bindings={},
             output_resolver=_context_outputs,
         ),

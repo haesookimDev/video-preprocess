@@ -65,6 +65,16 @@ class QueryService:
             query=request.query,
             context="assembled context",
             matches=(),
+            context_stats={
+                "tokenizer_model": "fake",
+                "max_tokens": 4096,
+                "token_count": 2,
+                "requested_scene_ids": [],
+                "expanded_scene_ids": [],
+                "included_scene_ids": [],
+                "excluded_scene_ids": [],
+                "truncated_scene_ids": [],
+            },
         )
 
 
@@ -158,5 +168,15 @@ def test_http_service_maps_query_result() -> None:
             "normalized_query": "질의",
             "no_answer": True,
             "context": "assembled context",
-        "matches": [],
+            "context_stats": {
+                "tokenizer_model": "fake",
+                "max_tokens": 4096,
+                "token_count": 2,
+                "requested_scene_ids": [],
+                "expanded_scene_ids": [],
+                "included_scene_ids": [],
+                "excluded_scene_ids": [],
+                "truncated_scene_ids": [],
+            },
+            "matches": [],
     }

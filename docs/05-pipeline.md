@@ -68,8 +68,8 @@ flowchart TD
 | 08_captions | keyframe ArtifactRef batch를 VLM Provider에 입력해 캡션 생성. 이미지(수백~수천 토큰)를 텍스트(수십 토큰)로 압축 | Local BLIP Provider `image-captioning-base` | 3.0s |
 | 09_timeline | `[start,end)` 씬을 골격으로 병합. 전사→씬은 최대 겹침 단일 배정, 동률은 중점 포함 구간, 전사→화자도 같은 규칙 적용 | 규칙 기반 | 0.0s |
 | 10_index | 씬 카드 텍스트(캡션+전사)를 ① NFKC 정규화 단어·문자 2~3-gram FTS5 역색인 ② 정규화 벡터로 이중 저장 | 주입된 `embedding.default` Local/HTTP Provider, SQLite FTS5 | local 기준 0.2s |
-| 11_context | 포맷 규칙 전문 + 메타데이터 + 씬 목차 + 씬 카드 전문을 하나의 자기완결 문서로 조립 | 규칙 기반 | 0.0s |
-| query.py | 키워드(bm25)·하한 통과 의미(코사인) 순위를 RRF(k=60)로 융합 → top-k 또는 no-answer와 근거 JSON | index와 같은 `embedding.default` Local/HTTP Provider | local cold start ~10s |
+| 11_context | 포맷 규칙·메타데이터·씬 카드를 조립하고 설정 시 target tokenizer 실제 token budget에 맞춰 축약·제외 | 규칙 기반 + tokenizer | 0.0s (+ 첫 tokenizer load) |
+| query.py | hybrid top-k/no-answer 뒤 인접 씬을 dedup 확장하고 실제 token budget에서 우선순위별 축약·제외 | index와 같은 `embedding.default` Local/HTTP Provider + target tokenizer | local cold start ~10s |
 
 ## 설계 대응 관계
 
@@ -119,6 +119,11 @@ PipelineEngine→LocalExecutor에서 실행한다. 입력 영상은 cache integr
 # Stage timeout과 transient failure 최대 시도 수
 .venv/bin/python src/run_pipeline.py samples/sample.mp4 \
   --stage-timeout-sec 900 --max-stage-attempts 2 --retry-backoff-sec 1
+
+# target tokenizer의 실제 2048 token 이하로 final context 제한
+.venv/bin/python src/run_pipeline.py samples/sample.mp4 \
+  --max-context-tokens 2048 \
+  --context-tokenizer-model sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
 ```
 
 `--force`는 선택된 plan 전체를 강제하고 `--force-stage`는 지정 단계만 강제한다. dry-run은

@@ -1085,6 +1085,10 @@ def _validate_pipeline_settings(settings: PipelineSettings) -> None:
         value = getattr(settings, field_name)
         if isinstance(value, bool) or not isinstance(value, int) or value < 1:
             raise ValueError(f"{field_name} must be a positive integer")
+    if settings.max_context_tokens is not None:
+        value = settings.max_context_tokens
+        if isinstance(value, bool) or not isinstance(value, int) or value < 128:
+            raise ValueError("max_context_tokens must be at least 128 or None")
     for field_name in ("vad_min_silence_ms", "vad_speech_pad_ms"):
         value = getattr(settings, field_name)
         if isinstance(value, bool) or not isinstance(value, int) or value < 0:
@@ -1097,6 +1101,7 @@ def _validate_pipeline_settings(settings: PipelineSettings) -> None:
     ):
         _required_text(getattr(settings, field_name), field_name)
     _optional_text(settings.language, "language")
+    _optional_text(settings.context_tokenizer_model, "context_tokenizer_model")
 
 
 def _required_mapping(

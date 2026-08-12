@@ -18,6 +18,11 @@ from video_preprocess.inference import (
     create_configured_embedding_service,
 )
 from video_preprocess.retrieval import normalize_search_text, search_terms
+from video_preprocess.tokenization import (
+    HuggingFaceTokenCounter,
+    TokenCounter,
+    sentence_transformer_tokenizer_model,
+)
 
 from .pipeline_runs import PipelineRunService, PublicRunStatus
 
@@ -50,6 +55,8 @@ class PipelineQueryRequest:
     query: str
     top_k: int = 5
     min_similarity: float = 0.35
+    max_context_tokens: int = 4096
+    adjacent_scenes: int = 1
     schema_version: str = SCHEMA_VERSION
 
     def __post_init__(self) -> None:
@@ -79,6 +86,22 @@ class PipelineQueryRequest:
                 "min_similarity must be between -1 and 1"
             )
         object.__setattr__(self, "min_similarity", float(self.min_similarity))
+        if (
+            isinstance(self.max_context_tokens, bool)
+            or not isinstance(self.max_context_tokens, int)
+            or self.max_context_tokens < 128
+        ):
+            raise QueryServiceInputError(
+                "max_context_tokens must be at least 128"
+            )
+        if (
+            isinstance(self.adjacent_scenes, bool)
+            or not isinstance(self.adjacent_scenes, int)
+            or not 0 <= self.adjacent_scenes <= 5
+        ):
+            raise QueryServiceInputError(
+                "adjacent_scenes must be between 0 and 5"
+            )
 
     @classmethod
     def from_dict(
@@ -91,7 +114,12 @@ class PipelineQueryRequest:
         ):
             raise QueryServiceInputError("query request must be an object")
         required = {"schema_version", "query"}
-        allowed = required | {"top_k", "min_similarity"}
+        allowed = required | {
+            "top_k",
+            "min_similarity",
+            "max_context_tokens",
+            "adjacent_scenes",
+        }
         missing = sorted(required - set(data))
         unknown = sorted(set(data) - allowed)
         if missing:
@@ -108,6 +136,8 @@ class PipelineQueryRequest:
             query=data["query"],
             top_k=data.get("top_k", 5),
             min_similarity=data.get("min_similarity", 0.35),
+            max_context_tokens=data.get("max_context_tokens", 4096),
+            adjacent_scenes=data.get("adjacent_scenes", 1),
             schema_version=data["schema_version"],
         )
 
@@ -158,6 +188,7 @@ class PipelineQueryResult:
     query: str
     context: str
     matches: Sequence[QueryMatch]
+    context_stats: Mapping[str, object]
     normalized_query: str = ""
     no_answer: bool = False
     schema_version: str = SCHEMA_VERSION
@@ -176,6 +207,10 @@ class PipelineQueryResult:
         if not isinstance(self.no_answer, bool):
             raise TypeError("no_answer must be a boolean")
         object.__setattr__(self, "no_answer", self.no_answer or not normalized)
+        if not isinstance(self.context_stats, Mapping):
+            raise TypeError("context_stats must be a mapping")
+        stats = dict(self.context_stats)
+        object.__setattr__(self, "context_stats", stats)
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -185,6 +220,7 @@ class PipelineQueryResult:
             "normalized_query": self.normalized_query,
             "no_answer": self.no_answer,
             "context": self.context,
+            "context_stats": dict(self.context_stats),
             "matches": [match.to_dict() for match in self.matches],
         }
 
@@ -231,6 +267,7 @@ class LocalPipelineRunQueryResolver:
 
 
 EmbeddingFactory = Callable[[str, str | None], EmbeddingService]
+TokenCounterFactory = Callable[[str, str | None], TokenCounter]
 
 
 @dataclass(frozen=True, slots=True)
@@ -247,6 +284,12 @@ class SemanticHit:
     similarity: float
 
 
+@dataclass(frozen=True, slots=True)
+class ContextAssembly:
+    text: str
+    stats: Mapping[str, object]
+
+
 class QueryService:
     """Search one index and assemble context through shared inference."""
 
@@ -256,6 +299,8 @@ class QueryService:
         *,
         deployments: InferenceDeploymentSettings | None = None,
         embedding_factory: EmbeddingFactory | None = None,
+        context_tokenizer_model: str | None = None,
+        token_counter_factory: TokenCounterFactory | None = None,
         logger: logging.Logger | None = None,
     ) -> None:
         if not callable(getattr(target_resolver, "resolve", None)):
@@ -269,6 +314,22 @@ class QueryService:
             raise TypeError("embedding_factory must be callable")
         self._embedding_service_cache: dict[
             tuple[str, str | None], EmbeddingService
+        ] = {}
+        if context_tokenizer_model is not None and (
+            not isinstance(context_tokenizer_model, str)
+            or not context_tokenizer_model.strip()
+        ):
+            raise ValueError("context_tokenizer_model must be non-empty or None")
+        self.context_tokenizer_model = (
+            None
+            if context_tokenizer_model is None
+            else context_tokenizer_model.strip()
+        )
+        self.token_counter_factory = (
+            token_counter_factory or self._token_counter
+        )
+        self._token_counter_cache: dict[
+            tuple[str, str | None], TokenCounter
         ] = {}
         self.log = logger or logging.getLogger("video_preprocess.query")
 
@@ -332,7 +393,24 @@ class QueryService:
         except sqlite3.DatabaseError as exc:
             raise QueryServiceInputError("search index is invalid") from exc
         top_ids = [scene_id for scene_id, _ in selected if scene_id in rows]
-        context = assemble_context(output_root, top_ids)
+        tokenizer_model = self.context_tokenizer_model or (
+            sentence_transformer_tokenizer_model(model_name)
+        )
+        tokenizer_revision = (
+            requested_revision if self.context_tokenizer_model is None else None
+        )
+        token_counter = self._cached_token_counter(
+            tokenizer_model,
+            tokenizer_revision,
+        )
+        assembly = assemble_context_with_budget(
+            output_root,
+            top_ids,
+            token_counter=token_counter,
+            max_tokens=request.max_context_tokens,
+            adjacent_scenes=request.adjacent_scenes,
+        )
+        context = assembly.text
         keyword_by_id = {hit.scene_id: hit for hit in keyword_hits}
         semantic_by_id = {hit.scene_id: hit for hit in semantic_hits}
         matches = []
@@ -374,6 +452,7 @@ class QueryService:
             matches=matches,
             normalized_query=normalized_query,
             no_answer=not matches,
+            context_stats=assembly.stats,
         )
 
     def _embedding_service(
@@ -398,6 +477,25 @@ class QueryService:
             service = self.embedding_factory(model_name, revision)
             self._embedding_service_cache[key] = service
         return service
+
+    @staticmethod
+    def _token_counter(
+        model_name: str,
+        revision: str | None,
+    ) -> TokenCounter:
+        return HuggingFaceTokenCounter(model_name, revision=revision)
+
+    def _cached_token_counter(
+        self,
+        model_name: str,
+        revision: str | None,
+    ) -> TokenCounter:
+        key = (model_name, revision)
+        counter = self._token_counter_cache.get(key)
+        if counter is None:
+            counter = self.token_counter_factory(model_name, revision)
+            self._token_counter_cache[key] = counter
+        return counter
 
 
 def _fmt_ts(sec: float) -> str:
@@ -601,6 +699,97 @@ def _scene_rows(
 def assemble_context(output_root: Path, top_ids: Sequence[int]) -> str:
     """Assemble the overview plus selected cards, best match last."""
 
+    timeline = _load_timeline(output_root)
+    return _render_legacy_context(timeline, top_ids)
+
+
+def assemble_context_with_budget(
+    output_root: Path,
+    top_ids: Sequence[int],
+    *,
+    token_counter: TokenCounter,
+    max_tokens: int,
+    adjacent_scenes: int = 1,
+) -> ContextAssembly:
+    """Select ranked cards and neighbors without exceeding a token budget."""
+
+    if not callable(getattr(token_counter, "count", None)) or not callable(
+        getattr(token_counter, "truncate", None)
+    ):
+        raise TypeError("token_counter must implement count and truncate")
+    if isinstance(max_tokens, bool) or not isinstance(max_tokens, int) or max_tokens < 1:
+        raise ValueError("max_tokens must be a positive integer")
+    timeline = _load_timeline(output_root)
+    by_id = {int(card["scene_id"]): card for card in timeline}
+    missing = [scene_id for scene_id in top_ids if scene_id not in by_id]
+    if missing:
+        raise QueryServiceInputError(
+            "search index references unknown timeline scenes"
+        )
+    candidates = _expanded_scene_candidates(
+        timeline,
+        top_ids,
+        adjacent_scenes=adjacent_scenes,
+    )
+    header = "## 질의 관련 씬 카드"
+    if not candidates:
+        text = header + "\n(관련 결과 없음)"
+        text = _fit_whole_text(text, token_counter, max_tokens)
+        return ContextAssembly(
+            text=text,
+            stats={
+                "tokenizer_model": token_counter.model_name,
+                "max_tokens": max_tokens,
+                "token_count": token_counter.count(text),
+                "requested_scene_ids": list(top_ids),
+                "expanded_scene_ids": [],
+                "included_scene_ids": [],
+                "excluded_scene_ids": [],
+                "truncated_scene_ids": [],
+            },
+        )
+
+    included: list[tuple[int, str]] = []
+    excluded = []
+    truncated = []
+    for scene_id in candidates:
+        full = _render_scene_card(by_id[scene_id])
+        proposed = _render_budgeted_context(header, included + [(scene_id, full)])
+        if token_counter.count(proposed) <= max_tokens:
+            included.append((scene_id, full))
+            continue
+        compact = _compact_scene_card(by_id[scene_id])
+        fitted = _fit_card(
+            header,
+            included,
+            scene_id,
+            compact,
+            token_counter,
+            max_tokens,
+        )
+        if fitted is None:
+            excluded.append(scene_id)
+            continue
+        included.append((scene_id, fitted))
+        truncated.append(scene_id)
+
+    text = _render_budgeted_context(header, included)
+    return ContextAssembly(
+        text=text,
+        stats={
+            "tokenizer_model": token_counter.model_name,
+            "max_tokens": max_tokens,
+            "token_count": token_counter.count(text),
+            "requested_scene_ids": list(top_ids),
+            "expanded_scene_ids": list(candidates),
+            "included_scene_ids": [scene_id for scene_id, _ in included],
+            "excluded_scene_ids": excluded,
+            "truncated_scene_ids": truncated,
+        },
+    )
+
+
+def _load_timeline(output_root: Path) -> list[dict]:
     try:
         payload = json.loads(
             (output_root / "09_timeline" / "timeline.json").read_text(
@@ -608,9 +797,18 @@ def assemble_context(output_root: Path, top_ids: Sequence[int]) -> str:
             )
         )
         timeline = payload["scene_cards"]
-        by_id = {int(card["scene_id"]): card for card in timeline}
     except (OSError, json.JSONDecodeError, KeyError, TypeError) as exc:
         raise QueryServiceInputError("timeline artifact is invalid") from exc
+    if not isinstance(timeline, list):
+        raise QueryServiceInputError("timeline artifact is invalid")
+    return timeline
+
+
+def _render_legacy_context(
+    timeline: Sequence[dict],
+    top_ids: Sequence[int],
+) -> str:
+    by_id = {int(card["scene_id"]): card for card in timeline}
     missing = [scene_id for scene_id in top_ids if scene_id not in by_id]
     if missing:
         raise QueryServiceInputError(
@@ -630,21 +828,107 @@ def assemble_context(output_root: Path, top_ids: Sequence[int]) -> str:
         )
     lines.extend(("", "## 질의 관련 씬 카드 (관련도 순, 마지막이 최상위)"))
     for scene_id in reversed(top_ids):
-        card = by_id[scene_id]
-        lines.append(
-            f"\n### 씬 {scene_id:02d} "
-            f"[{_fmt_ts(card['start_sec'])}~{_fmt_ts(card['end_sec'])}]"
-        )
-        if card["caption"]:
-            lines.append(f"시각: {card['caption']}")
-        for transcript in card["transcript"]:
-            speaker = (
-                f" ({transcript['speaker']})"
-                if transcript.get("speaker")
-                else ""
-            )
-            lines.append(
-                f"[{_fmt_ts(transcript['start_sec'])}]"
-                f"{speaker} {transcript['text']}"
-            )
+        lines.append("\n" + _render_scene_card(by_id[scene_id]))
     return "\n".join(lines)
+
+
+def _expanded_scene_candidates(
+    timeline: Sequence[dict],
+    top_ids: Sequence[int],
+    *,
+    adjacent_scenes: int,
+) -> tuple[int, ...]:
+    positions = {
+        int(card["scene_id"]): index for index, card in enumerate(timeline)
+    }
+    candidates = []
+    seen = set()
+    for scene_id in top_ids:
+        center = positions[scene_id]
+        ordered_positions = [center]
+        for distance in range(1, adjacent_scenes + 1):
+            ordered_positions.extend((center - distance, center + distance))
+        for position in ordered_positions:
+            if not 0 <= position < len(timeline):
+                continue
+            candidate = int(timeline[position]["scene_id"])
+            if candidate not in seen:
+                seen.add(candidate)
+                candidates.append(candidate)
+    return tuple(candidates)
+
+
+def _render_scene_card(card: Mapping[str, object]) -> str:
+    lines = [
+        f"### 씬 {int(card['scene_id']):02d} "
+        f"[{_fmt_ts(float(card['start_sec']))}~"
+        f"{_fmt_ts(float(card['end_sec']))}]"
+    ]
+    if card.get("caption"):
+        lines.append(f"시각: {card['caption']}")
+    for transcript in card["transcript"]:
+        speaker = (
+            f" ({transcript['speaker']})"
+            if transcript.get("speaker")
+            else ""
+        )
+        lines.append(
+            f"[{_fmt_ts(transcript['start_sec'])}]"
+            f"{speaker} {transcript['text']}"
+        )
+    if not card["transcript"]:
+        lines.append("(발화 없음)")
+    return "\n".join(lines)
+
+
+def _compact_scene_card(card: Mapping[str, object]) -> str:
+    heading = _render_scene_card({**card, "caption": None, "transcript": []}).splitlines()[0]
+    body = card.get("caption") or (
+        card["transcript"][0]["text"] if card["transcript"] else "(내용 없음)"
+    )
+    return f"{heading}\n{body}"
+
+
+def _render_budgeted_context(
+    header: str,
+    included: Sequence[tuple[int, str]],
+) -> str:
+    if not included:
+        return header
+    return header + "\n\n" + "\n\n".join(
+        block for _, block in reversed(included)
+    )
+
+
+def _fit_card(
+    header: str,
+    included: Sequence[tuple[int, str]],
+    scene_id: int,
+    block: str,
+    counter: TokenCounter,
+    max_tokens: int,
+) -> str | None:
+    base = _render_budgeted_context(header, included)
+    available = max_tokens - counter.count(base) - 2
+    while available > 0:
+        fitted = counter.truncate(block, available)
+        if not fitted:
+            return None
+        proposed = _render_budgeted_context(
+            header,
+            list(included) + [(scene_id, fitted)],
+        )
+        if counter.count(proposed) <= max_tokens:
+            return fitted
+        available -= 1
+    return None
+
+
+def _fit_whole_text(
+    text: str,
+    counter: TokenCounter,
+    max_tokens: int,
+) -> str:
+    if counter.count(text) <= max_tokens:
+        return text
+    return counter.truncate(text, max_tokens)

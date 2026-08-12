@@ -19,6 +19,7 @@ from video_preprocess.engine import (
 from video_preprocess.executors import CancellationToken
 from video_preprocess.inference import InferenceDeploymentSettings
 from video_preprocess.engine.planner import ExecutionPlan
+from video_preprocess.tokenization import sentence_transformer_tokenizer_model
 
 
 class PipelineServiceInputError(ValueError):
@@ -40,6 +41,23 @@ class PipelineSettings:
     caption_model: str = "Salesforce/blip-image-captioning-base"
     embed_model: str = "paraphrase-multilingual-MiniLM-L12-v2"
     diarize_model: str = "pyannote/speaker-diarization-community-1"
+    max_context_tokens: int | None = None
+    context_tokenizer_model: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.max_context_tokens is not None and (
+            isinstance(self.max_context_tokens, bool)
+            or not isinstance(self.max_context_tokens, int)
+            or self.max_context_tokens < 128
+        ):
+            raise ValueError("max_context_tokens must be at least 128 or None")
+        if self.context_tokenizer_model is not None and (
+            not isinstance(self.context_tokenizer_model, str)
+            or not self.context_tokenizer_model.strip()
+        ):
+            raise ValueError(
+                "context_tokenizer_model must be non-empty or None"
+            )
 
     def stage_configs(self) -> dict[str, dict[str, object]]:
         return {
@@ -62,6 +80,13 @@ class PipelineSettings:
             "07_diarize": {"diarize_model": self.diarize_model},
             "08_captions": {"caption_model": self.caption_model},
             "10_index": {"embed_model": self.embed_model},
+            "11_context": {
+                "max_context_tokens": self.max_context_tokens,
+                "context_tokenizer_model": (
+                    self.context_tokenizer_model
+                    or sentence_transformer_tokenizer_model(self.embed_model)
+                ),
+            },
         }
 
     @staticmethod

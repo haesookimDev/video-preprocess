@@ -31,6 +31,7 @@ API·작업 큐·원격 모델 서버에 연결 가능한 구조로 전환하는
 | Artifact Store | 대용량 입력·출력 저장과 참조 제공 | 실행 순서·재시도 결정 |
 | Run Store | 실행·단계 상태와 manifest 보존 | 미디어 본문 저장 |
 | Event Sink | 로그, 진행률, 메트릭, trace 이벤트 수집 | 상태의 유일한 원본 역할 |
+| Token Counter | 대상 tokenizer로 context token 계산·안전한 절단 | 검색 순위, LLM 추론 |
 
 중요한 구분은 다음과 같다.
 
@@ -154,6 +155,7 @@ storage implementations ─→ storage contracts
 5. Executor는 모델별 라우팅 정책을 갖지 않는다.
 6. Provider는 파이프라인 단계 순서나 캐시 정책을 알지 못한다.
 7. CLI와 API는 동일한 Application Service를 사용한다.
+8. Context 조립기는 글자 수를 token 수로 추정하지 않고 주입된 Token Counter만 사용한다.
 
 ## 7. 파이프라인 DAG
 
@@ -377,6 +379,7 @@ trace_id
 - 입출력 크기와 생성 artifact 수
 - 검색 cold/warm latency
 - 실제 모델과 revision
+- context tokenizer, 실제 token 수, 예산과 포함·제외 scene
 
 로그에는 토큰, 인증 헤더, 서명 URL, 사용자 미디어 본문을 기록하지 않는다.
 

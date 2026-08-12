@@ -30,6 +30,10 @@ from video_preprocess.storage import (
     LocalRunStore,
     LegacyOutputAdapter,
 )
+from video_preprocess.tokenization import (
+    HuggingFaceTokenCounter,
+    sentence_transformer_tokenizer_model,
+)
 
 from .pipeline import (
     PipelineRunRequest,
@@ -123,9 +127,18 @@ class LocalPipelineRuntimeFactory:
             caption_model=settings.caption_model,
             embed_model=settings.embed_model,
             diarize_model=settings.diarize_model,
+            max_context_tokens=settings.max_context_tokens,
+            context_tokenizer_model=(
+                settings.context_tokenizer_model
+                or sentence_transformer_tokenizer_model(settings.embed_model)
+            ),
         )
         setup_logging(context.log_dir / f"run_{run_id}.log")
         context.artifact_registrar = LegacyOutputAdapter(artifact_store)
+        if context.max_context_tokens is not None:
+            context.context_token_counter = HuggingFaceTokenCounter(
+                context.context_tokenizer_model,
+            )
         if self.context_configurer is None:
             self._configure_inference(
                 context,

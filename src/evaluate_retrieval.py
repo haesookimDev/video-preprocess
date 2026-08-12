@@ -30,6 +30,11 @@ def main() -> int:
     parser.add_argument("--min-similarity", type=float, default=0.35)
     parser.add_argument("--embedding-endpoint", default=None)
     parser.add_argument("--embedding-token-env", default=None)
+    parser.add_argument(
+        "--context-tokenizer-model",
+        default=None,
+        help="context token 계산용 tokenizer (기본: index model)",
+    )
     args = parser.parse_args()
 
     try:
@@ -51,6 +56,7 @@ def main() -> int:
     service = QueryService(
         FixedQueryTargetResolver(output_root),
         deployments=deployments,
+        context_tokenizer_model=args.context_tokenizer_model,
         logger=setup_logging(log_dir / f"{evaluation_id}.log"),
     )
     try:

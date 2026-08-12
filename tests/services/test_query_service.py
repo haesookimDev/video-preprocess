@@ -50,6 +50,22 @@ class FakeEmbeddingService:
         )
 
 
+class CharacterTokenCounter:
+    model_name = "fake/tokenizer"
+
+    @staticmethod
+    def count(text):
+        return len(text)
+
+    @staticmethod
+    def truncate(text, max_tokens):
+        return text[:max_tokens]
+
+
+def token_counter_factory(model_name, revision):
+    return CharacterTokenCounter()
+
+
 def write_query_fixture(root: Path) -> None:
     timeline_dir = root / "09_timeline"
     index_dir = root / "10_index"
@@ -139,6 +155,7 @@ def test_query_service_returns_ranked_matches_and_context(tmp_path: Path) -> Non
     service = QueryService(
         FixedQueryTargetResolver(tmp_path),
         embedding_factory=factory,
+        token_counter_factory=token_counter_factory,
         logger=LOG,
     )
 
@@ -154,6 +171,7 @@ def test_query_service_returns_ranked_matches_and_context(tmp_path: Path) -> Non
     assert result.matches[0].semantic_similarity == 1.0
     assert result.normalized_query == "두 번째"
     assert result.no_answer is False
+    assert result.context_stats["token_count"] <= 4096
     assert "### 씬 02" in result.context
     assert result.to_dict()["matches"][0]["scene_id"] == 2
     assert str(tmp_path) not in str(result.to_dict())
@@ -186,6 +204,7 @@ def test_query_service_rejects_semantic_only_results_below_threshold(
     service = QueryService(
         FixedQueryTargetResolver(tmp_path),
         embedding_factory=lambda *_: LowSimilarityService(),
+        token_counter_factory=token_counter_factory,
         logger=LOG,
     )
 
@@ -217,6 +236,7 @@ def test_query_service_reuses_embedding_service_within_process(
     service = QueryService(
         FixedQueryTargetResolver(tmp_path),
         embedding_factory=factory,
+        token_counter_factory=token_counter_factory,
         logger=LOG,
     )
     request = PipelineQueryRequest("run-test", "두 번째")

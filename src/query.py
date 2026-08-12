@@ -43,6 +43,23 @@ def main() -> int:
         help="키워드 미일치 결과의 최소 cosine 유사도 (기본: 0.35)",
     )
     parser.add_argument(
+        "--max-context-tokens",
+        type=int,
+        default=4096,
+        help="조립 context 실제 token 상한 (기본: 4096)",
+    )
+    parser.add_argument(
+        "--adjacent-scenes",
+        type=int,
+        default=1,
+        help="각 검색 결과 앞뒤에 확장할 씬 수 (기본: 1)",
+    )
+    parser.add_argument(
+        "--context-tokenizer-model",
+        default=None,
+        help="context token 계산용 tokenizer (기본: index embedding model)",
+    )
+    parser.add_argument(
         "--json",
         action="store_true",
         help="context 대신 점수·선택 근거를 포함한 JSON 출력",
@@ -71,6 +88,8 @@ def main() -> int:
             query=args.query,
             top_k=args.topk,
             min_similarity=args.min_similarity,
+            max_context_tokens=args.max_context_tokens,
+            adjacent_scenes=args.adjacent_scenes,
         )
     except (TypeError, ValueError, QueryServiceError) as exc:
         print(f"오류: {exc}", file=sys.stderr)
@@ -83,6 +102,7 @@ def main() -> int:
     service = QueryService(
         FixedQueryTargetResolver(output_root),
         deployments=deployments,
+        context_tokenizer_model=args.context_tokenizer_model,
         logger=log,
     )
     try:

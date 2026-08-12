@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from video_preprocess.tokenization import TokenCounter
     from video_preprocess.inference import (
         CaptionService,
         DiarizationService,
@@ -36,6 +37,8 @@ class PipelineContext:
     caption_model: str = "Salesforce/blip-image-captioning-base"
     embed_model: str = "paraphrase-multilingual-MiniLM-L12-v2"
     diarize_model: str = "pyannote/speaker-diarization-community-1"
+    max_context_tokens: int | None = None
+    context_tokenizer_model: str | None = None
 
     caption_service: CaptionService | None = field(
         default=None,
@@ -58,6 +61,10 @@ class PipelineContext:
         repr=False,
     )
     artifact_registrar: LegacyArtifactRegistrar | None = field(
+        default=None,
+        repr=False,
+    )
+    context_token_counter: TokenCounter | None = field(
         default=None,
         repr=False,
     )

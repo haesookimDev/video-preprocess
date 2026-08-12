@@ -30,6 +30,17 @@ def main() -> int:
                         help="전사 언어 코드 (기본: 자동 감지)")
     parser.add_argument("--scene-threshold", type=float, default=27.0,
                         help="씬 검출 임계값 (기본: 27.0)")
+    parser.add_argument(
+        "--max-context-tokens",
+        type=int,
+        default=None,
+        help="11_context 실제 token 상한 (기본: 제한 없음)",
+    )
+    parser.add_argument(
+        "--context-tokenizer-model",
+        default=None,
+        help="context token 계산용 Hugging Face tokenizer model",
+    )
     parser.add_argument("--run-id", default=None,
                         help="재개할 run ID (기본: 출력 경로 기반 local ID)")
     parser.add_argument("--stage", default=None,
@@ -115,6 +126,8 @@ def main() -> int:
                 whisper_model=args.whisper_model,
                 language=args.language,
                 scene_threshold=args.scene_threshold,
+                max_context_tokens=args.max_context_tokens,
+                context_tokenizer_model=args.context_tokenizer_model,
             ),
         )
     except (TypeError, ValueError) as exc:

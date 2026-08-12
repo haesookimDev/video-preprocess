@@ -256,6 +256,13 @@ def pipeline_options():
             "07_diarize": {"diarize_model": "pyannote/model"},
             "08_captions": {"caption_model": "caption/model"},
             "10_index": {"embed_model": "embedding/model"},
+            "11_context": {
+                "max_context_tokens": None,
+                "context_tokenizer_model": (
+                    "sentence-transformers/"
+                    "paraphrase-multilingual-MiniLM-L12-v2"
+                ),
+            },
         },
         "model_bindings": {
             "05_vad": {"vad": "vad.default"},

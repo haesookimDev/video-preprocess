@@ -67,6 +67,16 @@ def test_evaluation_calculates_ranking_and_no_answer_metrics() -> None:
                 query=request.query,
                 context="context",
                 matches=matches,
+                context_stats={
+                    "tokenizer_model": "fake",
+                    "max_tokens": 4096,
+                    "token_count": 1,
+                    "requested_scene_ids": [],
+                    "expanded_scene_ids": [],
+                    "included_scene_ids": [],
+                    "excluded_scene_ids": [],
+                    "truncated_scene_ids": [],
+                },
             )
 
     report = asyncio.run(

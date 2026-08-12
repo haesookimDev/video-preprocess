@@ -80,6 +80,18 @@ Recall@k와 MRR, 전체 predicted no-answer의 precision과 무관 case의 recal
 returned scene ID를 함께 출력한다. 기본 test는 fake QueryService로 metric을 검증하고 실제 model
 baseline은 명시적인 offline 실행으로 분리한다.
 
+query request의 `max_context_tokens` 기본값은 4096이고 `adjacent_scenes`는 0~5, 기본 1이다. 검색
+scene을 rank 순서로 먼저 선택하고 각 scene의 앞뒤 timeline neighbor를 확장하되 scene ID를 중복하지
+않는다. token budget은 주입된 Hugging Face target tokenizer의 special token 없는 실제 encode 길이로
+계산한다. 높은 순위 scene부터 full card, compact card 순으로 시도하고 맞지 않는 낮은 우선순위 card는
+제외한다. 응답의 `context_stats`는 tokenizer model, max/actual token, requested/expanded/included/
+excluded/truncated scene ID를 기록한다.
+
+11 context의 `max_context_tokens`는 optional이라 생략 시 기존 전체 context를 유지한다. 지정하면
+`context_tokenizer_model` 또는 canonicalized embedding model tokenizer를 lazy load하고 실제 상한을
+지킨다. budget 설정과 tokenizer model은 Stage 11 task/cache config이며 의미 변경으로 version은
+1.1.0이다. 결정은 [`ADR-0028`](./adr/0028-tokenizer-bounded-context-selection.md)에 기록한다.
+
 local reference server는 `--retain-terminal-runs`로 최근 terminal API snapshot 수를 제한한다. 이
 정리는 API 조회/idempotency control record에만 적용하며 Engine manifest와 artifact body를 삭제하지
 않는다. 보존 범위를 지난 run은 `404`이고 같은 idempotency key는 새 실행으로 사용할 수 있다.

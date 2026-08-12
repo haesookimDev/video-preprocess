@@ -100,6 +100,8 @@ Git 상태를 확인한 뒤 작업을 시작한다.
   [`ADR-0026`](./adr/0026-half-open-timeline-single-assignment.md)
 - 검색 정규화·n-gram·no-answer 결정:
   [`ADR-0027`](./adr/0027-normalized-hybrid-retrieval-threshold.md)
+- tokenizer 기반 context budget 결정:
+  [`ADR-0028`](./adr/0028-tokenizer-bounded-context-selection.md)
 
 ## 3. 완료된 작업
 
@@ -177,7 +179,7 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - [x] API adapter
 - [x] 타임라인 경계 정합성 개선
 - [x] 한국어 검색과 평가 체계
-- [ ] 실제 token budget
+- [x] 실제 token budget
 
 문서가 존재한다고 구현된 것으로 간주하지 않는다. 완료 여부는 코드와 자동 테스트를 기준으로
 이 체크리스트에서 갱신한다.
@@ -242,8 +244,11 @@ keyword signal과 embedding 유사도 하한을 추가했다. match JSON에는 k
 선택 근거를 기록하고 threshold를 통과한 신호가 없으면 `no_answer=true`를 반환한다. 36개 고정 sample
 질의 평가에서 Recall@3 1.0, MRR 0.9583, no-answer precision/recall 1.0을 측정했다.
 
-다음 slice는 대상 tokenizer의 실제 token count로 static/query context를 제한하고, 인접 scene 확장,
-중복 제거, 낮은 우선순위 card 제거와 사용·제외 통계를 구현한다.
+context slice는 대상 Hugging Face tokenizer의 실제 token count로 static/query context를 제한하고,
+query의 인접 scene 확장·중복 제거, 낮은 우선순위 card 축약/제거와 사용·제외 통계를 구현했다.
+
+다음 작업은 전체 default suite, offline sample의 11단계와 query/evaluation/API 회귀, preflight와
+SQLite integrity를 다시 확인하고 Phase 6 완료 문서를 확정하는 것이다.
 
 ## 6. 알려진 중요 문제
 
@@ -252,7 +257,6 @@ keyword signal과 embedding 유사도 하한을 추가했다. match JSON에는 k
 | P1 | 한국어 `unicode61` 정확 일치 의존 | 조사·어미가 다른 키워드 검색 누락 |
 | P1 | 별도 query CLI 프로세스는 embedding 모델을 매번 로드 | 프로세스 간 cold query 지연 |
 | P1 | 관련도 하한 없음 | 무관 질의도 항상 top-k 반환 |
-| P1 | 모든 씬을 context에 포함 | 긴 영상 token budget 초과 |
 | P1 | `keyframes_per_scene` 미사용 | 설정과 실제 동작 불일치 |
 | P1 | cached Hugging Face 모델도 metadata HEAD 요청 | offline 환경에서 모델 로드 실패 가능 |
 | P2 | macOS에서 OpenCV·PyAV FFmpeg dylib 중복 경고 | 환경에 따라 충돌 또는 불안정 가능 |
@@ -350,6 +354,20 @@ keyword signal과 embedding 유사도 하한을 추가했다. match JSON에는 k
 
 최신 기록을 위에 추가한다. 긴 구현 설명은 PR이나 ADR에 두고 여기에는 다음 세션이 재개하는 데
 필요한 정보만 적는다.
+
+### 2026-08-12 — Phase 6 tokenizer 기반 context budget
+
+- 목표: 글자 수 추정과 전체 scene 포함을 실제 target tokenizer 상한으로 교체
+- 완료: lazy reusable Hugging Face TokenCounter, pipeline `--max-context-tokens`와 target tokenizer,
+  query 기본 4096 token/인접 scene 1개 확장, dedup, 우선순위 축약·제외, 공개 context stats,
+  Stage 11 version 1.1.0과 OpenAPI additive 설정
+- 주요 결정: pipeline budget은 opt-in으로 기존 전체 context를 유지하고 query는 기본 4096;
+  short SentenceTransformer ID는 canonical Hub ID로 변환; 모델 없는 테스트는 fake counter; ADR-0028
+- 검증: 기본 suite 354 passed, 16 deselected; actual cached tokenizer로 sample Stage 11을 256/256
+  token, scene 1/3 포함으로 생성; query 256 budget은 실제 168 token, top-1 scene 02와 인접 scene dedup
+- 호환성: budget이 없는 기존 pipeline 명령은 기존 context 전체를 생성; query response에
+  `context_stats`, request에 budget/adjacency가 additive; tokenizer 파일은 첫 사용 전 준비 필요
+- 다음 작업: 전체 Phase 6 sample/API/query/evaluation/preflight/SQLite 최종 회귀와 문서 완료
 
 ### 2026-08-12 — Phase 6 retrieval 평가 dataset과 baseline
 

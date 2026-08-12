@@ -49,6 +49,11 @@ def main() -> int:
     parser.add_argument("--embedding-endpoint", default=None)
     parser.add_argument("--embedding-token-env", default=None)
     parser.add_argument(
+        "--context-tokenizer-model",
+        default=None,
+        help="query context token 계산용 tokenizer (기본: index model)",
+    )
+    parser.add_argument(
         "--embedding-artifact-namespace",
         action="append",
         default=[],
@@ -85,6 +90,7 @@ def main() -> int:
                 args.workspace_root,
             ),
             deployments=deployments,
+            context_tokenizer_model=args.context_tokenizer_model,
         )
         server = PipelineHTTPServer(
             run_service=run_service,

@@ -11,6 +11,7 @@ import numpy as np
 import query as query_module
 
 from query import assemble_context, embed_search, fts_search, rrf_fuse
+from video_preprocess.services.query import assemble_context_with_budget
 from video_preprocess.domain import EffectiveModel
 from video_preprocess.inference import EmbeddingBatch
 
@@ -130,6 +131,54 @@ def test_assemble_context_places_best_scene_last(tmp_path: Path) -> None:
     assert "(SPEAKER_00) 두 번째 내용" in context
 
 
+def test_budgeted_context_expands_neighbors_and_excludes_low_priority(
+    tmp_path: Path,
+) -> None:
+    timeline_dir = tmp_path / "09_timeline"
+    timeline_dir.mkdir()
+    cards = []
+    for scene_id in range(1, 6):
+        cards.append(
+            {
+                "scene_id": scene_id,
+                "start_sec": float((scene_id - 1) * 10),
+                "end_sec": float(scene_id * 10),
+                "caption": f"장면 {scene_id} " + "긴설명" * 30,
+                "transcript": [],
+            }
+        )
+    (timeline_dir / "timeline.json").write_text(
+        json.dumps({"scene_cards": cards}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    class CharacterCounter:
+        model_name = "fake/tokenizer"
+
+        @staticmethod
+        def count(text):
+            return len(text)
+
+        @staticmethod
+        def truncate(text, max_tokens):
+            return text[:max_tokens]
+
+    assembly = assemble_context_with_budget(
+        tmp_path,
+        [3, 5],
+        token_counter=CharacterCounter(),
+        max_tokens=180,
+        adjacent_scenes=1,
+    )
+
+    assert assembly.stats["expanded_scene_ids"] == [3, 2, 4, 5]
+    assert assembly.stats["included_scene_ids"][0] == 3
+    assert assembly.stats["token_count"] <= 180
+    assert set(assembly.stats["included_scene_ids"]).isdisjoint(
+        assembly.stats["excluded_scene_ids"]
+    )
+
+
 def test_main_creates_log_directory_for_external_index(
     tmp_path: Path,
     monkeypatch,
@@ -160,7 +209,14 @@ def test_main_composes_remote_embedding_service_from_cli(
     seen = []
 
     class Service:
-        def __init__(self, resolver, *, deployments, logger):
+        def __init__(
+            self,
+            resolver,
+            *,
+            deployments,
+            context_tokenizer_model,
+            logger,
+        ):
             seen.append(deployments)
 
         async def query(self, request):

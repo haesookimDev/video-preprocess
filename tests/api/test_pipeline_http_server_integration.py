@@ -57,6 +57,16 @@ class QueryApplication:
             query=request.query,
             context="loopback context",
             matches=(),
+            context_stats={
+                "tokenizer_model": "fake",
+                "max_tokens": 4096,
+                "token_count": 2,
+                "requested_scene_ids": [],
+                "expanded_scene_ids": [],
+                "included_scene_ids": [],
+                "excluded_scene_ids": [],
+                "truncated_scene_ids": [],
+            },
         )
 
 

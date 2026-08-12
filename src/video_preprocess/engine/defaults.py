@@ -124,7 +124,7 @@ DEFAULT_STAGE_SPECS = (
     ),
     StageSpec(
         name="11_context",
-        stage_version="1.0.0",
+        stage_version="1.1.0",
         dependencies=("01_probe", "07_diarize", "09_timeline"),
         required_inputs=("metadata", "diarization", "timeline"),
         outputs=("context", "context_json"),

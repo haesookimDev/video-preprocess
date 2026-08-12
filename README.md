@@ -167,6 +167,7 @@ curl -sS -X DELETE \
 | `--max-request-bytes N` | JSON request body 상한. 기본값 1 MiB |
 | `--retain-terminal-runs N` | 유지할 최신 terminal API 상태 수. 기본값 1000 |
 | `--auth-token-env NAME` | Bearer token 값을 읽을 환경변수 이름 |
+| `--context-tokenizer-model MODEL` | query context를 계산할 server-side target tokenizer |
 
 현재 v1은 media upload를 제공하지 않으므로 파일을 `--media-root` 아래에 먼저 등록해야 한다.
 완료 상태 보존 한도를 넘으면 오래된 API 상태와 멱등성 record만 제거하며 Engine manifest,
@@ -216,6 +217,8 @@ bind할 때는 Bearer 인증과 reverse proxy/service mesh의 TLS 종료를 사�
 | `--whisper-model MODEL` | faster-whisper 모델. 기본값은 `base` |
 | `--language CODE` | STT 언어 고정. 생략하면 자동 감지 |
 | `--scene-threshold N` | 씬 변화 임계값. 낮을수록 민감 |
+| `--max-context-tokens N` | 11_context의 실제 tokenizer token 상한. 생략 시 전체 context |
+| `--context-tokenizer-model MODEL` | context token을 계산할 Hugging Face tokenizer |
 | `--preflight-only` | 모델을 로드하지 않고 실행 환경만 검사 |
 
 `--stage`는 `--from-stage` 또는 `--to-stage`와 함께 사용할 수 없다. 부분 실행은 같은 run의
@@ -337,15 +340,18 @@ StageTask 입력·설정·binding, StageResult 출력·상태·사유·metrics�
 
 `query.py`는 NFKC 정규화 단어·문자 2~3-gram FTS5 순위와 multilingual embedding cosine 순위를
 RRF로 결합한다. keyword가 없는 semantic 결과는 기본 cosine 0.35 이상만 사용하고, 통과한 결과가
-없으면 `no_answer`로 판정한다. 상위 씬 카드와 전체 씬 목차를 조립하며 LLM을 호출하지 않는다.
+없으면 `no_answer`로 판정한다. 상위 씬과 제한된 인접 씬을 실제 token budget 안에서 조립하며
+LLM을 호출하지 않는다.
 
 ```bash
 .venv/bin/python src/query.py output/sample "음성 구간 검출 얘기는 어디서 해?" --topk 2
-.venv/bin/python src/query.py output/sample "음성 구간 검출" --json
+.venv/bin/python src/query.py output/sample "음성 구간 검출" \
+  --max-context-tokens 2048 --adjacent-scenes 1 --json
 ```
 
 `--min-similarity`로 의미 검색 하한을 -1~1 범위에서 조정할 수 있다. `--json`은 최종 RRF 점수,
-keyword/semantic 순위·점수, 선택 근거와 `no_answer`를 출력한다. 검색 순위 근거는
+keyword/semantic 순위·점수, 선택 근거, `no_answer`와 실제 token 사용·포함·제외 scene 통계를 출력한다.
+query context는 기본 4096 token이고 각 hit의 앞뒤 scene 1개를 중복 없이 확장한다. 검색 순위 근거는
 `logs/query_<timestamp>.log`에도 DEBUG로 기록된다. 별도 query 프로세스는 현재
 embedding 모델을 매번 로드한다. cached Hugging Face 모델이 있어도 metadata HEAD 요청이 발생하는
 환경에서는 다음처럼 명시적인 offline 실행을 사용할 수 있다.
