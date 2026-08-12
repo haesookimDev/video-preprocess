@@ -1,4 +1,4 @@
-"""Tests for sequential PipelineEngine task and artifact orchestration."""
+"""Tests for dependency-ready PipelineEngine artifact orchestration."""
 
 import asyncio
 
@@ -71,6 +71,33 @@ def pipeline_plan():
     return DAGPlanner(
         StageRegistry(specs, external_inputs=("source",))
     )
+
+
+def branching_plan():
+    specs = [
+        StageSpec(
+            name="01_visual",
+            stage_version="1.0.0",
+            required_inputs=("source",),
+            outputs=("visual",),
+        ),
+        StageSpec(
+            name="02_audio",
+            stage_version="1.0.0",
+            required_inputs=("source",),
+            outputs=("audio",),
+        ),
+        StageSpec(
+            name="03_join",
+            stage_version="1.0.0",
+            dependencies=("01_visual", "02_audio"),
+            required_inputs=("visual", "audio"),
+            outputs=("joined",),
+        ),
+    ]
+    return DAGPlanner(
+        StageRegistry(specs, external_inputs=("source",))
+    ).plan()
 
 
 class FakeExecutor:
@@ -171,6 +198,173 @@ def test_engine_builds_tasks_and_passes_outputs_to_downstream_stage() -> None:
     }
     assert executor.tasks[2].inputs == {"processed": artifact("processed")}
     assert result.artifacts["final"] == artifact("final")
+
+
+def test_engine_overlaps_ready_branches_and_waits_before_join() -> None:
+    async def scenario():
+        branch_started = set()
+        both_started = asyncio.Event()
+        active_branches = 0
+        peak_branches = 0
+        join_inputs = []
+
+        async def runner(task):
+            nonlocal active_branches, peak_branches
+            if task.stage in {"01_visual", "02_audio"}:
+                active_branches += 1
+                peak_branches = max(peak_branches, active_branches)
+                branch_started.add(task.stage)
+                if len(branch_started) == 2:
+                    both_started.set()
+                await both_started.wait()
+                if task.stage == "01_visual":
+                    await asyncio.sleep(0.01)
+                output_name = (
+                    "visual" if task.stage == "01_visual" else "audio"
+                )
+                active_branches -= 1
+                return success_result(
+                    task,
+                    outputs={output_name: artifact(output_name)},
+                )
+            assert active_branches == 0
+            join_inputs.append(dict(task.inputs))
+            return success_result(
+                task,
+                outputs={"joined": artifact("joined")},
+            )
+
+        executor = LocalExecutor(
+            StageBindingRegistry(
+                [(name, runner) for name in branching_plan().stage_names]
+            ),
+            max_concurrency=2,
+        )
+        result = await asyncio.wait_for(
+            PipelineEngine(executor).run(
+                branching_plan(),
+                run_id="run_123",
+                trace_id="trace_123",
+                artifacts={"source": artifact("source")},
+            ),
+            timeout=1,
+        )
+
+        assert result.status is RunStatus.SUCCEEDED
+        assert peak_branches == 2
+        assert [record.stage for record in result.stages] == [
+            "01_visual",
+            "02_audio",
+            "03_join",
+        ]
+        assert join_inputs == [
+            {"visual": artifact("visual"), "audio": artifact("audio")}
+        ]
+
+    asyncio.run(scenario())
+
+
+def test_branch_failure_cancels_peer_and_never_submits_join() -> None:
+    async def scenario():
+        visual_started = asyncio.Event()
+        called = []
+
+        async def runner(task, control):
+            called.append(task.stage)
+            if task.stage == "01_visual":
+                visual_started.set()
+                await control.cancellation.wait()
+                return success_result(
+                    task,
+                    outputs={"visual": artifact("visual")},
+                )
+            if task.stage == "02_audio":
+                await visual_started.wait()
+                return StageResult(
+                    run_id=task.run_id,
+                    stage_run_id=task.stage_run_id,
+                    attempt=task.attempt,
+                    status=StageStatus.FAILED,
+                    reason_code="AUDIO_FAILED",
+                    reason="audio branch failed",
+                )
+            raise AssertionError("join must not run after a branch failure")
+
+        executor = LocalExecutor(
+            StageBindingRegistry(
+                [(name, runner) for name in branching_plan().stage_names]
+            ),
+            max_concurrency=2,
+        )
+        result = await asyncio.wait_for(
+            PipelineEngine(executor).run(
+                branching_plan(),
+                run_id="run_123",
+                trace_id="trace_123",
+                artifacts={"source": artifact("source")},
+            ),
+            timeout=1,
+        )
+
+        assert result.status is RunStatus.FAILED
+        assert called == ["01_visual", "02_audio"]
+        assert [record.stage for record in result.stages] == [
+            "01_visual",
+            "02_audio",
+        ]
+        assert result.stages[0].result.status is StageStatus.CANCELLED
+        assert result.stages[0].result.reason_code == "ENGINE_CANCELLED"
+        assert result.stages[1].result.reason_code == "AUDIO_FAILED"
+
+    asyncio.run(scenario())
+
+
+def test_external_cancellation_stops_all_active_branches_before_join() -> None:
+    async def scenario():
+        started = set()
+        both_started = asyncio.Event()
+        called = []
+
+        async def runner(task, control):
+            called.append(task.stage)
+            started.add(task.stage)
+            if len(started) == 2:
+                both_started.set()
+            await control.cancellation.wait()
+            output_name = "visual" if task.stage == "01_visual" else "audio"
+            return success_result(
+                task,
+                outputs={output_name: artifact(output_name)},
+            )
+
+        executor = LocalExecutor(
+            StageBindingRegistry(
+                [(name, runner) for name in branching_plan().stage_names]
+            ),
+            max_concurrency=2,
+        )
+        cancellation = CancellationToken()
+        running = asyncio.create_task(
+            PipelineEngine(executor).run(
+                branching_plan(),
+                run_id="run_123",
+                trace_id="trace_123",
+                artifacts={"source": artifact("source")},
+                cancellation=cancellation,
+            )
+        )
+        await both_started.wait()
+        cancellation.cancel()
+        result = await asyncio.wait_for(running, timeout=1)
+
+        assert result.status is RunStatus.CANCELLED
+        assert called == ["01_visual", "02_audio"]
+        assert [record.result.status for record in result.stages] == [
+            StageStatus.CANCELLED,
+            StageStatus.CANCELLED,
+        ]
+
+    asyncio.run(scenario())
 
 
 def test_engine_task_identity_and_idempotency_are_deterministic() -> None:

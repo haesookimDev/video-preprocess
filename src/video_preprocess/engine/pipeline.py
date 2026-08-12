@@ -198,6 +198,17 @@ class PipelineRunResult:
 
 
 @dataclass(frozen=True, slots=True)
+class _StageRunOutcome:
+    """All attempts and terminal outputs for one logical Stage."""
+
+    records: tuple[StageExecutionRecord, ...]
+
+    @property
+    def result(self) -> StageResult:
+        return self.records[-1].result
+
+
+@dataclass(frozen=True, slots=True)
 class StagePreviewRecord:
     """Read-only cache view for one planned Stage."""
 
@@ -241,7 +252,7 @@ class PipelinePreviewResult:
 
 
 class PipelineEngine:
-    """Build StageTask attempts and execute one topological plan in order."""
+    """Execute dependency-ready StageTasks through an Executor Port."""
 
     def __init__(
         self,
@@ -454,82 +465,218 @@ class PipelineEngine:
             artifacts=available,
             configs=configs,
             bindings=bindings,
+            stage_order=plan.stage_names,
         )
         if journal is not None:
             journal.start()
+        records_by_stage: dict[str, tuple[StageExecutionRecord, ...]] = {}
+        planned_names = set(plan.stage_names)
+        pending = {spec.name: spec for spec in plan.stages}
+        completed: set[str] = set()
+        active: dict[str, asyncio.Task[_StageRunOutcome]] = {}
+        internal_cancellation = CancellationToken()
+        if cancellation.cancelled:
+            internal_cancellation.cancel()
+        cancellation_forwarder = asyncio.create_task(
+            self._forward_cancellation(cancellation, internal_cancellation)
+        )
+        terminal_status: RunStatus | None = None
+        plan_index = {
+            spec.name: index for index, spec in enumerate(plan.stages)
+        }
+        try:
+            while pending or active:
+                ready = [
+                    spec
+                    for spec in plan.stages
+                    if spec.name in pending
+                    and (set(spec.dependencies) & planned_names) <= completed
+                ]
+                if internal_cancellation.cancelled:
+                    ready = ready[:1] if not active and not records_by_stage else []
+                for spec in ready:
+                    pending.pop(spec.name)
+                    active[spec.name] = asyncio.create_task(
+                        self._run_stage(
+                            spec,
+                            run_id=run_id,
+                            trace_id=trace_id,
+                            available=dict(available),
+                            config=configs.get(spec.name, {}),
+                            model_bindings=bindings.get(spec.name, {}),
+                            initial_attempt=normalized_attempts.get(spec.name, 1),
+                            force=spec.name in forced,
+                            timeout_sec=timeouts.get(spec.name),
+                            retry_policy=retry_policy,
+                            cancellation=internal_cancellation,
+                            journal=journal,
+                        ),
+                        name=f"pipeline-stage:{run_id}:{spec.name}",
+                    )
+                if not active:
+                    if internal_cancellation.cancelled:
+                        terminal_status = terminal_status or RunStatus.CANCELLED
+                        break
+                    raise RuntimeError(
+                        "dependency-ready scheduler has pending work but no "
+                        "runnable Stage"
+                    )
+
+                done, _ = await asyncio.wait(
+                    set(active.values()),
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                done_names = sorted(
+                    (
+                        name
+                        for name, stage_task in active.items()
+                        if stage_task in done
+                    ),
+                    key=plan_index.__getitem__,
+                )
+                for stage_name in done_names:
+                    stage_task = active.pop(stage_name)
+                    outcome = stage_task.result()
+                    records_by_stage[stage_name] = outcome.records
+                    result = outcome.result
+                    if result.status in {
+                        StageStatus.SUCCEEDED,
+                        StageStatus.SKIPPED,
+                    }:
+                        available.update(result.outputs)
+                        completed.add(stage_name)
+                    elif result.status is StageStatus.FAILED:
+                        terminal_status = RunStatus.FAILED
+                    elif terminal_status is None:
+                        terminal_status = RunStatus.CANCELLED
+                if terminal_status is not None:
+                    internal_cancellation.cancel()
+        except BaseException:
+            internal_cancellation.cancel()
+            if active:
+                await asyncio.gather(*active.values(), return_exceptions=True)
+            raise
+        finally:
+            cancellation_forwarder.cancel()
+            try:
+                await cancellation_forwarder
+            except asyncio.CancelledError:
+                pass
+
+        if terminal_status is None:
+            run_state.transition(RunStatus.SUCCEEDED)
+        else:
+            run_state.transition(terminal_status)
+        records = tuple(
+            record
+            for spec in plan.stages
+            for record in records_by_stage.get(spec.name, ())
+        )
+
+        run_manifest = (
+            None
+            if journal is None
+            else journal.finish(run_state.state)
+        )
+
+        return PipelineRunResult(
+            run_id=run_id,
+            status=run_state.state,
+            stages=records,
+            artifacts=dict(available),
+            transitions=run_state.history,
+            manifest=run_manifest,
+        )
+
+    async def _run_stage(
+        self,
+        spec: StageSpec,
+        *,
+        run_id: str,
+        trace_id: str,
+        available: Mapping[str, ArtifactRef],
+        config: Mapping[str, object],
+        model_bindings: Mapping[str, str],
+        initial_attempt: int,
+        force: bool,
+        timeout_sec: float | None,
+        retry_policy: RetryPolicy,
+        cancellation: CancellationToken,
+        journal: RunJournal | None,
+    ) -> _StageRunOutcome:
         records = []
-        for spec in plan.stages:
-            stage_state = StageStateMachine()
-            task = self._build_task(
-                spec,
-                run_id=run_id,
-                trace_id=trace_id,
-                available=available,
-                config=configs.get(spec.name, {}),
-                model_bindings=bindings.get(spec.name, {}),
-                attempt=normalized_attempts.get(spec.name, 1),
+        stage_state = StageStateMachine()
+        task = self._build_task(
+            spec,
+            run_id=run_id,
+            trace_id=trace_id,
+            available=available,
+            config=config,
+            model_bindings=model_bindings,
+            attempt=initial_attempt,
+        )
+        stage_started_at = journal.now() if journal is not None else None
+        missing_inputs = tuple(
+            input_name
+            for input_name in spec.required_inputs
+            if input_name not in available
+        )
+        if missing_inputs:
+            result = self._failed_result(
+                task,
+                "MISSING_REQUIRED_INPUT",
+                "required Stage input is unavailable: "
+                + ", ".join(missing_inputs),
             )
-            stage_started_at = journal.now() if journal is not None else None
-            missing_inputs = tuple(
-                input_name
-                for input_name in spec.required_inputs
-                if input_name not in available
+            stage_state.transition(StageLifecycle.FAILED)
+            self._persist_stage(
+                journal,
+                task,
+                result,
+                started_at=stage_started_at,
+                cache_key=compute_stage_cache_key(task),
             )
-            if missing_inputs:
-                result = self._failed_result(
-                    task,
-                    "MISSING_REQUIRED_INPUT",
-                    "required Stage input is unavailable: "
-                    + ", ".join(missing_inputs),
-                )
-                stage_state.transition(StageLifecycle.FAILED)
-                self._persist_stage(
-                    journal,
-                    task,
-                    result,
-                    started_at=stage_started_at,
-                    cache_key=compute_stage_cache_key(task),
-                )
-                records.append(
+            return _StageRunOutcome(
+                records=(
                     StageExecutionRecord(
                         stage=spec.name,
                         task=task,
                         handle=None,
                         result=result,
                         transitions=stage_state.history,
-                    )
+                    ),
                 )
-                run_state.transition(RunStatus.FAILED)
-                break
-
-            cache_decision = await self._evaluate_cache(
-                task,
-                journal,
-                force=spec.name in forced,
             )
-            if cache_decision is not None and cache_decision.hit:
-                cached_manifest = cache_decision.manifest
-                if cached_manifest is None:
-                    raise RuntimeError("cache hit is missing its manifest")
-                result = replace(
-                    cached_manifest.result,
-                    run_id=task.run_id,
-                    stage_run_id=task.stage_run_id,
-                    attempt=task.attempt,
-                )
-                result = self._validate_result_outputs(spec, task, result)
-                if result.status is StageStatus.SUCCEEDED:
-                    stage_state.transition(StageLifecycle.CACHED)
-                else:
-                    stage_state.transition(StageLifecycle.FAILED)
-                self._persist_stage(
-                    journal,
-                    task,
-                    result,
-                    started_at=stage_started_at,
-                    cache_key=cache_decision.cache_key,
-                )
-                records.append(
+
+        cache_decision = await self._evaluate_cache(
+            task,
+            journal,
+            force=force,
+        )
+        if cache_decision is not None and cache_decision.hit:
+            cached_manifest = cache_decision.manifest
+            if cached_manifest is None:
+                raise RuntimeError("cache hit is missing its manifest")
+            result = replace(
+                cached_manifest.result,
+                run_id=task.run_id,
+                stage_run_id=task.stage_run_id,
+                attempt=task.attempt,
+            )
+            result = self._validate_result_outputs(spec, task, result)
+            if result.status is StageStatus.SUCCEEDED:
+                stage_state.transition(StageLifecycle.CACHED)
+            else:
+                stage_state.transition(StageLifecycle.FAILED)
+            self._persist_stage(
+                journal,
+                task,
+                result,
+                started_at=stage_started_at,
+                cache_key=cache_decision.cache_key,
+            )
+            return _StageRunOutcome(
+                records=(
                     StageExecutionRecord(
                         stage=spec.name,
                         task=task,
@@ -537,73 +684,39 @@ class PipelineEngine:
                         result=result,
                         transitions=stage_state.history,
                         cache_decision=cache_decision,
-                    )
+                    ),
                 )
-                if result.status is StageStatus.SUCCEEDED:
-                    available.update(result.outputs)
-                    continue
-                run_state.transition(RunStatus.FAILED)
-                break
+            )
 
-            attempts_used = 0
-            while True:
-                if attempts_used:
-                    task = self._build_task(
-                        spec,
-                        run_id=run_id,
-                        trace_id=trace_id,
-                        available=available,
-                        config=configs.get(spec.name, {}),
-                        model_bindings=bindings.get(spec.name, {}),
-                        attempt=(
-                            normalized_attempts.get(spec.name, 1)
-                            + attempts_used
-                        ),
-                    )
-                    stage_state = StageStateMachine()
-                    stage_started_at = (
-                        journal.now() if journal is not None else None
-                    )
-                attempt_cache_decision = (
-                    cache_decision if attempts_used == 0 else None
+        attempts_used = 0
+        while True:
+            if attempts_used:
+                task = self._build_task(
+                    spec,
+                    run_id=run_id,
+                    trace_id=trace_id,
+                    available=available,
+                    config=config,
+                    model_bindings=model_bindings,
+                    attempt=initial_attempt + attempts_used,
                 )
-                if cancellation.cancelled:
-                    result = self._cancelled_result(
-                        task,
-                        "ENGINE_CANCELLED",
-                        "pipeline cancellation was requested",
-                    )
-                    stage_state.transition(StageLifecycle.CANCELLED)
-                    self._persist_stage(
-                        journal,
-                        task,
-                        result,
-                        started_at=stage_started_at,
-                        cache_key=self._cache_key(
-                            task,
-                            attempt_cache_decision,
-                        ),
-                    )
-                    records.append(
-                        StageExecutionRecord(
-                            stage=spec.name,
-                            task=task,
-                            handle=None,
-                            result=result,
-                            transitions=stage_state.history,
-                            cache_decision=attempt_cache_decision,
-                        )
-                    )
-                    break
-
-                control = ExecutionControl(
-                    timeout_sec=timeouts.get(spec.name),
+                stage_state = StageStateMachine()
+                stage_started_at = journal.now() if journal is not None else None
+            attempt_cache_decision = (
+                cache_decision if attempts_used == 0 else None
+            )
+            if cancellation.cancelled:
+                result = self._cancelled_result(
+                    task,
+                    "ENGINE_CANCELLED",
+                    "pipeline cancellation was requested",
                 )
+                stage_state.transition(StageLifecycle.CANCELLED)
+                handle = None
+            else:
+                control = ExecutionControl(timeout_sec=timeout_sec)
                 try:
-                    handle = await self.executor.submit(
-                        task,
-                        control=control,
-                    )
+                    handle = await self.executor.submit(task, control=control)
                 except Exception as exc:
                     handle = None
                     result = self._failed_result(
@@ -622,79 +735,56 @@ class PipelineEngine:
                         control=control,
                         cancellation=cancellation,
                     )
-                    result = self._validate_result_outputs(
-                        spec,
-                        task,
-                        result,
-                    )
+                    result = self._validate_result_outputs(spec, task, result)
                     stage_state.transition(
                         self._lifecycle_from_result(result.status)
                     )
 
-                self._persist_stage(
-                    journal,
-                    task,
-                    result,
-                    started_at=stage_started_at,
-                    cache_key=self._cache_key(
-                        task,
-                        attempt_cache_decision,
-                    ),
+            self._persist_stage(
+                journal,
+                task,
+                result,
+                started_at=stage_started_at,
+                cache_key=self._cache_key(task, attempt_cache_decision),
+            )
+            records.append(
+                StageExecutionRecord(
+                    stage=spec.name,
+                    task=task,
+                    handle=handle,
+                    result=result,
+                    transitions=stage_state.history,
+                    cache_decision=attempt_cache_decision,
                 )
-                records.append(
-                    StageExecutionRecord(
-                        stage=spec.name,
-                        task=task,
-                        handle=handle,
-                        result=result,
-                        transitions=stage_state.history,
-                        cache_decision=attempt_cache_decision,
-                    )
-                )
-                attempts_used += 1
-                if result.status in {
-                    StageStatus.SUCCEEDED,
-                    StageStatus.SKIPPED,
-                    StageStatus.CANCELLED,
-                }:
-                    break
-                if not retry_policy.should_retry(
-                    result,
-                    attempts_used=attempts_used,
-                ):
-                    break
-                await self._retry_backoff(
-                    retry_policy.backoff_sec(
-                        attempts_used=attempts_used,
-                    ),
-                    cancellation,
-                )
+            )
+            attempts_used += 1
+            if result.status in {
+                StageStatus.SUCCEEDED,
+                StageStatus.SKIPPED,
+                StageStatus.CANCELLED,
+            }:
+                break
+            if not retry_policy.should_retry(
+                result,
+                attempts_used=attempts_used,
+            ):
+                break
+            await self._retry_backoff(
+                retry_policy.backoff_sec(attempts_used=attempts_used),
+                cancellation,
+            )
+        return _StageRunOutcome(records=tuple(records))
 
-            if result.status in {StageStatus.SUCCEEDED, StageStatus.SKIPPED}:
-                available.update(result.outputs)
-                continue
-            if result.status is StageStatus.CANCELLED:
-                run_state.transition(RunStatus.CANCELLED)
-            else:
-                run_state.transition(RunStatus.FAILED)
-            break
-        else:
-            run_state.transition(RunStatus.SUCCEEDED)
-
-        run_manifest = (
-            None
-            if journal is None
-            else journal.finish(run_state.state)
-        )
-
-        return PipelineRunResult(
-            run_id=run_id,
-            status=run_state.state,
-            stages=tuple(records),
-            artifacts=dict(available),
-            transitions=run_state.history,
-            manifest=run_manifest,
-        )
+    @staticmethod
+    async def _forward_cancellation(
+        source: CancellationToken,
+        target: CancellationToken,
+    ) -> None:
+        if source.cancelled:
+            target.cancel()
+            return
+        await source.wait()
+        target.cancel()
 
     async def _await_executor_result(
         self,
@@ -777,6 +867,7 @@ class PipelineEngine:
         artifacts: Mapping[str, ArtifactRef],
         configs: Mapping[str, Mapping[str, object]],
         bindings: Mapping[str, Mapping[str, object]],
+        stage_order: Sequence[str],
     ) -> RunJournal | None:
         if self.run_store is None:
             return None
@@ -786,6 +877,7 @@ class PipelineEngine:
             input_artifacts=artifacts,
             stage_configs=configs,
             model_bindings=bindings,
+            stage_order=stage_order,
             clock=self.clock,
         )
 

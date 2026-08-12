@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
@@ -42,6 +42,7 @@ class RunJournal:
         input_artifacts: Mapping[str, ArtifactRef],
         stage_configs: Mapping[str, Mapping[str, object]],
         model_bindings: Mapping[str, Mapping[str, object]],
+        stage_order: Sequence[str] = (),
         clock: Clock = utc_now,
     ) -> None:
         for method_name in (
@@ -67,8 +68,14 @@ class RunJournal:
             for slot, binding in bindings.items()
         }
         self.clock = clock
+        self.stage_order = {
+            stage_name: index for index, stage_name in enumerate(stage_order)
+        }
+        if len(self.stage_order) != len(tuple(stage_order)):
+            raise ValueError("stage_order must not contain duplicates")
         self.started_at: str | None = None
         self.stage_references: list[StageAttemptRef] = []
+        self._reference_order: dict[StageAttemptRef, tuple[int, int]] = {}
 
     def now(self) -> str:
         """Read and normalize one injected clock value."""
@@ -140,6 +147,13 @@ class RunJournal:
             ) from exc
         if manifest.reference not in self.stage_references:
             self.stage_references.append(manifest.reference)
+        self._reference_order[manifest.reference] = (
+            self.stage_order.get(task.stage, len(self.stage_order)),
+            task.attempt,
+        )
+        self.stage_references.sort(
+            key=lambda reference: self._reference_order[reference]
+        )
         self._save_run(
             self._build_run_manifest(
                 RunStatus.RUNNING,

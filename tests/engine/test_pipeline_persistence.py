@@ -34,6 +34,8 @@ from video_preprocess.executors import (
     ExecutionHandle,
     ExecutionState,
     ExecutionStatus,
+    LocalExecutor,
+    StageBindingRegistry,
 )
 from video_preprocess.storage import (
     ArtifactVerification,
@@ -261,6 +263,84 @@ def test_engine_persists_running_stage_and_terminal_manifests_in_order() -> None
         ("run", "succeeded", 2),
     ]
     assert all(manifest.cache_key for manifest in runs.stages.values())
+
+
+def test_parallel_completion_keeps_manifest_references_in_plan_order() -> None:
+    branch_plan = DAGPlanner(
+        StageRegistry(
+            [
+                StageSpec(
+                    name="01_slow",
+                    stage_version="1.0.0",
+                    required_inputs=("source",),
+                    outputs=("slow",),
+                ),
+                StageSpec(
+                    name="02_fast",
+                    stage_version="1.0.0",
+                    required_inputs=("source",),
+                    outputs=("fast",),
+                ),
+                StageSpec(
+                    name="03_join",
+                    stage_version="1.0.0",
+                    dependencies=("01_slow", "02_fast"),
+                    required_inputs=("slow", "fast"),
+                    outputs=("joined",),
+                ),
+            ],
+            external_inputs=("source",),
+        )
+    ).plan()
+    runs = FakeRunStore()
+
+    async def runner(task):
+        output_name = {
+            "01_slow": "slow",
+            "02_fast": "fast",
+            "03_join": "joined",
+        }[task.stage]
+        if task.stage == "01_slow":
+            await asyncio.sleep(0.01)
+        return StageResult(
+            run_id=task.run_id,
+            stage_run_id=task.stage_run_id,
+            attempt=task.attempt,
+            status=StageStatus.SUCCEEDED,
+            outputs={output_name: artifact(output_name)},
+        )
+
+    executor = LocalExecutor(
+        StageBindingRegistry(
+            [(name, runner) for name in branch_plan.stage_names]
+        ),
+        max_concurrency=2,
+    )
+    engine = PipelineEngine(
+        executor,
+        run_store=runs,
+        cache_evaluator=ManifestCacheEvaluator(FakeArtifactStore()),
+        clock=IncrementingClock(),
+    )
+    result = asyncio.run(
+        engine.run(
+            branch_plan,
+            run_id="run-123",
+            trace_id="trace-123",
+            artifacts={"source": artifact("source")},
+        )
+    )
+
+    persisted_names = [
+        runs.stages[(result.run_id, reference)].task.stage
+        for reference in result.manifest.stages
+    ]
+    physical_completion = [
+        event[1] for event in runs.events if event[0] == "stage"
+    ]
+    assert physical_completion[:2] == ["02_fast", "01_slow"]
+    assert persisted_names == ["01_slow", "02_fast", "03_join"]
+    assert [record.stage for record in result.stages] == persisted_names
 
 
 def test_second_run_reuses_verified_stage_manifests_without_executor() -> None:
