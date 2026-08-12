@@ -1,6 +1,6 @@
 # 실행기·단계·추론 계약
 
-상태: **v1 구현 진행 중**
+상태: **v1 local/reference 구현 완료 — RemoteExecutor·queue adapter는 확장 예정**
 상위 설계: [`06-target-architecture.md`](./06-target-architecture.md)
 
 이 문서는 구현 언어나 전송 방식보다 오래 유지되어야 하는 논리 계약을 정의한다.

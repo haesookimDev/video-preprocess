@@ -178,7 +178,9 @@ flowchart LR
 ```
 
 초기 `LocalExecutor`는 순차 실행으로 동등성을 확보한다. 이후 비주얼 경로와 오디오
-경로를 병렬화하되, 병렬 정책은 Stage가 아니라 Executor가 소유한다.
+경로를 병렬화한다. Engine은 dependency-ready 판정·join·실패/취소 전파를,
+Executor는 실행 위치·local capacity를 소유하며 Stage는 둘 모두를 알지 못한다. Phase 7은
+기본 concurrency 1을 유지하면서 이 경계를 구현한다.
 
 현재 `StageRegistry`와 `DAGPlanner`가 이 11개 Stage의 logical input/output과 dependency를
 검증하고 stable name 사전순 tie-break로 deterministic topological plan을 만든다. exact,

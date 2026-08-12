@@ -1,6 +1,6 @@
 # 엔진·실행기 분리 개발 로드맵
 
-상태: **Phase 6 진행 중 — timeline 완료, 검색·context 진행 예정**
+상태: **Phase 6 완료 — 다음 Phase 7 ready-set 병렬 실행**
 기준일: 2026-08-12
 대상 설계: [`06-target-architecture.md`](./06-target-architecture.md)  
 공개 계약: [`07-execution-inference-contracts.md`](./07-execution-inference-contracts.md)
@@ -375,10 +375,15 @@ aggregate metric을 JSON으로 출력하며 같은 process에서 embedding servi
 
 ### 완료 조건
 
-- 경계 테스트에서 전사 중복·누락 없음
-- Recall@3 목표 90% 이상 또는 baseline 대비 개선 근거 기록
-- 무관 질의 거부 정확도 측정
-- 생성 context가 지정 예산을 넘지 않음
+- [x] 경계 테스트에서 전사 중복·누락 없음
+- [x] Recall@3 목표 90% 이상 또는 baseline 대비 개선 근거 기록
+- [x] 무관 질의 거부 정확도 측정
+- [x] 생성 context가 지정 예산을 넘지 않음
+
+Phase 6은 2026-08-12에 완료했다. offline sample의 11단계, CLI query·retrieval evaluator,
+public REST E2E, default suite, preflight·dependency·SQLite integrity를 재검증했다. sample 36개
+질의에서 Recall@3 1.0, MRR 0.9583, no-answer precision/recall 1.0을 기록했고 생성된
+static/API query context가 지정한 256 token 예산을 넘지 않음을 확인했다.
 
 ## 11. Phase 7: 성능과 멀티모달 확장
 
@@ -393,6 +398,13 @@ aggregate metric을 JSON으로 출력하며 같은 process에서 embedding servi
 7. 오디오 이벤트 provider
 8. 질의 기반 2-pass 고품질 재처리
 9. 필요 시 RemoteExecutor와 분산 worker
+
+첫 slice는 Engine이 단일 topological list를 순차 소비하는 대신 dependency-ready set을
+스케줄하도록 변경하고, LocalExecutor에 기본 1을 유지하는 설정 가능 bounded
+concurrency를 추가한다. 03→08 visual 분기와 04→05→06/07 audio 분기를 동시에
+진행하되 09 join은 모든 필수 의존성이 완료된 후에만 시작해야 한다. manifest의
+공개 순서, cache, retry, 한 분기 실패와 run cancellation은 동시성과 무관하게 결정적이어야
+한다. 계약 변경은 ADR과 fake delayed runner 테스트로 먼저 고정한다.
 
 ## 12. 테스트 전략
 

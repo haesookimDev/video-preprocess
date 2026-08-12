@@ -41,6 +41,9 @@ flowchart LR
 - `embedding.default`의 local/HTTP 배포 설정과 원격 effective model cache fingerprint
 - LocalEmbeddingProvider를 공개하는 production HTTP server adapter와 실행 CLI
 - 영속 run 상태, 멱등성, 취소, artifact와 query를 공개하는 Pipeline REST API v1
+- 반개구간·최대 겹침 기반 timeline 단일 배정과 source/confidence 보존
+- 한국어 정규화·문자 n-gram hybrid 검색, no-answer 판정과 고정 평가 dataset
+- 실제 target tokenizer 기반 static/query context 예산·인접 scene·제외 통계
 - 기존 JSON·Markdown·SQLite 출력 구조와 공통 QueryService 기반 query CLI
 
 아직 구현되지 않은 범위:

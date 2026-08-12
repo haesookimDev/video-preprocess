@@ -1,8 +1,8 @@
 # 개발 상태와 세션 인수인계
 
 - 마지막 갱신: **2026-08-12**
-- 현재 단계: **Phase 6 진행 중 — 검색·긴 영상 품질**
-- 다음 작업: **한국어 검색 정규화·문자 n-gram과 관련 결과 없음 판정**
+- 현재 단계: **Phase 6 완료 — 타임라인·검색·context 품질**
+- 다음 작업: **Phase 7 — Engine dependency-ready set과 LocalExecutor bounded concurrency**
 
 이 문서는 개발 진행 상황의 단일 진입점이다. 새로운 세션은 이 문서를 먼저 읽고, 실제 코드와
 Git 상태를 확인한 뒤 작업을 시작한다.
@@ -30,6 +30,9 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - embedding은 설정에 따라 local 또는 HTTP provider client를 사용하며 기본값은 local
 - production embedding inference server adapter와 실행 CLI 구현 완료
 - pipeline REST API와 durable control snapshot, QueryService 구현 완료
+- timeline 반개구간·단일 배정과 source/confidence 보존 구현 완료
+- 한국어 정규화·문자 n-gram hybrid 검색, no-answer·고정 평가 dataset 구현 완료
+- 실제 tokenizer 기반 static/query context 예산과 포함·제외 통계 구현 완료
 - queue consumer, direct upload와 RemoteExecutor는 아직 미구현
 - Local Store가 input copy, 단계 산출물과 run/stage manifest를 관리
 
@@ -184,7 +187,7 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 문서가 존재한다고 구현된 것으로 간주하지 않는다. 완료 여부는 코드와 자동 테스트를 기준으로
 이 체크리스트에서 갱신한다.
 
-## 5. Phase 6 진행과 인수인계
+## 5. Phase 6 완료와 인수인계
 
 Phase 4 완료 순서:
 
@@ -247,21 +250,23 @@ keyword signal과 embedding 유사도 하한을 추가했다. match JSON에는 k
 context slice는 대상 Hugging Face tokenizer의 실제 token count로 static/query context를 제한하고,
 query의 인접 scene 확장·중복 제거, 낮은 우선순위 card 축약/제거와 사용·제외 통계를 구현했다.
 
-다음 작업은 전체 default suite, offline sample의 11단계와 query/evaluation/API 회귀, preflight와
-SQLite integrity를 다시 확인하고 Phase 6 완료 문서를 확정하는 것이다.
+Phase 6은 default suite, offline sample 11단계, CLI query, retrieval evaluation, public REST E2E,
+preflight·dependency·SQLite integrity를 모두 재검증하고 완료했다. 다음 세션은 Phase 7의 첫
+slice로 `engine/pipeline.py`의 순차 루프를 dependency-ready set scheduler로 변경하고,
+`executors/local.py`에 기본 1을 유지하는 bounded concurrency를 추가한다. fake runner로 visual/audio
+분기의 실제 겹침, 09 join 이전 dependency 준수, deterministic manifest 순서와
+실패·취소 전파를 먼저 고정한다.
 
 ## 6. 알려진 중요 문제
 
 | 우선순위 | 문제 | 영향 |
 |---|---|---|
-| P1 | 한국어 `unicode61` 정확 일치 의존 | 조사·어미가 다른 키워드 검색 누락 |
 | P1 | 별도 query CLI 프로세스는 embedding 모델을 매번 로드 | 프로세스 간 cold query 지연 |
-| P1 | 관련도 하한 없음 | 무관 질의도 항상 top-k 반환 |
 | P1 | `keyframes_per_scene` 미사용 | 설정과 실제 동작 불일치 |
 | P1 | cached Hugging Face 모델도 metadata HEAD 요청 | offline 환경에서 모델 로드 실패 가능 |
 | P2 | macOS에서 OpenCV·PyAV FFmpeg dylib 중복 경고 | 환경에 따라 충돌 또는 불안정 가능 |
 
-이 문제는 새 구조에서 해결하되, P0 정확성 문제가 구조 전환을 막으면 Phase 0에서 최소 수정한다.
+남은 문제는 Phase 7 성능·멀티모달 작업과 독립 유지보수 slice에서 우선순위를 다시 평가한다.
 
 ## 7. 기존 검증 기준선
 
@@ -354,6 +359,22 @@ SQLite integrity를 다시 확인하고 Phase 6 완료 문서를 확정하는 �
 
 최신 기록을 위에 추가한다. 긴 구현 설명은 PR이나 ADR에 두고 여기에는 다음 세션이 재개하는 데
 필요한 정보만 적는다.
+
+### 2026-08-12 — Phase 6 최종 검증과 완료
+
+- 목표: timeline·retrieval·context 품질 slice의 완료 조건을 실제 CLI/API 경계에서 확정
+- 완료: 반개구간 단일 배정, hybrid-search-v2/no-answer, 36개 retrieval 평가,
+  tokenizer 상한·인접 scene·dedup·제외 통계와 공개 REST context budget 회귀
+- 실제 검증: offline `sample.mp4 --force --max-context-tokens 256` 11/11 `ok`; timeline
+  assigned 3/unassigned 0; index `hybrid-search-v2`; static context 256/256 token; query top-1 scene 02,
+  context 168/256 token
+- 품질 지표: 36개 sample dataset Recall@3 1.0, MRR 0.9583, no-answer precision/recall 1.0
+- 회귀: default 355 passed/16 deselected; non-model HTTP integration 2 passed; actual model REST E2E
+  1 passed; preflight 전체 OK; `pip check` 정상; compileall 성공; SQLite integrity `ok`
+- 관찰: macOS FFmpeg dylib·PySceneDetect deprecated getter·pyannote 짧은 입력 warning은
+  기존과 동일하며 실패로 이어지지 않음
+- 다음 작업: Phase 7 ready-set Engine scheduling, LocalExecutor bounded concurrency,
+  visual/audio 분기·09 join·fail/cancel deterministic contract test
 
 ### 2026-08-12 — Phase 6 tokenizer 기반 context budget
 
