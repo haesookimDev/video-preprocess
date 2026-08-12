@@ -217,6 +217,54 @@ class PipelineRunSubmission:
             },
         }
 
+    @classmethod
+    def from_dict(
+        cls,
+        data: Mapping[str, object],
+    ) -> "PipelineRunSubmission":
+        payload = _closed_mapping(
+            data,
+            "pipeline_run_create_request",
+            {"schema_version", "idempotency_key", "media_id"},
+            {"selection", "settings", "execution_policy"},
+        )
+        if payload["schema_version"] != SCHEMA_VERSION:
+            raise ValueError("unsupported schema_version")
+        selection = _closed_mapping(
+            payload.get("selection", {}),
+            "selection",
+            set(),
+            {"stage", "from_stage", "to_stage", "force_stages"},
+        )
+        settings_data = _closed_mapping(
+            payload.get("settings", {}),
+            "settings",
+            set(),
+            set(PipelineSettings.__dataclass_fields__),
+        )
+        policy = _closed_mapping(
+            payload.get("execution_policy", {}),
+            "execution_policy",
+            set(),
+            {
+                "stage_timeout_sec",
+                "max_stage_attempts",
+                "retry_backoff_sec",
+            },
+        )
+        return cls(
+            idempotency_key=payload["idempotency_key"],
+            media_id=payload["media_id"],
+            settings=PipelineSettings(**settings_data),
+            stage=selection.get("stage"),
+            from_stage=selection.get("from_stage"),
+            to_stage=selection.get("to_stage"),
+            force_stages=selection.get("force_stages", ()),
+            stage_timeout_sec=policy.get("stage_timeout_sec"),
+            max_stage_attempts=policy.get("max_stage_attempts", 1),
+            retry_backoff_sec=policy.get("retry_backoff_sec", 0.0),
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class PipelineRunSnapshot:
@@ -729,6 +777,15 @@ class PipelineRunService:
             await asyncio.shield(task)
         return self.get(run_id)
 
+    async def shutdown(self) -> None:
+        """Cooperatively cancel and join process-local active runs."""
+
+        for cancellation in tuple(self._cancellations.values()):
+            cancellation.cancel()
+        tasks = tuple(self._tasks.values())
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
     async def _execute(
         self,
         snapshot: PipelineRunSnapshot,
@@ -1016,6 +1073,26 @@ def _required_mapping(
     if not all(isinstance(key, str) for key in value):
         raise ValueError(f"{field_name} must use string keys")
     return value
+
+
+def _closed_mapping(
+    value: object,
+    field_name: str,
+    required: set[str],
+    optional: set[str],
+) -> dict[str, object]:
+    mapping = dict(_required_mapping(value, field_name))
+    missing = sorted(required - set(mapping))
+    if missing:
+        raise ValueError(
+            f"{field_name} is missing required fields: " + ", ".join(missing)
+        )
+    unknown = sorted(set(mapping) - required - optional)
+    if unknown:
+        raise ValueError(
+            f"{field_name} contains unknown fields: " + ", ".join(unknown)
+        )
+    return mapping
 
 
 def _text_sequence(value: object, field_name: str) -> tuple[str, ...]:

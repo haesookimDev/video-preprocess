@@ -2,7 +2,7 @@
 
 - 마지막 갱신: **2026-08-12**
 - 현재 단계: **Phase 5 진행 중 — 외부 서비스 연동**
-- 다음 작업: **REST adapter와 API server composition/CLI 구현**
+- 다음 작업: **QueryService 구현과 기존 query CLI/API route 통합**
 
 이 문서는 개발 진행 상황의 단일 진입점이다. 새로운 세션은 이 문서를 먼저 읽고, 실제 코드와
 Git 상태를 확인한 뒤 작업을 시작한다.
@@ -213,6 +213,8 @@ Phase 5 첫 slice:
 - `LocalPipelineProgressReader`가 Engine run/stage manifest를 읽어 현재 단계·attempt·warning·부분 artifact를
   공개 snapshot에 투영한다.
 - process restart 후 남은 queued/running snapshot은 `RUN_INTERRUPTED` terminal failure로 조정한다.
+- `PipelineHTTPServer`가 전용 async service loop, Bearer auth, JSON byte limit와 분류된 HTTP 오류를
+  제공하며 `serve_pipeline.py`가 local media/state/workspace와 Engine runtime을 조합한다.
 
 ## 6. 알려진 중요 문제
 
@@ -320,6 +322,18 @@ Phase 5 첫 slice:
 
 최신 기록을 위에 추가한다. 긴 구현 설명은 PR이나 ADR에 두고 여기에는 다음 세션이 재개하는 데
 필요한 정보만 적는다.
+
+### 2026-08-12 — Phase 5 Pipeline REST adapter와 server composition
+
+- 목표: 영속 PipelineRun use case를 실제 외부 서비스가 호출할 수 있는 production reference adapter 제공
+- 완료: stdlib threaded REST server, 전용 application event loop, create/get/cancel/artifact route,
+  Bearer 인증, JSON/body limit, 오류 mapping과 `serve_pipeline.py` composition CLI
+- 주요 결정: HTTP handler는 service를 직접 실행하지 않고 단일 async loop에 전달; shutdown은 active
+  cancellation을 전파하며 inference deployment와 token은 server composition 설정으로만 주입
+- 검증: 기본 suite 336 passed, 15 deselected; loopback integration 2 passed; compileall과
+  diff check 성공
+- 호환성: 기존 `run_pipeline.py` 동작은 변경하지 않음; query route는 다음 QueryService slice에서 연결
+- 다음 작업: query 로직을 typed `QueryService`로 이전하고 CLI와 REST가 같은 use case를 호출하도록 변경
 
 ### 2026-08-12 — Phase 5 공개 계약과 영속 PipelineRun service
 

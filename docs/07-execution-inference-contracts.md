@@ -55,6 +55,12 @@ API run 상태는 `queued`, `running`, `succeeded`, `failed`, `cancelled`이고 
 process restart 조정, body/capacity/retention 정책은
 [`ADR-0025`](./adr/0025-durable-public-pipeline-api.md)를 따른다.
 
+구현에서 `PipelineRunService`는 HTTP를 알지 않고 typed submission과 snapshot만 다룬다. stdlib 기반
+`PipelineHTTPServer`가 전용 async loop를 소유하며 threaded handler 호출을 같은 service loop로
+전달한다. create는 `202`, 동일 요청 복구는 `200`, 취소는 `202`이고 artifact는 terminal 전 `409`다.
+adapter는 `application/json`, 설정된 body byte limit와 optional Bearer token을 검사하고, token과
+내부 경로를 오류 본문에 포함하지 않는다. 서버 진입점은 `src/serve_pipeline.py`다.
+
 ## 2. 공통 식별자
 
 | 필드 | 의미 | 생성 주체 |

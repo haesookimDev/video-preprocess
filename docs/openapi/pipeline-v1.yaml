@@ -390,9 +390,8 @@ components:
           properties:
             code:
               type: string
-              enum: [INVALID_REQUEST, UNAUTHORIZED, RUN_NOT_FOUND,
+              enum: [INVALID_REQUEST, MEDIA_NOT_FOUND, UNAUTHORIZED, RUN_NOT_FOUND,
                      IDEMPOTENCY_CONFLICT, RUN_NOT_READY, PAYLOAD_TOO_LARGE,
                      CAPACITY_EXCEEDED, SERVICE_UNAVAILABLE, INTERNAL]
             message: {type: string}
             retryable: {type: boolean}
-
