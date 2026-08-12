@@ -125,6 +125,65 @@ def test_executor_runs_concurrent_submissions_sequentially() -> None:
     asyncio.run(scenario())
 
 
+def test_executor_runs_up_to_configured_concurrency() -> None:
+    async def scenario():
+        two_started = asyncio.Event()
+        release = asyncio.Event()
+        running = 0
+        peak_running = 0
+
+        async def runner(task):
+            nonlocal running, peak_running
+            running += 1
+            peak_running = max(peak_running, running)
+            if running == 2:
+                two_started.set()
+            await release.wait()
+            running -= 1
+            return make_result(task)
+
+        executor = LocalExecutor(
+            StageBindingRegistry([("test_stage", runner)]),
+            max_concurrency=2,
+        )
+        handles = [
+            await executor.submit(
+                make_task(
+                    stage_run_id=f"stage_{index}",
+                    idempotency_key=f"idem_{index}",
+                )
+            )
+            for index in range(3)
+        ]
+        await two_started.wait()
+
+        assert (await executor.status(handles[0])).state is ExecutionState.RUNNING
+        assert (await executor.status(handles[1])).state is ExecutionState.RUNNING
+        assert (await executor.status(handles[2])).state is ExecutionState.QUEUED
+
+        release.set()
+        await asyncio.gather(*(executor.result(handle) for handle in handles))
+
+        assert peak_running == 2
+        statuses = await asyncio.gather(
+            *(executor.status(handle) for handle in handles)
+        )
+        assert all(
+            status.state is ExecutionState.SUCCEEDED for status in statuses
+        )
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("max_concurrency", [True, 0, -1, 1.5])
+def test_executor_rejects_invalid_max_concurrency(max_concurrency) -> None:
+    with pytest.raises(ValueError, match="max_concurrency"):
+        LocalExecutor(
+            StageBindingRegistry([]),
+            max_concurrency=max_concurrency,
+        )
+
+
 def test_sync_runner_executes_off_event_loop_thread() -> None:
     async def scenario():
         loop_thread = threading.get_ident()

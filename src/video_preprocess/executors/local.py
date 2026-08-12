@@ -35,13 +35,25 @@ class _Job:
 
 
 class LocalExecutor:
-    """Execute one bound StageTask at a time in the current process."""
+    """Execute bound StageTasks with a bounded in-process concurrency."""
 
-    def __init__(self, bindings: StageBindingRegistry) -> None:
+    def __init__(
+        self,
+        bindings: StageBindingRegistry,
+        *,
+        max_concurrency: int = 1,
+    ) -> None:
         if not isinstance(bindings, StageBindingRegistry):
             raise TypeError("bindings must be a StageBindingRegistry")
+        if (
+            isinstance(max_concurrency, bool)
+            or not isinstance(max_concurrency, int)
+            or max_concurrency < 1
+        ):
+            raise ValueError("max_concurrency must be a positive integer")
         self.bindings = bindings
-        self._serial_lock = asyncio.Lock()
+        self.max_concurrency = max_concurrency
+        self._capacity = asyncio.Semaphore(max_concurrency)
         self._jobs: dict[str, _Job] = {}
         self._idempotency: dict[str, str] = {}
         self._attempts: dict[tuple[str, int], str] = {}
@@ -124,7 +136,7 @@ class LocalExecutor:
 
     async def _execute(self, job: _Job) -> None:
         try:
-            async with self._serial_lock:
+            async with self._capacity:
                 if job.completion.done():
                     return
                 if job.cancel_requested or job.control.cancellation.cancelled:
