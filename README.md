@@ -29,11 +29,12 @@ flowchart LR
 - Stage별 cache 상태·실행 예상·stable reason을 제공하는 read-only dry-run
 - offline snapshot·immutable revision·VAD asset 기반 local model fingerprint 확인
 - Stage timeout, cooperative cancellation과 분류된 bounded retry
+- HTTP Inference v1 client, async job submit/poll/cancel, retry와 circuit breaker
 - 기존 JSON·Markdown·SQLite 출력 구조와 query CLI
 
 아직 구현되지 않은 범위:
 
-- HTTP Inference Provider와 모델 서버
+- embedding local/HTTP 배포 설정과 production 모델 서버 adapter
 - REST API·queue adapter와 RemoteExecutor
 
 정확한 완료 상태와 다음 작업은 [docs/STATUS.md](docs/STATUS.md)를 기준으로 한다.
@@ -242,10 +243,13 @@ HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
 .venv/bin/python -m pytest
 ```
 
-loopback port를 여는 HTTP contract test는 기본 경로에서 제외하고 명시적으로 실행한다.
+loopback port를 여는 HTTP contract와 production client integration test는 기본 경로에서 제외하고
+명시적으로 실행한다.
 
 ```bash
-.venv/bin/python -m pytest -m integration tests/contracts/test_fake_inference_server.py
+.venv/bin/python -m pytest -o addopts='' \
+  tests/contracts/test_fake_inference_server.py \
+  tests/inference/test_http_provider_integration.py
 ```
 
 미디어·모델 통합 변경은 `samples/sample.mp4` 전체 실행과 query까지 별도로 검증한다.

@@ -67,11 +67,17 @@ response로만 표현하면 polling, 취소와 중복 제출 복구가 어렵다
 - server와 client가 job retention, polling 간격과 idempotency record를 관리해야 한다.
 - v1 원격 artifact는 양쪽이 같은 Artifact Store namespace를 해석할 수 있어야 한다.
 - OpenAPI의 task별 `inputs` 의미 검증은 공통 envelope 외에 Provider validator가 계속 담당한다.
-- circuit breaker, jitter와 upload transport의 세부 정책은 HTTP Provider 구현 slice에서 보완한다.
+- client는 408/429/502/503/504와 transport 실패만 bounded retry하고 `Retry-After`, exponential
+  backoff·jitter, 5xx circuit breaker를 적용한다. 구체 값은 배포 설정으로 둔다.
+- idempotent 복구 시 서버가 기존 remote request ID를 반환할 수 있으므로 client는 그 ID로 poll/cancel한
+  뒤 현재 caller request ID로 terminal response를 재결합한다.
+- upload transport는 v1 후속 확장으로 남는다.
 
 ## 구현 위치
 
 - OpenAPI: `docs/openapi/inference-v1.yaml`
 - Python domain: `src/video_preprocess/domain/inference.py`
-- HTTP Provider 예정 위치: `src/video_preprocess/inference/http/provider.py`
-- contract test: `tests/contracts/test_inference_openapi.py`
+- HTTP Provider: `src/video_preprocess/inference/http/provider.py`
+- stdlib transport: `src/video_preprocess/inference/http/transport.py`
+- contract test: `tests/contracts/test_inference_openapi.py`,
+  `tests/contracts/test_fake_inference_server.py`, `tests/inference/test_http_provider.py`

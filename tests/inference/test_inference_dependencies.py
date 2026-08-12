@@ -214,3 +214,19 @@ def test_faster_whisper_imports_are_lazy_in_vad_provider() -> None:
 
     assert "faster_whisper" not in top_level_roots
     assert "faster_whisper" in _imported_roots(provider_path)
+
+
+def test_http_provider_does_not_require_third_party_http_clients() -> None:
+    http_package = (
+        PROJECT_ROOT
+        / "src"
+        / "video_preprocess"
+        / "inference"
+        / "http"
+    )
+
+    imported = set()
+    for path in http_package.glob("*.py"):
+        imported.update(_imported_roots(path))
+
+    assert imported.isdisjoint({"aiohttp", "httpx", "requests", "urllib3"})

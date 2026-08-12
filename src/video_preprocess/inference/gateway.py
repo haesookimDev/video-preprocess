@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Iterator, Mapping
+from dataclasses import replace
 
 from video_preprocess.domain import (
     ArtifactRef,
@@ -17,7 +18,7 @@ from video_preprocess.domain import (
     ProviderHealth,
 )
 
-from .errors import ProviderConfigurationError
+from .errors import InferenceCallError, ProviderConfigurationError
 from .provider import InferenceProvider
 
 
@@ -69,6 +70,8 @@ class InferenceGateway:
                 "provider capability check timed out",
                 retryable=True,
             )
+        except InferenceCallError as exc:
+            return self._provider_failure(request, exc.failure)
         except Exception as exc:
             return self._unexpected_failure(request, exc)
 
@@ -107,6 +110,8 @@ class InferenceGateway:
                 "inference did not finish before timeout",
                 retryable=True,
             )
+        except InferenceCallError as exc:
+            return self._provider_failure(request, exc.failure)
         except Exception as exc:
             return self._unexpected_failure(request, exc)
         finally:
@@ -282,4 +287,20 @@ class InferenceGateway:
             "provider call failed unexpectedly",
             retryable=True,
             details={"error_type": type(exc).__name__},
+        )
+
+    @staticmethod
+    def _provider_failure(
+        request: InferenceRequest,
+        failure: InferenceFailure,
+    ) -> InferenceResponse:
+        normalized = replace(failure, request_id=request.request_id)
+        return InferenceResponse(
+            request_id=request.request_id,
+            status=(
+                InferenceStatus.CANCELLED
+                if normalized.code is InferenceErrorCode.CANCELLED
+                else InferenceStatus.FAILED
+            ),
+            error=normalized,
         )

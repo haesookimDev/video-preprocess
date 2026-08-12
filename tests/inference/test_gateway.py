@@ -9,6 +9,7 @@ from video_preprocess.domain import (
     EffectiveModel,
     HealthState,
     InferenceErrorCode,
+    InferenceFailure,
     InferenceRequest,
     InferenceResponse,
     InferenceStatus,
@@ -18,6 +19,7 @@ from video_preprocess.domain import (
     RequestedModel,
 )
 from video_preprocess.inference import InferenceGateway
+from video_preprocess.inference.errors import InferenceCallError
 
 
 def make_request(
@@ -240,6 +242,28 @@ def test_gateway_normalizes_provider_exception() -> None:
     assert response.error.code is InferenceErrorCode.PROVIDER_UNAVAILABLE
     assert response.error.retryable
     assert response.error.details["error_type"] == "ConnectionError"
+
+
+def test_gateway_preserves_normalized_provider_failure() -> None:
+    class AuthenticationFailureProvider(FakeProvider):
+        async def capabilities(self) -> ProviderCapabilities:
+            raise InferenceCallError(
+                InferenceFailure(
+                    code=InferenceErrorCode.AUTHENTICATION_FAILED,
+                    message="authentication failed",
+                    retryable=False,
+                )
+            )
+
+    gateway = InferenceGateway(
+        {"embedding.default": AuthenticationFailureProvider()}
+    )
+
+    response = asyncio.run(gateway.infer(make_request()))
+
+    assert response.error is not None
+    assert response.error.code is InferenceErrorCode.AUTHENTICATION_FAILED
+    assert response.error.request_id == "infer_123"
 
 
 def test_gateway_enforces_total_timeout() -> None:

@@ -5,6 +5,7 @@ from .diarization import DiarizationBatch, DiarizationService, SpeakerTurn
 from .embedding import EmbeddingBatch, EmbeddingService
 from .errors import InferenceCallError, ProviderConfigurationError
 from .gateway import InferenceGateway
+from .http import HTTPInferenceProvider, HTTPRetryPolicy
 from .model_resolver import GatewayEffectiveModelResolver
 from .provider import InferenceProvider
 from .stt import SpeechChunk, STTService, TranscriptSegment, TranscriptionBatch
@@ -19,6 +20,8 @@ __all__ = [
     "EmbeddingService",
     "InferenceCallError",
     "InferenceGateway",
+    "HTTPInferenceProvider",
+    "HTTPRetryPolicy",
     "GatewayEffectiveModelResolver",
     "InferenceProvider",
     "ProviderConfigurationError",

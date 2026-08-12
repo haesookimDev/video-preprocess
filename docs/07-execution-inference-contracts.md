@@ -20,7 +20,8 @@ PipelineEngine과 상태 머신은
 [`src/video_preprocess/engine/`](../src/video_preprocess/engine/)에 구현됐다. manifest cache key와
 decision, RunStore journal, 같은 run resume와 Store 범위 global cache index도 구현됐다. 전체 01~11
 legacy Stage binding과 기본 CLI/cache-aware preview도 구현됐다. HTTP Inference v1 transport는
-[`openapi/inference-v1.yaml`](./openapi/inference-v1.yaml)로 확정했으며 Provider 구현은 진행 중이다.
+[`openapi/inference-v1.yaml`](./openapi/inference-v1.yaml)로 확정했고 stdlib 기반 HTTP Provider
+client가 구현됐다. 배포별 local/HTTP binding 설정은 다음 slice에서 composition root에 연결한다.
 Inference 공통 계약,
 Gateway, `LocalEmbeddingProvider`, `LocalCaptionProvider`, `LocalSTTProvider`,
 `LocalDiarizationProvider`와 `LocalVADProvider`는
@@ -665,6 +666,19 @@ Artifact 전송은 v1에서 공유 Store 방식만 지원한다. 대용량 입�
 bearer 인증과 cancel 계약을 구현한다. socket을 사용하는 이 테스트는 `integration` marker로 기본
 network-free suite와 분리한다.
 
+`HTTPInferenceProvider`는 다음 client 정책을 적용한다.
+
+- blocking `urllib` 전송을 worker thread에서 실행하고 redirect와 최대 response 크기를 제한한다.
+- capability는 TTL 동안 cache하며 `effective_models[alias]`를 Engine model resolver에 노출한다.
+- 408, 429, 502, 503, 504와 transport timeout/연결 실패만 제한된 횟수로 재시도한다.
+- `Retry-After`를 우선하고 bounded exponential backoff·jitter와 5xx circuit breaker를 적용한다.
+- submit·poll·retry sleep은 request total deadline을 늘리지 않는다. timeout 또는 task cancel 시
+  확인된 remote job에 best-effort `DELETE`를 보낸다.
+- idempotent submit이 과거 remote request ID를 반환하면 그 ID로 poll/cancel하되 caller에게는 현재
+  request ID로 재결합한 terminal response를 반환한다.
+- 인증 token은 private provider 설정과 `Authorization` header에만 존재하며 오류 details에 넣지 않는다.
+- ArtifactRef는 provider에 설정한 shared Store namespace allowlist와 일치할 때만 전송한다.
+
 ## 8. 오류 계약과 재시도
 
 공통 오류 객체:
@@ -698,9 +712,9 @@ network-free suite와 분리한다.
 Engine Stage retry는 `EXECUTOR_SUBMIT_FAILED`, `EXECUTOR_RESULT_FAILED`, `STAGE_TIMEOUT`만 기본
 transient reason으로 분류하고 bounded exponential backoff를 적용한다. Gateway는 한 요청의
 capability 확인과 inference를 합친 전체 timeout을 구현한다. HTTP Provider도 이 budget 안에서
-capability, submit, poll과 terminal response를 완료해야 한다. `Retry-After`, bounded jitter와 circuit
-breaker의 구체 값은 Provider 구현 설정으로 추가한다. 현재 Local Provider 실행 thread는 timeout 후 강제
-중단할 수 없어 cancellation 미지원으로 capability에 표시한다.
+capability, submit, poll과 terminal response를 완료해야 한다. HTTP Provider의 retry 횟수, backoff,
+jitter와 circuit breaker 임계값·recovery 시간은 `HTTPRetryPolicy` 배포 설정이다. 현재 Local Provider
+실행 thread는 timeout 후 강제 중단할 수 없어 cancellation 미지원으로 capability에 표시한다.
 
 Application request는 선택적으로 모든 planned Stage에 적용할 `stage_timeout_sec`, 최초 실행을
 포함한 `max_stage_attempts`와 `retry_backoff_sec`를 전달한다. timeout은 safe cancellation boundary

@@ -2,7 +2,7 @@
 
 - 마지막 갱신: **2026-08-12**
 - 현재 단계: **Phase 4 — HTTP Inference Provider**
-- 다음 작업: **비동기 HTTP Inference Provider와 오류·재시도·취소 구현**
+- 다음 작업: **embedding alias의 local/HTTP 배포 설정과 cache fingerprint E2E**
 
 이 문서는 개발 진행 상황의 단일 진입점이다. 새로운 세션은 이 문서를 먼저 읽고, 실제 코드와
 Git 상태를 확인한 뒤 작업을 시작한다.
@@ -26,7 +26,8 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - VAD, STT, diarization, caption과 embedding이 `InferenceGateway`와 Local Provider로 실행
 - 모든 모델 Stage에서 구체 ML library import와 model lifecycle 제거 완료
 - 기본 CLI는 Application Service를 통해 새 Engine과 01~11 binding을 실행
-- HTTP provider와 API adapter는 아직 미구현
+- HTTP provider client는 구현됐지만 기본 composition은 아직 local provider만 사용
+- 모델 서버 production adapter와 pipeline API adapter는 아직 미구현
 - Local Store가 input copy, 단계 산출물과 run/stage manifest를 관리
 
 기존 샘플 산출물은 `output/` 아래에 있으나 생성물이며 Git에 커밋하지 않는다.
@@ -156,7 +157,8 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - [x] legacy 05~08 Engine/LocalExecutor compatibility path
 - [x] legacy 09~11 Engine/LocalExecutor compatibility path
 - [x] global cache index와 run 간 cache 재사용
-- [ ] HTTPInferenceProvider와 모델 서버 계약 구현
+- [x] HTTPInferenceProvider client와 모델 서버 계약 구현
+- [ ] production inference model server adapter
 - [x] Pipeline Application Service와 local runtime factory
 - [x] Application Service 기반 선택 실행 CLI
 - [ ] API adapter
@@ -175,7 +177,7 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 2. [x] 공유 Artifact Store URI, idempotency key, deadline과 effective model metadata의 전송 규칙을
    `docs/07-execution-inference-contracts.md`와 ADR-0022에 확정한다.
 3. [x] 외부 network나 실제 모델 없이 실행되는 local fake model server contract fixture를 추가한다.
-4. [ ] `src/video_preprocess/inference/`에 HTTP Provider를 구현하고 timeout, 429, 5xx, 인증 실패와
+4. [x] `src/video_preprocess/inference/`에 HTTP Provider를 구현하고 timeout, 429, 5xx, 인증 실패와
    cancellation을 공통 `InferenceError`로 정규화한다.
 5. [ ] embedding alias를 첫 원격화 대상으로 local/HTTP 설정 전환과 cache fingerprint E2E를 검증한다.
 
@@ -290,6 +292,20 @@ compatibility 구현으로만 남아 있으며 Phase 4에서도 CLI와 Stage가 
 
 최신 기록을 위에 추가한다. 긴 구현 설명은 PR이나 ADR에 두고 여기에는 다음 세션이 재개하는 데
 필요한 정보만 적는다.
+
+### 2026-08-12 — Phase 4 HTTP Inference Provider client
+
+- 목표: 공통 Inference 계약을 변경하지 않고 remote async job을 호출하는 provider 구현
+- 완료: stdlib async transport, capability/health cache, effective model, submit/poll/cancel,
+  bearer·idempotency header, total deadline, Retry-After/backoff/jitter, circuit breaker와 표준 오류 매핑
+- 주요 결정: idempotent 복구가 기존 remote request ID를 반환해도 해당 job을 poll하고 최종 응답 ID는
+  현재 caller ID로 재결합; remote ArtifactRef는 명시한 namespace allowlist만 허용
+- 검증: 기본 network-free suite 300 passed, 9 deselected; fake server HTTP contract와 production
+  provider/EmbeddingService loopback integration 9 passed
+- 호환성: Gateway가 `InferenceCallError`의 안정 code를 보존하며 기존 Local Provider binding과 기본
+  CLI는 변경하지 않음; HTTP provider는 아직 배포 설정에 연결되지 않아 opt-in 불가
+- 다음 작업: embedding alias의 typed deployment 설정, local/HTTP composition 전환과 remote effective
+  model revision의 Engine cache key E2E
 
 ### 2026-08-12 — Phase 4 remote effective model capability
 

@@ -261,16 +261,17 @@ run cancellation과 분류된 bounded retry는 attempt별 manifest를 보존하�
 
 - [x] OpenAPI v1 문서 작성
 - [x] local fake `/health`, `/capabilities`, inference job API 구현
-- [ ] HTTP client provider 구현
-- [ ] 인증 헤더 주입과 로그 redaction
+- [x] HTTP client provider 구현
+- [x] 인증 헤더 주입과 오류 redaction
 - [x] artifact 전달 방식 계약 확정
   - [x] v1: 공유 Artifact Store
   - [ ] 후속 확장: 제한된 업로드 API
-- [ ] async job submit/poll/cancel 구현
+- [x] async job submit/poll/cancel 구현
 - [x] idempotency header/body와 conflict 계약 확정
-- [ ] deadline, retry, backoff, circuit breaker 정책 구현
+- [x] deadline, retry, backoff, circuit breaker 정책 구현
 - [x] local fake server로 contract test
-- [ ] 실제 모델 서버 하나로 end-to-end 검증
+- [x] fake model server와 production HTTP Provider/EmbeddingService end-to-end 검증
+- [ ] production model server adapter와 실제 embedding backend end-to-end 검증
 
 ### 첫 원격화 대상
 
