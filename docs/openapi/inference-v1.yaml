@@ -1,0 +1,677 @@
+openapi: 3.1.0
+info:
+  title: Video Preprocess Inference API
+  version: 1.0.0
+  description: |
+    Transport contract for asynchronous model inference. The API carries the
+    same versioned InferenceRequest and InferenceResponse objects used by local
+    providers. Large media crosses this boundary only as published ArtifactRef
+    values resolvable by a shared Artifact Store.
+servers:
+  - url: http://localhost:8080
+    description: Local development server
+tags:
+  - name: Service
+  - name: Inference Jobs
+paths:
+  /v1/health:
+    get:
+      tags: [Service]
+      operationId: getInferenceHealth
+      summary: Read provider liveness and readiness
+      responses:
+        "200":
+          description: Provider health is available.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProviderHealth"
+        "503":
+          $ref: "#/components/responses/ProviderUnavailable"
+  /v1/capabilities:
+    get:
+      tags: [Service]
+      operationId: getInferenceCapabilities
+      summary: Read supported tasks, aliases, and transport limits
+      security:
+        - bearerAuth: []
+        - {}
+      responses:
+        "200":
+          description: Provider capability declaration.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProviderCapabilities"
+        "401":
+          $ref: "#/components/responses/AuthenticationFailed"
+        "503":
+          $ref: "#/components/responses/ProviderUnavailable"
+  /v1/inference-jobs:
+    post:
+      tags: [Inference Jobs]
+      operationId: submitInferenceJob
+      summary: Submit or idempotently recover an inference job
+      description: |
+        Idempotency-Key is required and must equal the request body's
+        idempotency_key. A matching duplicate returns the existing job. Reuse
+        with different request semantics returns 409.
+      security:
+        - bearerAuth: []
+        - {}
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InferenceRequest"
+      responses:
+        "200":
+          description: An existing idempotent job was recovered.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InferenceJob"
+        "202":
+          description: A new job was accepted.
+          headers:
+            Location:
+              description: Relative URL for polling this job.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InferenceJob"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/AuthenticationFailed"
+        "403":
+          $ref: "#/components/responses/ModelAccessDenied"
+        "409":
+          $ref: "#/components/responses/IdempotencyConflict"
+        "413":
+          $ref: "#/components/responses/ArtifactTooLarge"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "503":
+          $ref: "#/components/responses/ProviderUnavailable"
+        "504":
+          $ref: "#/components/responses/ProviderTimeout"
+  /v1/inference-jobs/{request_id}:
+    parameters:
+      - $ref: "#/components/parameters/RequestId"
+    get:
+      tags: [Inference Jobs]
+      operationId: getInferenceJob
+      summary: Poll one inference job
+      security:
+        - bearerAuth: []
+        - {}
+      responses:
+        "200":
+          description: Current job state and optional terminal response.
+          headers:
+            Retry-After:
+              description: Suggested whole seconds before the next poll.
+              schema:
+                type: integer
+                minimum: 0
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InferenceJob"
+        "401":
+          $ref: "#/components/responses/AuthenticationFailed"
+        "404":
+          $ref: "#/components/responses/JobNotFound"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        "503":
+          $ref: "#/components/responses/ProviderUnavailable"
+    delete:
+      tags: [Inference Jobs]
+      operationId: cancelInferenceJob
+      summary: Request cooperative cancellation
+      description: Terminal jobs are returned unchanged and cancellation is idempotent.
+      security:
+        - bearerAuth: []
+        - {}
+      responses:
+        "200":
+          description: The job was already terminal.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InferenceJob"
+        "202":
+          description: Cancellation was accepted or was already requested.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InferenceJob"
+        "401":
+          $ref: "#/components/responses/AuthenticationFailed"
+        "404":
+          $ref: "#/components/responses/JobNotFound"
+        "503":
+          $ref: "#/components/responses/ProviderUnavailable"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque
+      description: Deployment-injected credential; never serialized or logged.
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: Must exactly match InferenceRequest.idempotency_key.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 256
+    RequestId:
+      name: request_id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 256
+  responses:
+    InvalidRequest:
+      description: Request validation failed.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/InferenceFailure"
+    AuthenticationFailed:
+      description: Server authentication failed.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/InferenceFailure"
+    ModelAccessDenied:
+      description: The authenticated server cannot access the requested model.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/InferenceFailure"
+    IdempotencyConflict:
+      description: The idempotency key was reused for different request semantics.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/InferenceFailure"
+    ArtifactTooLarge:
+      description: An input artifact exceeds the advertised capability limit.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/InferenceFailure"
+    JobNotFound:
+      description: The request ID is unknown or no longer retained.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/InferenceFailure"
+    RateLimited:
+      description: The provider is rate limited.
+      headers:
+        Retry-After:
+          description: Whole seconds before retrying.
+          schema:
+            type: integer
+            minimum: 0
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/InferenceFailure"
+    ProviderUnavailable:
+      description: The provider is temporarily unavailable.
+      headers:
+        Retry-After:
+          description: Optional whole seconds before retrying.
+          schema:
+            type: integer
+            minimum: 0
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/InferenceFailure"
+    ProviderTimeout:
+      description: The provider exceeded the request deadline.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/InferenceFailure"
+  schemas:
+    SchemaVersion:
+      type: string
+      const: "1"
+    Checksum:
+      type: object
+      additionalProperties: false
+      required: [algorithm, value]
+      properties:
+        algorithm:
+          type: string
+          const: sha256
+        value:
+          type: string
+          minLength: 1
+    ArtifactRef:
+      type: object
+      additionalProperties: false
+      required:
+        - schema_version
+        - artifact_id
+        - kind
+        - uri
+        - media_type
+        - size_bytes
+        - checksum
+        - metadata
+      properties:
+        schema_version:
+          $ref: "#/components/schemas/SchemaVersion"
+        artifact_id:
+          type: string
+          minLength: 1
+        kind:
+          type: string
+          minLength: 1
+        uri:
+          type: string
+          pattern: "^artifact://"
+          description: Published shared-store URI; file and host absolute paths are forbidden.
+        media_type:
+          type: string
+          minLength: 1
+        size_bytes:
+          type: integer
+          minimum: 0
+        checksum:
+          $ref: "#/components/schemas/Checksum"
+        metadata:
+          type: object
+          additionalProperties: true
+    JSONValue:
+      anyOf:
+        - type: "null"
+        - type: boolean
+        - type: number
+        - type: string
+        - type: array
+          items:
+            $ref: "#/components/schemas/JSONValue"
+        - type: object
+          additionalProperties:
+            $ref: "#/components/schemas/JSONValue"
+    InferenceValue:
+      anyOf:
+        - $ref: "#/components/schemas/ArtifactRef"
+        - $ref: "#/components/schemas/JSONValue"
+    RequestedModel:
+      type: object
+      additionalProperties: false
+      required: [alias, name, revision]
+      properties:
+        alias:
+          type: string
+          minLength: 1
+        name:
+          type: string
+          minLength: 1
+        revision:
+          type: string
+          minLength: 1
+    EffectiveModel:
+      type: object
+      additionalProperties: false
+      required: [provider, name, revision]
+      properties:
+        provider:
+          type: string
+          minLength: 1
+        name:
+          type: string
+          minLength: 1
+        revision:
+          type: string
+          minLength: 1
+        runtime:
+          type: string
+          minLength: 1
+    InferenceRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - schema_version
+        - request_id
+        - idempotency_key
+        - run_id
+        - stage_run_id
+        - task
+        - model
+        - inputs
+        - parameters
+        - timeout_sec
+        - trace_id
+      properties:
+        schema_version:
+          $ref: "#/components/schemas/SchemaVersion"
+        request_id:
+          type: string
+          minLength: 1
+        idempotency_key:
+          type: string
+          minLength: 1
+          maxLength: 256
+        run_id:
+          type: string
+          minLength: 1
+        stage_run_id:
+          type: string
+          minLength: 1
+        task:
+          type: string
+          enum:
+            - voice_activity_detection
+            - speech_to_text
+            - speaker_diarization
+            - image_captioning
+            - text_embedding
+        model:
+          $ref: "#/components/schemas/RequestedModel"
+        inputs:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/InferenceValue"
+        parameters:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/JSONValue"
+        timeout_sec:
+          type: number
+          exclusiveMinimum: 0
+          description: Total client deadline budget including submit and polling.
+        trace_id:
+          type: string
+          minLength: 1
+      example:
+        schema_version: "1"
+        request_id: infer_789
+        idempotency_key: embed_abc123
+        run_id: run_123
+        stage_run_id: stage_456
+        task: text_embedding
+        model:
+          alias: embedding.remote
+          name: paraphrase-multilingual-MiniLM-L12-v2
+          revision: main
+        inputs:
+          texts: [첫 번째 문장, 두 번째 문장]
+        parameters:
+          normalize_embeddings: true
+        timeout_sec: 30
+        trace_id: trace_123
+    InferenceFailure:
+      type: object
+      additionalProperties: false
+      required: [schema_version, code, message, retryable, details]
+      properties:
+        schema_version:
+          $ref: "#/components/schemas/SchemaVersion"
+        code:
+          type: string
+          enum:
+            - INVALID_REQUEST
+            - UNSUPPORTED_CAPABILITY
+            - ARTIFACT_NOT_FOUND
+            - ARTIFACT_INTEGRITY_ERROR
+            - AUTHENTICATION_FAILED
+            - MODEL_ACCESS_DENIED
+            - MODEL_UNAVAILABLE
+            - PROVIDER_RATE_LIMITED
+            - PROVIDER_TIMEOUT
+            - PROVIDER_UNAVAILABLE
+            - INFERENCE_FAILED
+            - CANCELLED
+        message:
+          type: string
+          minLength: 1
+        retryable:
+          type: boolean
+        details:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/JSONValue"
+        request_id:
+          type: string
+          minLength: 1
+      example:
+        schema_version: "1"
+        code: PROVIDER_RATE_LIMITED
+        message: provider is temporarily rate limited
+        retryable: true
+        details:
+          retry_after_sec: 2
+        request_id: infer_789
+    InferenceResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - schema_version
+        - request_id
+        - status
+        - outputs
+        - usage
+        - timing
+        - warnings
+      properties:
+        schema_version:
+          $ref: "#/components/schemas/SchemaVersion"
+        request_id:
+          type: string
+          minLength: 1
+        status:
+          type: string
+          enum: [succeeded, failed, cancelled]
+        outputs:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/InferenceValue"
+        model:
+          $ref: "#/components/schemas/EffectiveModel"
+        usage:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/JSONValue"
+        timing:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/JSONValue"
+        warnings:
+          type: array
+          items:
+            type: string
+        error:
+          $ref: "#/components/schemas/InferenceFailure"
+      allOf:
+        - if:
+            properties:
+              status:
+                const: succeeded
+          then:
+            required: [model]
+            not:
+              required: [error]
+          else:
+            required: [error]
+      example:
+        schema_version: "1"
+        request_id: infer_789
+        status: succeeded
+        outputs:
+          vectors: [[1.0, 0.0], [0.0, 1.0]]
+          dimension: 2
+        model:
+          provider: http.embedding
+          name: paraphrase-multilingual-MiniLM-L12-v2
+          revision: commit-abc123
+          runtime: sentence-transformers/5.1
+        usage:
+          input_count: 2
+          batch_size: 2
+        timing:
+          queue_sec: 0.01
+          inference_sec: 0.02
+        warnings: []
+    ProviderCapabilities:
+      type: object
+      additionalProperties: false
+      required:
+        - schema_version
+        - provider
+        - tasks
+        - model_aliases
+        - input_media_types
+        - features
+        - max_batch_size
+        - max_artifact_bytes
+        - supports_cancellation
+        - supports_async_jobs
+      properties:
+        schema_version:
+          $ref: "#/components/schemas/SchemaVersion"
+        provider:
+          type: string
+          minLength: 1
+        tasks:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            enum:
+              - voice_activity_detection
+              - speech_to_text
+              - speaker_diarization
+              - image_captioning
+              - text_embedding
+        model_aliases:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            minLength: 1
+        input_media_types:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            minLength: 1
+        features:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            minLength: 1
+        max_batch_size:
+          type: integer
+          minimum: 1
+        max_artifact_bytes:
+          anyOf:
+            - type: integer
+              minimum: 1
+            - type: "null"
+        supports_cancellation:
+          type: boolean
+        supports_async_jobs:
+          type: boolean
+      example:
+        schema_version: "1"
+        provider: http.embedding
+        tasks: [text_embedding]
+        model_aliases: [embedding.remote]
+        input_media_types: [text/plain]
+        features: [normalized_vectors, inline_batch]
+        max_batch_size: 128
+        max_artifact_bytes: null
+        supports_cancellation: true
+        supports_async_jobs: true
+    ProviderHealth:
+      type: object
+      additionalProperties: false
+      required: [schema_version, provider, status, details]
+      properties:
+        schema_version:
+          $ref: "#/components/schemas/SchemaVersion"
+        provider:
+          type: string
+          minLength: 1
+        status:
+          type: string
+          enum: [available, degraded, unavailable]
+        details:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/JSONValue"
+      example:
+        schema_version: "1"
+        provider: http.embedding
+        status: available
+        details:
+          ready: true
+    InferenceJob:
+      type: object
+      additionalProperties: false
+      required:
+        - schema_version
+        - request_id
+        - status
+        - created_at
+        - updated_at
+      properties:
+        schema_version:
+          $ref: "#/components/schemas/SchemaVersion"
+        request_id:
+          type: string
+          minLength: 1
+        status:
+          type: string
+          enum: [queued, running, succeeded, failed, cancelled]
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        response:
+          $ref: "#/components/schemas/InferenceResponse"
+        retry_after_sec:
+          type: number
+          minimum: 0
+      allOf:
+        - if:
+            properties:
+              status:
+                enum: [succeeded, failed, cancelled]
+          then:
+            required: [response]
+          else:
+            not:
+              required: [response]
+      example:
+        schema_version: "1"
+        request_id: infer_789
+        status: queued
+        created_at: "2026-08-12T10:00:00Z"
+        updated_at: "2026-08-12T10:00:00Z"
+        retry_after_sec: 0.1

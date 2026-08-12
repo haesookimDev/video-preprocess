@@ -1,6 +1,6 @@
 # 엔진·실행기 분리 개발 로드맵
 
-상태: **Phase 3 완료 — Phase 4 시작 대기**
+상태: **진행 중 — Phase 4**
 기준일: 2026-08-12
 대상 설계: [`06-target-architecture.md`](./06-target-architecture.md)  
 공개 계약: [`07-execution-inference-contracts.md`](./07-execution-inference-contracts.md)
@@ -259,18 +259,18 @@ run cancellation과 분류된 bounded retry는 attempt별 manifest를 보존하�
 
 ### 작업
 
-- OpenAPI v1 문서 작성
-- `/health`, `/capabilities`, inference job API 구현
-- HTTP client provider 구현
-- 인증 헤더 주입과 로그 redaction
-- artifact 전달 방식 구현
-  - 우선: 공유 Artifact Store
-  - 대안: 제한된 업로드 API
-- async job submit/poll/cancel 구현
-- idempotency 처리
-- deadline, retry, backoff, circuit breaker 정책 구현
-- local fake server로 contract test
-- 실제 모델 서버 하나로 end-to-end 검증
+- [x] OpenAPI v1 문서 작성
+- [ ] `/health`, `/capabilities`, inference job API 구현
+- [ ] HTTP client provider 구현
+- [ ] 인증 헤더 주입과 로그 redaction
+- [x] artifact 전달 방식 계약 확정
+  - [x] v1: 공유 Artifact Store
+  - [ ] 후속 확장: 제한된 업로드 API
+- [ ] async job submit/poll/cancel 구현
+- [x] idempotency header/body와 conflict 계약 확정
+- [ ] deadline, retry, backoff, circuit breaker 정책 구현
+- [ ] local fake server로 contract test
+- [ ] 실제 모델 서버 하나로 end-to-end 검증
 
 ### 첫 원격화 대상
 

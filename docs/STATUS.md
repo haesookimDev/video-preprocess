@@ -1,8 +1,8 @@
 # 개발 상태와 세션 인수인계
 
 - 마지막 갱신: **2026-08-12**
-- 현재 단계: **Phase 3 완료 — Phase 4 시작 대기**
-- 다음 작업: **Phase 4 HTTP Inference OpenAPI v1과 fake server contract 확정**
+- 현재 단계: **Phase 4 — HTTP Inference Provider**
+- 다음 작업: **OpenAPI v1을 구현하는 local fake model server contract**
 
 이 문서는 개발 진행 상황의 단일 진입점이다. 새로운 세션은 이 문서를 먼저 읽고, 실제 코드와
 Git 상태를 확인한 뒤 작업을 시작한다.
@@ -84,6 +84,8 @@ Git 상태를 확인한 뒤 작업을 시작한다.
   [`ADR-0020`](./adr/0020-run-store-global-cache-index.md)
 - Engine timeout·cancellation·retry policy 결정:
   [`ADR-0021`](./adr/0021-engine-timeout-cancellation-retry-policy.md)
+- HTTP Inference v1 job transport 결정:
+  [`ADR-0022`](./adr/0022-http-inference-v1-job-contract.md)
 
 ## 3. 완료된 작업
 
@@ -169,13 +171,13 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 
 권장 순서:
 
-1. `docs/openapi/inference-v1.yaml`에 health, capability, async job, cancel과 공통 오류 schema를 고정한다.
-2. 공유 Artifact Store URI, idempotency key, deadline과 effective model metadata의 전송 규칙을
-   `docs/07-execution-inference-contracts.md`와 새 ADR에 확정한다.
-3. 외부 network나 실제 모델 없이 실행되는 local fake model server contract fixture를 추가한다.
-4. `src/video_preprocess/inference/`에 HTTP Provider를 구현하고 timeout, 429, 5xx, 인증 실패와
+1. [x] `docs/openapi/inference-v1.yaml`에 health, capability, async job, cancel과 공통 오류 schema를 고정한다.
+2. [x] 공유 Artifact Store URI, idempotency key, deadline과 effective model metadata의 전송 규칙을
+   `docs/07-execution-inference-contracts.md`와 ADR-0022에 확정한다.
+3. [ ] 외부 network나 실제 모델 없이 실행되는 local fake model server contract fixture를 추가한다.
+4. [ ] `src/video_preprocess/inference/`에 HTTP Provider를 구현하고 timeout, 429, 5xx, 인증 실패와
    cancellation을 공통 `InferenceError`로 정규화한다.
-5. embedding alias를 첫 원격화 대상으로 local/HTTP 설정 전환과 cache fingerprint E2E를 검증한다.
+5. [ ] embedding alias를 첫 원격화 대상으로 local/HTTP 설정 전환과 cache fingerprint E2E를 검증한다.
 
 Phase 3는 11단계 Engine 실행, LocalExecutor, 선택 실행, read-only cache preview, 같은 Store의 run 간
 cache, cooperative timeout/cancel과 bounded retry까지 완료했다. `pipeline.runner`는 명시적
@@ -288,6 +290,17 @@ compatibility 구현으로만 남아 있으며 Phase 4에서도 CLI와 Stage가 
 
 최신 기록을 위에 추가한다. 긴 구현 설명은 PR이나 ADR에 두고 여기에는 다음 세션이 재개하는 데
 필요한 정보만 적는다.
+
+### 2026-08-12 — Phase 4 HTTP Inference v1 계약
+
+- 목표: Local Provider와 동일한 추론 의미를 보존하는 원격 async job transport 확정
+- 완료: OpenAPI 3.1 health/capability/submit/poll/cancel, job envelope, 공통 오류, idempotency,
+  shared Artifact Store, total deadline와 effective model 규칙; ADR-0022
+- 주요 결정: 새 job `202`, idempotent 복구 `200`, conflict `409`; terminal job만 response 포함;
+  v1은 publish된 `artifact://`만 허용하고 upload와 임의 URL fetch는 제외
+- 검증: OpenAPI route/ref와 Python domain example round-trip contract test 5개 통과
+- 호환성: 기존 Python `InferenceRequest/Response` schema를 변경하지 않고 transport envelope만 추가
+- 다음 작업: stdlib 기반 local fake model server와 submit/poll/cancel/idempotency/error contract test
 
 ### 2026-08-12 — Phase 3 완료
 

@@ -27,6 +27,7 @@
 | [`06-target-architecture.md`](./06-target-architecture.md) | 목표 시스템 아키텍처 | 컴포넌트 책임이나 의존 방향 변경 시 |
 | [`07-execution-inference-contracts.md`](./07-execution-inference-contracts.md) | 실행·추론 인터페이스 계약 | API, 스키마, 오류 정책 변경 시 |
 | [`08-development-roadmap.md`](./08-development-roadmap.md) | 단계별 개발 계획 | 범위·순서·완료 조건 변경 시 |
+| [`openapi/inference-v1.yaml`](./openapi/inference-v1.yaml) | HTTP 추론 v1 전송 계약 | endpoint·payload·HTTP 오류 변경 시 |
 | [`STATUS.md`](./STATUS.md) | 살아 있는 개발 현황 | 의미 있는 개발 작업을 마칠 때마다 |
 | [`adr/`](./adr/) | 되돌리기 어려운 결정의 근거 | 새로운 아키텍처 결정 시 |
 
@@ -55,4 +56,3 @@
 
 단순 오탈자 수정이나 내부 리팩터링처럼 외부 동작·계약·다음 작업에 영향이 없는
 변경은 `STATUS.md`에 기록하지 않아도 된다.
-

@@ -297,6 +297,11 @@ Stage 사이에는 실제 파일 경로가 아니라 `ArtifactRef`를 전달한�
 Artifact Store 전환 전까지는 원격 서버에 로컬 절대 경로를 넘기지 않는다. 로컬 경로는
 다른 호스트에서 의미가 없으며 내부 파일 구조를 노출할 수 있다.
 
+HTTP Inference v1은 양쪽 배포가 해석할 수 있는 publish된 `artifact://` namespace만 허용한다.
+비동기 submit/poll/cancel, idempotency header와 total deadline 계약은
+[`ADR-0022`](./adr/0022-http-inference-v1-job-contract.md)와
+[`openapi/inference-v1.yaml`](./openapi/inference-v1.yaml)에 고정한다.
+
 ## 10. 캐시와 재현성
 
 단계 캐시 키는 최소한 다음 값으로 구성한다.

@@ -257,6 +257,7 @@ HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
 - [현재 상태·검증 기록·다음 작업](docs/STATUS.md)
 - [목표 아키텍처](docs/06-target-architecture.md)
 - [실행·추론 계약](docs/07-execution-inference-contracts.md)
+- [HTTP Inference OpenAPI v1](docs/openapi/inference-v1.yaml)
 - [개발 로드맵](docs/08-development-roadmap.md)
 - [Architecture Decision Records](docs/adr/)
 

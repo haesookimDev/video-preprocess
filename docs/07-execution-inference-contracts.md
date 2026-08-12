@@ -19,8 +19,8 @@ Executor Port와 LocalExecutor는
 PipelineEngine과 상태 머신은
 [`src/video_preprocess/engine/`](../src/video_preprocess/engine/)에 구현됐다. manifest cache key와
 decision, RunStore journal, 같은 run resume와 Store 범위 global cache index도 구현됐다. 전체 01~11
-legacy Stage binding과 기본 CLI/cache-aware preview도 구현됐으며 HTTP Provider는 아직 구현 완료로
-간주하지 않는다.
+legacy Stage binding과 기본 CLI/cache-aware preview도 구현됐다. HTTP Inference v1 transport는
+[`openapi/inference-v1.yaml`](./openapi/inference-v1.yaml)로 확정했으며 Provider 구현은 진행 중이다.
 Inference 공통 계약,
 Gateway, `LocalEmbeddingProvider`, `LocalCaptionProvider`, `LocalSTTProvider`,
 `LocalDiarizationProvider`와 `LocalVADProvider`는
@@ -628,9 +628,11 @@ Stage slot별 `ModelExecution`으로 변환하며 한 slot이라도 미확정이
 Engine은 모델별 세부 capability를 해석하지 않는다. Gateway가 binding 검증과 provider 선택을
 담당하고, 실행 전에 지원하지 않는 조합을 명확하게 거부한다.
 
-### 7.2 HTTP API 권장 형태
+### 7.2 HTTP API v1
 
-짧은 요청과 긴 요청을 같은 비동기 job 모델로 표현한다.
+짧은 요청과 긴 요청을 같은 비동기 job 모델로 표현한다. 기준 문서는
+[`openapi/inference-v1.yaml`](./openapi/inference-v1.yaml)이며 결정 근거는
+[`ADR-0022`](./adr/0022-http-inference-v1-job-contract.md)에 기록한다.
 
 ```text
 GET    /v1/health
@@ -640,8 +642,21 @@ GET    /v1/inference-jobs/{request_id}
 DELETE /v1/inference-jobs/{request_id}
 ```
 
-`POST`는 `202 Accepted`와 request ID를 반환할 수 있다. 이미 완료된 동일
-`idempotency_key` 요청은 기존 결과를 반환한다.
+전송 규칙:
+
+- HTTP `/v1`과 payload `schema_version: "1"`을 함께 검증한다.
+- `POST`의 `Idempotency-Key` header는 body `idempotency_key`와 같아야 한다.
+- 새 job은 `202`, 같은 의미의 기존 job은 `200`, 같은 key의 다른 요청은 `409`를 반환한다.
+- job은 `queued → running → succeeded|failed|cancelled` 상태를 사용한다. terminal job만 완전한
+  `InferenceResponse`를 포함한다.
+- poll response의 `Retry-After` header와 `retry_after_sec`는 hint이며 client total deadline을
+  늘리지 않는다.
+- `DELETE`는 cooperative cancel이며 같은 요청 반복과 terminal job에 idempotent하다.
+- success response의 effective provider/model/resolved revision/runtime은 Python 계약과 동일하다.
+
+Artifact 전송은 v1에서 공유 Store 방식만 지원한다. 대용량 입력은 publish된 `artifact://` 참조로
+보내고 서버는 허용 namespace, size와 checksum을 검증한다. `file://`, 호스트 절대 경로, base64 media,
+임의 URL fetch와 credential 직렬화는 금지한다. 제한된 upload API는 후속 호환 확장으로 둔다.
 
 ## 8. 오류 계약과 재시도
 
@@ -675,8 +690,9 @@ DELETE /v1/inference-jobs/{request_id}
 
 Engine Stage retry는 `EXECUTOR_SUBMIT_FAILED`, `EXECUTOR_RESULT_FAILED`, `STAGE_TIMEOUT`만 기본
 transient reason으로 분류하고 bounded exponential backoff를 적용한다. Gateway는 한 요청의
-capability 확인과 inference를 합친 전체 timeout만 구현한다. HTTP `Retry-After`, jitter와 circuit
-breaker는 HTTP Provider 단계에서 추가한다. 현재 Local Provider 실행 thread는 timeout 후 강제
+capability 확인과 inference를 합친 전체 timeout을 구현한다. HTTP Provider도 이 budget 안에서
+capability, submit, poll과 terminal response를 완료해야 한다. `Retry-After`, bounded jitter와 circuit
+breaker의 구체 값은 Provider 구현 설정으로 추가한다. 현재 Local Provider 실행 thread는 timeout 후 강제
 중단할 수 없어 cancellation 미지원으로 capability에 표시한다.
 
 Application request는 선택적으로 모든 planned Stage에 적용할 `stage_timeout_sec`, 최초 실행을
