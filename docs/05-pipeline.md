@@ -116,3 +116,6 @@ PipelineEngine→LocalExecutor에서 실행한다. 입력 영상은 cache integr
 Artifact/Run Store를 read-only로 열고 실제 task/cache identity로 `hit`, `miss`, `forced`, `blocked`,
 예상 실행 여부와 stable reason을 출력한다. 검증된 hit output만 다음 Stage 입력으로 전달하므로
 상위 Stage를 실행해야 checksum을 알 수 있는 경우 downstream은 `blocked`다.
+
+같은 output Store의 다른 run도 content cache key index에서 후보를 찾는다. 실제 hit은 현재
+effective model fingerprint와 모든 input/output artifact checksum을 다시 검증한 뒤에만 허용한다.

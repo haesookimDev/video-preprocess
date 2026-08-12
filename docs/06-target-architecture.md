@@ -200,7 +200,7 @@ deterministic bundle로 추적하고 timeline/context companion 문서와 index 
 [`ADR-0014`](./adr/0014-legacy-media-stage-task-bindings.md)와
 [`ADR-0015`](./adr/0015-legacy-model-stage-bindings-and-sidecar-restore.md),
 [`ADR-0016`](./adr/0016-legacy-final-stage-and-pipeline-bindings.md)에 기록한다. global cache index와
-run 간 재사용은 아직 구현되지 않았다.
+run 간 재사용은 [`ADR-0020`](./adr/0020-run-store-global-cache-index.md)에 기록한다.
 
 `PipelineApplicationService`는 adapter-neutral run request를 검증하고 planner 선택, run/trace ID,
 Stage config/model binding 필터와 boundary artifact 요구를 조정한다. `LocalPipelineRuntimeFactory`는

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Protocol
 
 from video_preprocess.domain import (
@@ -32,3 +33,7 @@ class RunStore(Protocol):
         stage: StageAttemptRef,
     ) -> bool: ...
 
+    def find_stages_by_cache_key(
+        self,
+        cache_key: str,
+    ) -> Sequence[StageManifest]: ...

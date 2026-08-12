@@ -250,7 +250,12 @@ class PipelineEngine:
                 raise TypeError("executor must implement the Executor Port")
         self.executor = executor
         if run_store is not None:
-            for method_name in ("save_run", "load_stage", "save_stage"):
+            for method_name in (
+                "save_run",
+                "load_stage",
+                "save_stage",
+                "find_stages_by_cache_key",
+            ):
                 if not callable(getattr(run_store, method_name, None)):
                     raise TypeError(
                         "run_store must implement the RunStore Port"
@@ -352,10 +357,10 @@ class PipelineEngine:
             )
             decision = await self._evaluate_cache_candidate(
                 task,
-                candidate=(
-                    None
+                candidates=(
+                    ()
                     if spec.name in forced
-                    else self._load_cache_candidate(task)
+                    else self._load_cache_candidates(task)
                 ),
                 force=spec.name in forced,
             )
@@ -641,7 +646,14 @@ class PipelineEngine:
         candidate = None if force else journal.load_candidate(task)
         return await self._evaluate_cache_candidate(
             task,
-            candidate=candidate,
+            candidates=(
+                ()
+                if force
+                else self._load_cache_candidates(
+                    task,
+                    same_run=candidate,
+                )
+            ),
             force=force,
         )
 
@@ -649,13 +661,20 @@ class PipelineEngine:
         self,
         task: StageTask,
         *,
-        candidate: StageManifest | None,
+        candidates: Sequence[StageManifest],
         force: bool,
     ) -> CacheDecision:
         if self.cache_evaluator is None:
             raise RuntimeError("cache evaluator is unavailable")
+        if force:
+            return self.cache_evaluator.evaluate(
+                task,
+                None,
+                expected_models=None,
+                force=True,
+            )
         expected_models: Sequence[ModelExecution] | None
-        if candidate is None or not task.model_bindings:
+        if not candidates or not task.model_bindings:
             expected_models = () if not task.model_bindings else None
         elif self.model_resolver is None:
             expected_models = None
@@ -664,25 +683,63 @@ class PipelineEngine:
                 expected_models = await self.model_resolver.resolve(task)
             except Exception:
                 expected_models = None
-        return self.cache_evaluator.evaluate(
-            task,
-            candidate,
-            expected_models=expected_models,
-            force=force,
-        )
+        if not candidates:
+            return self.cache_evaluator.evaluate(
+                task,
+                None,
+                expected_models=expected_models,
+            )
+        first_miss = None
+        for candidate in candidates:
+            decision = self.cache_evaluator.evaluate(
+                task,
+                candidate,
+                expected_models=expected_models,
+            )
+            if decision.hit:
+                return decision
+            if first_miss is None:
+                first_miss = decision
+        if first_miss is None:
+            raise RuntimeError("cache candidates produced no decision")
+        return first_miss
 
-    def _load_cache_candidate(self, task: StageTask) -> StageManifest | None:
+    def _load_cache_candidates(
+        self,
+        task: StageTask,
+        *,
+        same_run: StageManifest | None = None,
+    ) -> tuple[StageManifest, ...]:
         if self.run_store is None:
             raise RuntimeError("cache candidate loading requires a run store")
         try:
-            return self.run_store.load_stage(
-                task.run_id,
-                StageAttemptRef(task.stage_run_id, task.attempt),
+            if same_run is None:
+                same_run = self.run_store.load_stage(
+                    task.run_id,
+                    StageAttemptRef(task.stage_run_id, task.attempt),
+                )
+            indexed = self.run_store.find_stages_by_cache_key(
+                compute_stage_cache_key(task)
             )
         except Exception as exc:
             raise EnginePersistenceError(
-                "could not load a Stage cache candidate"
+                "could not load Stage cache candidates"
             ) from exc
+        candidates = []
+        seen = set()
+        for manifest in (same_run, *indexed):
+            if manifest is None:
+                continue
+            identity = (
+                manifest.task.run_id,
+                manifest.task.stage_run_id,
+                manifest.task.attempt,
+            )
+            if identity in seen:
+                continue
+            seen.add(identity)
+            candidates.append(manifest)
+        return tuple(candidates)
 
     @staticmethod
     def _persist_stage(

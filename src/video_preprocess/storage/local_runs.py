@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from pathlib import Path
 from urllib.parse import quote
 
@@ -55,6 +56,7 @@ class LocalRunStore:
         if not read_only:
             self.manifest_root.mkdir(parents=True, exist_ok=True)
         self.artifacts = artifacts
+        self._cache_lock = threading.Lock()
 
     def save_run(self, manifest: RunManifest) -> None:
         self._require_writable()
@@ -107,6 +109,7 @@ class LocalRunStore:
             manifest.reference,
         )
         atomic_write_json(path, manifest.to_dict())
+        self._index_stage(manifest)
 
     def load_stage(
         self,
@@ -149,8 +152,100 @@ class LocalRunStore:
                 return False
         return True
 
+    def find_stages_by_cache_key(
+        self,
+        cache_key: str,
+    ) -> tuple[StageManifest, ...]:
+        if not isinstance(cache_key, str) or not cache_key.strip():
+            raise ValueError("cache_key must be a non-empty string")
+        payload = self._read_json(self._cache_path(cache_key))
+        if payload is None:
+            return ()
+        entries = self._validate_cache_index(payload, cache_key)
+        manifests = []
+        for entry in reversed(entries):
+            reference = StageAttemptRef(
+                entry["stage_run_id"],
+                entry["attempt"],
+            )
+            manifest = self.load_stage(entry["run_id"], reference)
+            if manifest is None or manifest.cache_key != cache_key:
+                continue
+            manifests.append(manifest)
+        return tuple(manifests)
+
     def _run_directory(self, run_id: str) -> Path:
         return self.manifest_root / _id_segment(run_id, "run_id")
+
+    def _index_stage(self, manifest: StageManifest) -> None:
+        if (
+            manifest.cache_key is None
+            or manifest.result.status is not StageStatus.SUCCEEDED
+        ):
+            return
+        cache_key = manifest.cache_key
+        path = self._cache_path(cache_key)
+        entry = {
+            "run_id": manifest.task.run_id,
+            "stage_run_id": manifest.task.stage_run_id,
+            "attempt": manifest.task.attempt,
+        }
+        with self._cache_lock:
+            payload = self._read_json(path)
+            entries = (
+                []
+                if payload is None
+                else self._validate_cache_index(payload, cache_key)
+            )
+            entries = [candidate for candidate in entries if candidate != entry]
+            entries.append(entry)
+            atomic_write_json(
+                path,
+                {
+                    "schema_version": "1",
+                    "cache_key": cache_key,
+                    "entries": entries,
+                },
+            )
+
+    @staticmethod
+    def _validate_cache_index(
+        payload: dict[str, object],
+        cache_key: str,
+    ) -> list[dict[str, object]]:
+        if (
+            payload.get("schema_version") != "1"
+            or payload.get("cache_key") != cache_key
+        ):
+            raise ManifestFormatError("invalid cache index header")
+        raw_entries = payload.get("entries")
+        if not isinstance(raw_entries, list):
+            raise ManifestFormatError("cache index entries must be an array")
+        entries = []
+        for raw in raw_entries:
+            if not isinstance(raw, dict):
+                raise ManifestFormatError("cache index entry must be an object")
+            run_id = raw.get("run_id")
+            stage_run_id = raw.get("stage_run_id")
+            attempt = raw.get("attempt")
+            if (
+                not isinstance(run_id, str)
+                or not run_id.strip()
+                or not isinstance(stage_run_id, str)
+                or not stage_run_id.strip()
+                or isinstance(attempt, bool)
+                or not isinstance(attempt, int)
+                or attempt < 1
+            ):
+                raise ManifestFormatError("cache index entry is invalid")
+            entries.append(
+                {
+                    "run_id": run_id,
+                    "stage_run_id": stage_run_id,
+                    "attempt": attempt,
+                }
+            )
+        return entries
 
     def _require_writable(self) -> None:
         if self.read_only:
@@ -159,6 +254,13 @@ class LocalRunStore:
     def _run_path(self, run_id: str) -> Path:
         return self._safe_manifest_path(
             self._run_directory(run_id) / "run.json"
+        )
+
+    def _cache_path(self, cache_key: str) -> Path:
+        return self._safe_manifest_path(
+            self.manifest_root
+            / "_cache"
+            / f"{quote(cache_key, safe='-._~')}.json"
         )
 
     def _stage_path(

@@ -2,6 +2,7 @@
 
 import asyncio
 import io
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -145,6 +146,7 @@ class FakeRunStore:
         self.stages = {}
         self.events = []
         self.save_run_error = None
+        self.cache_index = {}
 
     def save_run(self, manifest):
         if self.save_run_error is not None:
@@ -161,6 +163,24 @@ class FakeRunStore:
         key = (manifest.task.run_id, manifest.reference)
         self.stages[key] = manifest
         self.events.append(("stage", manifest.task.stage))
+        if (
+            manifest.cache_key is not None
+            and manifest.result.status is StageStatus.SUCCEEDED
+        ):
+            candidates = self.cache_index.setdefault(
+                manifest.cache_key,
+                [],
+            )
+            candidates[:] = [
+                candidate
+                for candidate in candidates
+                if candidate.reference != manifest.reference
+                or candidate.task.run_id != manifest.task.run_id
+            ]
+            candidates.append(manifest)
+
+    def find_stages_by_cache_key(self, cache_key):
+        return tuple(reversed(self.cache_index.get(cache_key, ())))
 
 
 class IncrementingClock:
@@ -189,6 +209,7 @@ def run_engine(
     model_resolver=None,
     force_stages=None,
     stage_configs=None,
+    run_id="run-123",
 ):
     engine = PipelineEngine(
         executor,
@@ -200,7 +221,7 @@ def run_engine(
     return asyncio.run(
         engine.run(
             plan(),
-            run_id="run-123",
+            run_id=run_id,
             trace_id="trace-123",
             artifacts={"source": artifact("source")},
             stage_configs=(
@@ -262,6 +283,67 @@ def test_second_run_reuses_verified_stage_manifests_without_executor() -> None:
         for record in result.stages
     )
     assert [task.stage for task in resolver.tasks] == ["02_process"]
+
+
+def test_different_run_reuses_content_addressed_stage_manifests() -> None:
+    runs = FakeRunStore()
+    run_engine(FakeExecutor(success), runs, run_id="run-first")
+    executor = FakeExecutor(success)
+
+    result = run_engine(
+        executor,
+        runs,
+        model_resolver=StaticModelResolver(),
+        run_id="run-second",
+    )
+
+    assert executor.tasks == []
+    assert all(record.from_cache for record in result.stages)
+    assert all(
+        record.cache_decision.manifest.task.run_id == "run-first"
+        for record in result.stages
+    )
+    assert result.manifest.run_id == "run-second"
+
+
+def test_global_cache_checks_older_candidate_for_matching_model() -> None:
+    runs = FakeRunStore()
+    run_engine(FakeExecutor(success), runs, run_id="run-first")
+    model_key = next(
+        key
+        for key, manifests in runs.cache_index.items()
+        if manifests[-1].task.stage == "02_process"
+    )
+    original = runs.cache_index[model_key][-1]
+    newer_task = replace(
+        original.task,
+        run_id="run-newer",
+        stage_run_id="stage-newer",
+    )
+    newer_result = replace(
+        original.result,
+        run_id="run-newer",
+        stage_run_id="stage-newer",
+        models=(replace(expected_model(), revision="revision-2"),),
+    )
+    runs.save_stage(
+        replace(original, task=newer_task, result=newer_result)
+    )
+    executor = FakeExecutor(success)
+
+    result = run_engine(
+        executor,
+        runs,
+        model_resolver=StaticModelResolver(),
+        run_id="run-third",
+    )
+
+    assert executor.tasks == []
+    assert result.stages[1].from_cache
+    assert (
+        result.stages[1].cache_decision.manifest.task.run_id
+        == "run-first"
+    )
 
 
 def test_preview_reuses_hits_without_writing_or_submitting() -> None:

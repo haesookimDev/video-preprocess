@@ -25,6 +25,7 @@ flowchart LR
 - 입력·설정·모델 binding·산출물 checksum 기반 manifest cache
 - VAD, STT, diarization, caption, embedding Local Inference Provider
 - 전체·단계별·from/to 선택 실행과 같은 local run 재개
+- 같은 output workspace의 run 간 content-addressed cache 재사용
 - Stage별 cache 상태·실행 예상·stable reason을 제공하는 read-only dry-run
 - offline snapshot·immutable revision·VAD asset 기반 local model fingerprint 확인
 - 기존 JSON·Markdown·SQLite 출력 구조와 query CLI
@@ -33,7 +34,6 @@ flowchart LR
 
 - HTTP Inference Provider와 모델 서버
 - REST API·queue adapter와 RemoteExecutor
-- run 사이의 global content-addressed cache
 
 정확한 완료 상태와 다음 작업은 [docs/STATUS.md](docs/STATUS.md)를 기준으로 한다.
 
@@ -173,15 +173,17 @@ revision을 확정할 수 없는 Stage는 안전하게 `EFFECTIVE_MODELS_UNAVAIL
 
 | 상황 | 동작 |
 |---|---|
-| 같은 local run, 검증된 비모델 Stage | cache hit 가능 |
+| 같은 Store의 같은/다른 run, 검증된 Stage | cache hit 가능 |
 | effective model fingerprint를 실행 전에 확정할 수 없음 | 안전한 cache miss 후 재실행 |
 | 이전 결과가 `skipped` | 조건 재평가를 위해 재실행 |
 | 입력·설정·binding·Stage version 변경 | 관련 Stage cache miss |
 | output 누락·변조 | cache miss |
 | `--force-stage` / `--force` | 지정 범위 강제 실행 |
 
-현재 cache 후보 조회 범위는 같은 `run_id`다. 다른 run의 동일 artifact를 재사용하는 global cache
-index는 아직 구현되지 않았다.
+Local Run Store는 content cache key별 manifest 후보를 인덱싱한다. 따라서 같은 output workspace의
+다른 `run_id`도 task semantics, effective model fingerprint와 모든 artifact checksum이 일치하면
+재사용한다. 다른 output namespace나 외부 Store 사이의 공유는 해당 Store 구현이 별도 index 정책을
+제공해야 한다.
 
 ## 출력과 Manifest
 

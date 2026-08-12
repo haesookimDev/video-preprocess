@@ -43,6 +43,7 @@ def make_stage_manifest(
     artifact: ArtifactRef,
     *,
     status: StageStatus = StageStatus.SUCCEEDED,
+    cache_key: str | None = None,
 ) -> StageManifest:
     task = StageTask(
         run_id="run_123",
@@ -68,6 +69,7 @@ def make_stage_manifest(
         result=result,
         started_at="2026-08-06T12:00:00Z",
         completed_at="2026-08-06T12:00:05Z",
+        cache_key=cache_key,
     )
 
 
@@ -95,6 +97,22 @@ def test_stage_and_run_manifests_round_trip_after_artifact_publish(
     assert runs.load_stage("run_123", stage.reference) == stage
     assert runs.is_stage_complete("run_123", stage.reference)
     assert runs.load_run("run_123") == make_run_manifest(stage.reference)
+
+
+def test_cache_index_returns_successful_manifest_by_content_key(
+    tmp_path: Path,
+) -> None:
+    artifacts = LocalArtifactStore(tmp_path, namespace="run_123")
+    runs = LocalRunStore(tmp_path, artifacts)
+    stage = make_stage_manifest(
+        publish_artifact(artifacts),
+        cache_key="stage-cache-v1:content",
+    )
+
+    runs.save_stage(stage)
+
+    assert runs.find_stages_by_cache_key(stage.cache_key) == (stage,)
+    assert runs.find_stages_by_cache_key("stage-cache-v1:missing") == ()
 
 
 def test_stage_manifest_is_not_written_for_missing_output(

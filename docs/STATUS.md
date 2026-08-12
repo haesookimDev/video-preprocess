@@ -2,7 +2,7 @@
 
 - 마지막 갱신: **2026-08-12**
 - 현재 단계: **Phase 3 — Pipeline Engine과 LocalExecutor**
-- 다음 작업: **global cache index와 run 간 재사용**
+- 다음 작업: **Stage timeout·cancellation token과 retry policy**
 
 이 문서는 개발 진행 상황의 단일 진입점이다. 새로운 세션은 이 문서를 먼저 읽고, 실제 코드와
 Git 상태를 확인한 뒤 작업을 시작한다.
@@ -26,7 +26,7 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - VAD, STT, diarization, caption과 embedding이 `InferenceGateway`와 Local Provider로 실행
 - 모든 모델 Stage에서 구체 ML library import와 model lifecycle 제거 완료
 - 기본 CLI는 Application Service를 통해 새 Engine과 01~11 binding을 실행
-- HTTP provider, global cache와 API adapter는 아직 미구현
+- HTTP provider와 API adapter는 아직 미구현
 - Local Store가 input copy, 단계 산출물과 run/stage manifest를 관리
 
 기존 샘플 산출물은 `output/` 아래에 있으나 생성물이며 Git에 커밋하지 않는다.
@@ -80,6 +80,8 @@ Git 상태를 확인한 뒤 작업을 시작한다.
   [`ADR-0018`](./adr/0018-engine-backed-cli-and-local-run-resume.md)
 - 안전한 local effective model resolution 결정:
   [`ADR-0019`](./adr/0019-safe-local-effective-model-resolution.md)
+- Run Store global cache index 결정:
+  [`ADR-0020`](./adr/0020-run-store-global-cache-index.md)
 
 ## 3. 완료된 작업
 
@@ -125,6 +127,7 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - [x] Engine의 read-only cache preview와 downstream blocked 판정
 - [x] Application Service/CLI cache-aware read-only dry-run
 - [x] local provider effective model fingerprint resolver
+- [x] global cache index와 run 간 content-addressed 재사용
 
 ## 4. 아직 구현되지 않은 작업
 
@@ -146,7 +149,7 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - [x] legacy 01~04 Engine/LocalExecutor compatibility path
 - [x] legacy 05~08 Engine/LocalExecutor compatibility path
 - [x] legacy 09~11 Engine/LocalExecutor compatibility path
-- [ ] global cache index와 run 간 cache 재사용
+- [x] global cache index와 run 간 cache 재사용
 - [ ] HTTPInferenceProvider와 모델 서버 계약 구현
 - [x] Pipeline Application Service와 local runtime factory
 - [x] Application Service 기반 선택 실행 CLI
@@ -166,7 +169,7 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 2. [x] local provider의 현재 effective provider/model/revision/runtime을 안전하게 resolve하는 adapter 구현
 3. [x] `--dry-run`에 Stage별 `hit/miss/forced/blocked`, stable reason과 예상 실행 여부 출력
 4. [x] model 미로드·credential 변경 시 거짓 hit 없이 reason을 표시하는 contract test 추가
-5. 이후 global cache index와 run 간 content-addressed manifest 조회를 구현
+5. [x] global cache index와 run 간 content-addressed manifest 조회를 구현
 
 기본 CLI 전환은 완료됐고, `pipeline.runner`는 명시적 compatibility 구현으로만 남아 있다.
 dry-run은 read-only Store와 실제 cache evaluator를 사용하며 model fingerprint를 사전 확정할 수
@@ -278,6 +281,18 @@ dry-run은 read-only Store와 실제 cache evaluator를 사용하며 model finge
 
 최신 기록을 위에 추가한다. 긴 구현 설명은 PR이나 ADR에 두고 여기에는 다음 세션이 재개하는 데
 필요한 정보만 적는다.
+
+### 2026-08-12 — Phase 3 Run Store global cache index
+
+- 목표: 같은 Store의 다른 run에서도 content-addressed Stage 결과를 안전하게 재사용
+- 완료: RunStore cache 후보 조회 Port, LocalRunStore atomic index, same-run 우선·global 후보 순회와
+  current model/artifact 재검증 구현; ADR-0020
+- 주요 결정: index는 manifest 위치만 관리하고 hit 정책은 Engine evaluator가 소유; 같은 key의
+  model revision별 후보를 모두 확인해 최신 mismatch가 이전 compatible hit을 가리지 않게 함
+- 검증: Engine/LocalRunStore 관련 테스트 22개 통과; offline sample 기존 run으로 index 생성 후 새
+  `global-cache-check` run의 dry-run과 실제 실행에서 11개 Stage 모두 cache hit·status ok 확인
+- 호환성: index 범위는 같은 output Store root이며 기존 manifest는 다음 저장 시 점진적으로 등록
+- 다음 작업: Stage timeout, cooperative cancellation token 전달과 bounded retry policy
 
 ### 2026-08-12 — Phase 3 safe local effective model resolver
 

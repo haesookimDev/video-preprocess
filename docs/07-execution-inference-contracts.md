@@ -18,8 +18,8 @@ Executor Port와 LocalExecutor는
 [`src/video_preprocess/executors/`](../src/video_preprocess/executors/)에 구현됐다. 순차
 PipelineEngine과 상태 머신은
 [`src/video_preprocess/engine/`](../src/video_preprocess/engine/)에 구현됐다. manifest cache key와
-decision, RunStore journal과 같은 run의 cache resume도 구현됐다. 전체 01~11 legacy Stage binding과
-기본 CLI/cache-aware preview도 구현됐으며 global cache index와 HTTP Provider는 아직 구현 완료로
+decision, RunStore journal, 같은 run resume와 Store 범위 global cache index도 구현됐다. 전체 01~11
+legacy Stage binding과 기본 CLI/cache-aware preview도 구현됐으며 HTTP Provider는 아직 구현 완료로
 간주하지 않는다.
 Inference 공통 계약,
 Gateway, `LocalEmbeddingProvider`, `LocalCaptionProvider`, `LocalSTTProvider`,
@@ -316,10 +316,10 @@ Stage의 config/model binding만 Engine에 전달한다. runtime factory는 plan
 충족하는 ArtifactRef와 Engine을 제공해야 하며, 하나라도 빠지면 실행 전에 거부한다.
 
 local runtime은 video bytes를 `00_input/`에 원자적으로 publish하고 output root별 stable artifact
-namespace를 사용한다. 부분 실행은 명시한 같은 `run_id`의 RunManifest와 StageManifest에서 output을
-복구하고 현재 video checksum이 이전 run input과 같으며 artifact integrity가 유효할 때만 boundary로
-전달한다. 현재 global cache index와 실행 전 effective model resolver가 없으므로 다른 run의 결과와
-model Stage 결과를 무리하게 재사용하지 않는다. 상세 결정은
+namespace를 사용한다. 부분 실행 boundary는 명시한 같은 `run_id`의 RunManifest와 StageManifest에서
+복구하고 현재 video checksum이 이전 run input과 같으며 artifact integrity가 유효할 때만 전달한다.
+전체 Engine cache 후보는 Store 범위 global index에서도 찾고 effective model resolver와 artifact
+검증을 모두 통과한 결과만 재사용한다. 상세 결정은
 [`ADR-0017`](./adr/0017-pipeline-application-service-and-local-runtime.md)에 기록한다.
 
 기본 CLI는 output workspace에서 stable local run ID를 파생하며 `--run-id`로 명시적 resume 대상을
@@ -734,11 +734,14 @@ load_run(run_id) -> RunManifest | None
 save_stage(stage_manifest) -> None
 load_stage(run_id, stage_attempt_ref) -> StageManifest | None
 is_stage_complete(run_id, stage_attempt_ref) -> bool
+find_stages_by_cache_key(cache_key) -> Sequence[StageManifest]
 ```
 
 `LocalRunStore`는 output을 Artifact Store로 검증한 뒤 Stage manifest를 원자적으로 기록한다.
 성공한 run을 저장할 때 참조된 모든 Stage가 `succeeded` 또는 `skipped`이고 output 검증을
 통과해야 한다. manifest 이후 artifact가 사라지거나 변조되면 `is_stage_complete`는 false다.
+성공하고 cache key가 있는 Stage는 Store root 범위의 content index에도 기록하며 조회 결과는 최신
+후보 순이다. index는 후보 검색만 담당하고 hit 여부는 Engine cache evaluator가 다시 검증한다.
 
 ### 10.3 Cache key와 decision
 
@@ -759,11 +762,13 @@ fingerprint를 resolve하지 못하면 안전하게 miss 처리한다. 구조화
 [`ADR-0012`](./adr/0012-content-addressed-manifest-cache-decisions.md)에 기록한다.
 
 PipelineEngine 통합 시 RunStore가 주입되면 running RunManifest, StageManifest, 갱신된 running
-RunManifest, terminal RunManifest 순서로 저장한다. cache 후보는 현재 RunStore Port의 조회
-범위에 맞춰 같은 run ID와 deterministic stage run ID/attempt에서 찾는다. hit result는 현재 task
-identity로 다시 묶고 Engine lifecycle `cached`로 기록한다. `force_stages`는 대상만 실행하며
-downstream은 새 checksum이 같으면 독립적으로 hit할 수 있다. 상세 결정은
-[`ADR-0013`](./adr/0013-pipeline-engine-run-journal-and-cache-resume.md)에 기록한다.
+RunManifest, terminal RunManifest 순서로 저장한다. cache 후보는 같은 run attempt를 우선하고 이어서
+content cache key index에서 다른 run 후보를 최신 순으로 찾는다. 여러 후보 중 현재 effective model과
+artifact integrity까지 검증된 첫 hit만 사용한다. hit result는 현재 task identity로 다시 묶고 Engine
+lifecycle `cached`로 기록한다. `force_stages`는 대상만 실행하며 downstream은 새 checksum이 같으면
+독립적으로 hit할 수 있다. 상세 결정은
+[`ADR-0013`](./adr/0013-pipeline-engine-run-journal-and-cache-resume.md)과
+[`ADR-0020`](./adr/0020-run-store-global-cache-index.md)에 기록한다.
 
 read-only preview의 Stage disposition은 `hit`, `miss`, `forced`, `blocked`다. 앞의 세 값은 실제
 `CacheDecision`과 stable miss reason을 그대로 보존한다. `blocked`는 cache miss가 아니라 상위

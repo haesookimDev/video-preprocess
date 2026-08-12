@@ -44,7 +44,12 @@ class RunJournal:
         model_bindings: Mapping[str, Mapping[str, object]],
         clock: Clock = utc_now,
     ) -> None:
-        for method_name in ("save_run", "load_stage", "save_stage"):
+        for method_name in (
+            "save_run",
+            "load_stage",
+            "save_stage",
+            "find_stages_by_cache_key",
+        ):
             if not callable(getattr(run_store, method_name, None)):
                 raise TypeError("run_store must implement the RunStore Port")
         if not callable(clock):
