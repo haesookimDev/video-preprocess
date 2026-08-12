@@ -24,6 +24,7 @@ from video_preprocess.engine import (
     EnginePersistenceError,
     ManifestCacheEvaluator,
     PipelineEngine,
+    StagePreviewStatus,
     StageLifecycle,
     StageRegistry,
 )
@@ -261,6 +262,96 @@ def test_second_run_reuses_verified_stage_manifests_without_executor() -> None:
         for record in result.stages
     )
     assert [task.stage for task in resolver.tasks] == ["02_process"]
+
+
+def test_preview_reuses_hits_without_writing_or_submitting() -> None:
+    runs = FakeRunStore()
+    run_engine(FakeExecutor(success), runs)
+    prior_events = list(runs.events)
+    executor = FakeExecutor(success)
+    engine = PipelineEngine(
+        executor,
+        run_store=runs,
+        cache_evaluator=ManifestCacheEvaluator(FakeArtifactStore()),
+        model_resolver=StaticModelResolver(),
+    )
+
+    result = asyncio.run(
+        engine.preview(
+            plan(),
+            run_id="run-123",
+            trace_id="trace-preview",
+            artifacts={"source": artifact("source")},
+            stage_configs={"02_process": {"threshold": 0.5}},
+            model_bindings={
+                "02_process": {"worker": "worker.default"}
+            },
+        )
+    )
+
+    assert [record.status for record in result.stages] == [
+        StagePreviewStatus.HIT,
+        StagePreviewStatus.HIT,
+    ]
+    assert executor.tasks == []
+    assert runs.events == prior_events
+    assert set(result.artifacts) == {"source", "prepared", "processed"}
+
+
+def test_preview_blocks_downstream_after_miss_or_force() -> None:
+    empty_runs = FakeRunStore()
+    engine = PipelineEngine(
+        FakeExecutor(success),
+        run_store=empty_runs,
+        cache_evaluator=ManifestCacheEvaluator(FakeArtifactStore()),
+    )
+
+    missing = asyncio.run(
+        engine.preview(
+            plan(),
+            run_id="run-123",
+            trace_id="trace-preview",
+            artifacts={"source": artifact("source")},
+            stage_configs={"02_process": {"threshold": 0.5}},
+            model_bindings={
+                "02_process": {"worker": "worker.default"}
+            },
+        )
+    )
+    assert [record.status for record in missing.stages] == [
+        StagePreviewStatus.MISS,
+        StagePreviewStatus.BLOCKED,
+    ]
+    assert missing.stages[0].cache_decision.misses[0].reason is (
+        CacheMissReason.MANIFEST_NOT_FOUND
+    )
+    assert missing.stages[1].blocked_inputs == ("prepared",)
+
+    populated_runs = FakeRunStore()
+    run_engine(FakeExecutor(success), populated_runs)
+    forced_engine = PipelineEngine(
+        FakeExecutor(success),
+        run_store=populated_runs,
+        cache_evaluator=ManifestCacheEvaluator(FakeArtifactStore()),
+        model_resolver=StaticModelResolver(),
+    )
+    forced = asyncio.run(
+        forced_engine.preview(
+            plan(),
+            run_id="run-123",
+            trace_id="trace-preview",
+            artifacts={"source": artifact("source")},
+            stage_configs={"02_process": {"threshold": 0.5}},
+            model_bindings={
+                "02_process": {"worker": "worker.default"}
+            },
+            force_stages={"01_prepare"},
+        )
+    )
+    assert [record.status for record in forced.stages] == [
+        StagePreviewStatus.FORCED,
+        StagePreviewStatus.BLOCKED,
+    ]
 
 
 def test_model_stage_executes_when_effective_model_cannot_be_resolved() -> None:

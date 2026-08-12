@@ -1,8 +1,8 @@
 # 개발 상태와 세션 인수인계
 
-- 마지막 갱신: **2026-08-06**
+- 마지막 갱신: **2026-08-12**
 - 현재 단계: **Phase 3 — Pipeline Engine과 LocalExecutor**
-- 다음 작업: **cache-aware dry-run preview와 effective model resolver**
+- 다음 작업: **cache-aware local/CLI dry-run과 effective model resolver**
 
 이 문서는 개발 진행 상황의 단일 진입점이다. 새로운 세션은 이 문서를 먼저 읽고, 실제 코드와
 Git 상태를 확인한 뒤 작업을 시작한다.
@@ -120,6 +120,7 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - [x] legacy 09 timeline~11 context/index StageTask binding과 11단계 composition
 - [x] pipeline Application Service와 local Engine/Store/inference composition root
 - [x] 기본 CLI의 Engine 전환과 stage/from/to/force/run-id/basic dry-run
+- [x] Engine의 read-only cache preview와 downstream blocked 판정
 
 ## 4. 아직 구현되지 않은 작업
 
@@ -157,7 +158,7 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 
 권장 순서:
 
-1. Engine의 task/cache preview가 실제 실행과 동일한 task identity·입력 전파 규칙을 사용하도록 공개 API 추가
+1. [x] Engine의 task/cache preview가 실제 실행과 동일한 task identity·입력 전파 규칙을 사용하도록 공개 API 추가
 2. local provider의 현재 effective provider/model/revision/runtime을 안전하게 resolve하는 adapter 구현
 3. `--dry-run`에 Stage별 `hit/miss/forced`, stable reason과 예상 실행 여부 출력
 4. model 미로드·credential 변경 시 거짓 hit 없이 reason을 표시하는 contract test 추가
@@ -272,6 +273,18 @@ dry-run은 plan/boundary/force를 보여주지만 cache decision은 아직 runti
 
 최신 기록을 위에 추가한다. 긴 구현 설명은 PR이나 ADR에 두고 여기에는 다음 세션이 재개하는 데
 필요한 정보만 적는다.
+
+### 2026-08-12 — Phase 3 Engine cache preview API
+
+- 목표: 실제 실행 없이 동일한 task identity와 cache evaluator로 Stage별 재사용 가능성을 판정
+- 완료: `PipelineEngine.preview`, `PipelinePreviewResult`, `StagePreviewRecord`와
+  `hit/miss/forced/blocked` disposition 구현
+- 주요 결정: 검증된 cache hit output만 downstream input으로 전파하고, upstream miss/force 때문에
+  새 checksum을 알 수 없는 Stage는 stale manifest로 추정하지 않고 blocked 처리
+- 검증: Engine/cache/persistence 테스트 53개 통과; preview가 Executor와 RunStore write를 호출하지
+  않고 hit output을 전파하며 miss/force 뒤 의존 Stage를 차단하는지 확인
+- 호환성: 기존 `run()`과 cache decision 계약은 변경하지 않고 read-only API만 추가
+- 다음 작업: local read-only runtime과 Application Service/CLI `--dry-run` 연결
 
 ### 2026-08-06 — Phase 3 Engine 기반 CLI 전환과 선택 실행
 

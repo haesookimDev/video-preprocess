@@ -25,10 +25,13 @@ from .errors import (
 from .planner import DAGPlanner, ExecutionPlan
 from .pipeline import (
     PipelineEngine,
+    PipelinePreviewResult,
     PipelineRunResult,
     RunStateMachine,
     StageExecutionRecord,
     StageLifecycle,
+    StagePreviewRecord,
+    StagePreviewStatus,
     StageStateMachine,
 )
 from .registry import StageRegistry
@@ -51,12 +54,15 @@ __all__ = [
     "InvalidInputDependencyError",
     "ManifestCacheEvaluator",
     "PipelineEngine",
+    "PipelinePreviewResult",
     "PipelineRunResult",
     "PlanSelectionError",
     "RunStateMachine",
     "StageRegistry",
     "StageExecutionRecord",
     "StageLifecycle",
+    "StagePreviewRecord",
+    "StagePreviewStatus",
     "StageStateMachine",
     "StateTransitionError",
     "UnknownDependencyError",

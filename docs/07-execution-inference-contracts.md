@@ -323,8 +323,11 @@ model Stage 결과를 무리하게 재사용하지 않는다. 상세 결정은
 
 기본 CLI는 output workspace에서 stable local run ID를 파생하며 `--run-id`로 명시적 resume 대상을
 선택할 수 있다. stage/from/to와 force 옵션은 request에만 반영하고 plan/cache 실행 의미는
-Application Service와 Engine이 소유한다. basic dry-run은 현재 plan/boundary/force만 반환하고 cache
-decision을 추정하지 않는다. 상세 결정은
+Application Service와 Engine이 소유한다. Engine의 read-only `preview()`는 실제 실행과 같은 task
+identity와 cache evaluator를 사용하되 manifest를 저장하거나 Executor에 제출하지 않는다. 검증된
+hit output만 downstream에 전달하며 upstream miss 또는 force로 새 output checksum을 알 수 없는
+Stage는 `blocked`와 누락 logical input을 반환한다. local runtime과 CLI 연결은 다음 slice다. 상세
+결정은
 [`ADR-0018`](./adr/0018-engine-backed-cli-and-local-run-resume.md)에 기록한다.
 
 ## 5. Executor 계약
@@ -752,6 +755,11 @@ RunManifest, terminal RunManifest 순서로 저장한다. cache 후보는 현재
 identity로 다시 묶고 Engine lifecycle `cached`로 기록한다. `force_stages`는 대상만 실행하며
 downstream은 새 checksum이 같으면 독립적으로 hit할 수 있다. 상세 결정은
 [`ADR-0013`](./adr/0013-pipeline-engine-run-journal-and-cache-resume.md)에 기록한다.
+
+read-only preview의 Stage disposition은 `hit`, `miss`, `forced`, `blocked`다. 앞의 세 값은 실제
+`CacheDecision`과 stable miss reason을 그대로 보존한다. `blocked`는 cache miss가 아니라 상위
+Stage를 실행해야만 현재 입력 checksum을 알 수 있다는 의미이며, 해당 logical input 이름을 함께
+반환한다. 따라서 preview는 stale downstream manifest를 근거로 거짓 hit를 보고하지 않는다.
 
 ## 11. 버전 호환 정책
 

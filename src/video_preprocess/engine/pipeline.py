@@ -14,6 +14,8 @@ from video_preprocess.domain import (
     ModelExecution,
     RunManifest,
     RunStatus,
+    StageAttemptRef,
+    StageManifest,
     StageResult,
     StageSpec,
     StageStatus,
@@ -27,7 +29,11 @@ from .cache import (
     ManifestCacheEvaluator,
     compute_stage_cache_key,
 )
-from .errors import EngineInputError, StateTransitionError
+from .errors import (
+    EngineInputError,
+    EnginePersistenceError,
+    StateTransitionError,
+)
 from .persistence import Clock, RunJournal, utc_now
 from .planner import ExecutionPlan
 
@@ -56,6 +62,15 @@ class StageLifecycle(str, Enum):
             self.FAILED,
             self.CANCELLED,
         }
+
+
+class StagePreviewStatus(str, Enum):
+    """Read-only disposition for one planned Stage."""
+
+    HIT = "hit"
+    MISS = "miss"
+    FORCED = "forced"
+    BLOCKED = "blocked"
 
 
 _STAGE_TRANSITIONS = {
@@ -175,6 +190,49 @@ class PipelineRunResult:
     manifest: RunManifest | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class StagePreviewRecord:
+    """Read-only cache view for one planned Stage."""
+
+    stage: str
+    status: StagePreviewStatus
+    task: StageTask | None = None
+    cache_decision: CacheDecision | None = None
+    blocked_inputs: Sequence[str] = ()
+
+    def __post_init__(self) -> None:
+        blocked_inputs = tuple(self.blocked_inputs)
+        object.__setattr__(self, "blocked_inputs", blocked_inputs)
+        if self.status is StagePreviewStatus.BLOCKED:
+            if self.task is not None or self.cache_decision is not None:
+                raise ValueError("a blocked preview cannot contain a task")
+            if not blocked_inputs:
+                raise ValueError("a blocked preview requires missing inputs")
+            return
+        if self.task is None or self.cache_decision is None:
+            raise ValueError("a cache preview requires a task and decision")
+        if blocked_inputs:
+            raise ValueError("a cache preview cannot contain blocked inputs")
+        if self.status.value != self.cache_decision.status.value:
+            raise ValueError("preview status must match cache decision")
+
+    @property
+    def will_execute(self) -> bool:
+        return self.status in {
+            StagePreviewStatus.MISS,
+            StagePreviewStatus.FORCED,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class PipelinePreviewResult:
+    """Read-only Stage dispositions and artifacts proven reusable."""
+
+    run_id: str
+    stages: tuple[StagePreviewRecord, ...]
+    artifacts: dict[str, ArtifactRef]
+
+
 class PipelineEngine:
     """Build StageTask attempts and execute one topological plan in order."""
 
@@ -215,6 +273,106 @@ class PipelineEngine:
         self.cache_evaluator = cache_evaluator
         self.model_resolver = model_resolver
         self.clock = clock
+
+    async def preview(
+        self,
+        plan: ExecutionPlan,
+        *,
+        run_id: str,
+        trace_id: str,
+        artifacts: Mapping[str, ArtifactRef],
+        stage_configs: Mapping[str, Mapping[str, object]] | None = None,
+        model_bindings: Mapping[str, Mapping[str, str]] | None = None,
+        attempts: Mapping[str, int] | None = None,
+        force_stages: Collection[str] | None = None,
+    ) -> PipelinePreviewResult:
+        """Evaluate cache reuse without submitting or persisting work."""
+
+        if self.cache_evaluator is None or self.run_store is None:
+            raise EngineInputError(
+                "cache preview requires a cache evaluator and run store"
+            )
+        if not isinstance(plan, ExecutionPlan):
+            raise TypeError("plan must be an ExecutionPlan")
+        run_id = self._required_string(run_id, "run_id")
+        trace_id = self._required_string(trace_id, "trace_id")
+        available = self._normalize_artifacts(artifacts)
+        configs = self._normalize_nested_mapping(
+            stage_configs,
+            "stage_configs",
+        )
+        bindings = self._normalize_nested_mapping(
+            model_bindings,
+            "model_bindings",
+        )
+        normalized_attempts = {} if attempts is None else dict(attempts)
+        forced = self._normalize_force_stages(force_stages)
+        self._validate_plan_options(
+            plan,
+            available,
+            configs,
+            bindings,
+            normalized_attempts,
+            forced,
+        )
+        self._validate_task_payloads(
+            plan,
+            run_id=run_id,
+            trace_id=trace_id,
+            configs=configs,
+            bindings=bindings,
+            attempts=normalized_attempts,
+        )
+
+        records = []
+        for spec in plan.stages:
+            missing_inputs = tuple(
+                input_name
+                for input_name in spec.required_inputs
+                if input_name not in available
+            )
+            if missing_inputs:
+                records.append(
+                    StagePreviewRecord(
+                        stage=spec.name,
+                        status=StagePreviewStatus.BLOCKED,
+                        blocked_inputs=missing_inputs,
+                    )
+                )
+                continue
+            task = self._build_task(
+                spec,
+                run_id=run_id,
+                trace_id=trace_id,
+                available=available,
+                config=configs.get(spec.name, {}),
+                model_bindings=bindings.get(spec.name, {}),
+                attempt=normalized_attempts.get(spec.name, 1),
+            )
+            decision = await self._evaluate_cache_candidate(
+                task,
+                candidate=(
+                    None
+                    if spec.name in forced
+                    else self._load_cache_candidate(task)
+                ),
+                force=spec.name in forced,
+            )
+            record = StagePreviewRecord(
+                stage=spec.name,
+                status=StagePreviewStatus(decision.status.value),
+                task=task,
+                cache_decision=decision,
+            )
+            records.append(record)
+            if decision.hit:
+                available.update(decision.outputs)
+
+        return PipelinePreviewResult(
+            run_id=run_id,
+            stages=tuple(records),
+            artifacts=dict(available),
+        )
 
     async def run(
         self,
@@ -480,6 +638,21 @@ class PipelineEngine:
         if journal is None:
             raise RuntimeError("cache evaluation requires a run journal")
         candidate = None if force else journal.load_candidate(task)
+        return await self._evaluate_cache_candidate(
+            task,
+            candidate=candidate,
+            force=force,
+        )
+
+    async def _evaluate_cache_candidate(
+        self,
+        task: StageTask,
+        *,
+        candidate: StageManifest | None,
+        force: bool,
+    ) -> CacheDecision:
+        if self.cache_evaluator is None:
+            raise RuntimeError("cache evaluator is unavailable")
         expected_models: Sequence[ModelExecution] | None
         if candidate is None or not task.model_bindings:
             expected_models = () if not task.model_bindings else None
@@ -496,6 +669,19 @@ class PipelineEngine:
             expected_models=expected_models,
             force=force,
         )
+
+    def _load_cache_candidate(self, task: StageTask) -> StageManifest | None:
+        if self.run_store is None:
+            raise RuntimeError("cache candidate loading requires a run store")
+        try:
+            return self.run_store.load_stage(
+                task.run_id,
+                StageAttemptRef(task.stage_run_id, task.attempt),
+            )
+        except Exception as exc:
+            raise EnginePersistenceError(
+                "could not load a Stage cache candidate"
+            ) from exc
 
     @staticmethod
     def _persist_stage(
