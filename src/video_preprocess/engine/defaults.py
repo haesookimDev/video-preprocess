@@ -91,7 +91,7 @@ DEFAULT_STAGE_SPECS = (
     ),
     StageSpec(
         name="09_timeline",
-        stage_version="1.0.0",
+        stage_version="1.1.0",
         dependencies=(
             "02_scenes",
             "03_keyframes",

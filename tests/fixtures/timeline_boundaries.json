@@ -1,0 +1,39 @@
+{
+  "scenes": [
+    {"scene_id": 1, "start_sec": 0.0, "end_sec": 5.0},
+    {"scene_id": 2, "start_sec": 5.0, "end_sec": 10.0}
+  ],
+  "transcript": [
+    {
+      "segment_id": "left",
+      "start_sec": 1.0,
+      "end_sec": 5.0,
+      "text": "왼쪽 씬",
+      "avg_logprob": -0.1,
+      "no_speech_prob": 0.01,
+      "vad_source_ids": [1]
+    },
+    {
+      "segment_id": "boundary-tie",
+      "start_sec": 4.0,
+      "end_sec": 6.0,
+      "text": "경계에 걸친 전사",
+      "avg_logprob": -0.2,
+      "no_speech_prob": 0.02,
+      "vad_source_ids": [2, 3]
+    },
+    {
+      "segment_id": "right",
+      "start_sec": 5.0,
+      "end_sec": 9.0,
+      "text": "오른쪽 씬",
+      "avg_logprob": -0.3,
+      "no_speech_prob": 0.03,
+      "vad_source_ids": [4]
+    }
+  ],
+  "speaker_turns": [
+    {"start_sec": 0.0, "end_sec": 5.0, "speaker": "SPEAKER_00"},
+    {"start_sec": 5.0, "end_sec": 10.0, "speaker": "SPEAKER_01"}
+  ]
+}

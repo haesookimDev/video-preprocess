@@ -317,12 +317,13 @@ def test_full_default_dag_runs_through_one_legacy_binding_registry(
 
 
 def final_task(stage, inputs, *, config=None, model_bindings=None):
+    stage_version = create_default_registry().get(stage).stage_version
     return StageTask(
         run_id="run-123",
         stage_run_id=f"stage-{stage}",
         attempt=1,
         stage=stage,
-        stage_version="1.0.0",
+        stage_version=stage_version,
         inputs=inputs,
         config={} if config is None else config,
         model_bindings={} if model_bindings is None else model_bindings,

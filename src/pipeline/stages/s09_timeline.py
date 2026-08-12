@@ -1,7 +1,9 @@
 """9단계: 씬·키프레임·캡션·전사문·화자를 공통 시간축으로 병합해 씬 카드를 생성한다.
 
-- 전사 세그먼트는 씬과의 겹침(overlap) 시간 기준으로 귀속한다.
-- 화자 라벨은 전사 세그먼트와 겹침이 가장 큰 화자 턴에서 가져온다.
+- 모든 시간 구간은 반개구간 ``[start_sec, end_sec)``로 해석한다.
+- 전사 세그먼트는 가장 많이 겹치는 씬 하나에만 귀속한다.
+- 겹침이 같으면 세그먼트 중점을 포함하는 구간, 그 다음 입력 순서를 사용한다.
+- 화자 라벨도 같은 최대 겹침·중점 규칙으로 정렬한다.
 
 입력: 02_scenes, 03_keyframes, 06_stt, 07_diarize, 08_captions 산출물
 출력:
@@ -9,23 +11,108 @@
 - 09_timeline/timeline.md   : 사람이 읽는 확인용 뷰
 """
 
+import math
+
 from ..context import PipelineContext
 from ..logging_setup import stage_logger
 
 NAME = "09_timeline"
 OUTPUT = "09_timeline/timeline.json"
+INTERVAL_CONVENTION = "[start_sec,end_sec)"
+ASSIGNMENT_POLICY = "maximum_overlap_single_midpoint_tiebreak"
+
+
+def _overlap_duration(left: dict, right: dict) -> float:
+    """Return the positive overlap of two half-open time intervals."""
+
+    return max(
+        0.0,
+        min(float(left["end_sec"]), float(right["end_sec"]))
+        - max(float(left["start_sec"]), float(right["start_sec"])),
+    )
+
+
+def _contains(interval: dict, timestamp: float) -> bool:
+    """Return whether a timestamp belongs to a half-open interval."""
+
+    return (
+        float(interval["start_sec"])
+        <= timestamp
+        < float(interval["end_sec"])
+    )
+
+
+def _best_overlap_index(segment: dict, intervals: list[dict]) -> int | None:
+    """Select exactly one interval using overlap, midpoint and stable order."""
+
+    overlaps = [
+        (index, _overlap_duration(segment, interval))
+        for index, interval in enumerate(intervals)
+    ]
+    positive = [(index, overlap) for index, overlap in overlaps if overlap > 0]
+    if not positive:
+        return None
+    maximum = max(overlap for _, overlap in positive)
+    tied = [
+        index
+        for index, overlap in positive
+        if math.isclose(overlap, maximum, rel_tol=1e-9, abs_tol=1e-9)
+    ]
+    if len(tied) == 1:
+        return tied[0]
+
+    midpoint = (
+        float(segment["start_sec"]) + float(segment["end_sec"])
+    ) / 2.0
+    for index in tied:
+        if _contains(intervals[index], midpoint):
+            return index
+    return tied[0]
 
 
 def _match_speaker(seg: dict, turns: list) -> str | None:
-    """전사 세그먼트와 겹침이 가장 큰 화자 턴의 화자를 반환한다."""
-    best, best_overlap = None, 0.0
-    for turn in turns:
-        overlap = min(seg["end_sec"], turn["end_sec"]) - max(
-            seg["start_sec"], turn["start_sec"]
+    """전사 세그먼트와 가장 잘 정렬되는 화자 턴의 화자를 반환한다."""
+
+    index = _best_overlap_index(seg, turns)
+    return None if index is None else turns[index]["speaker"]
+
+
+def _transcript_line(seg: dict, source_segment_id: object, turns: list) -> dict:
+    """Preserve source identity and confidence in a timeline transcript line."""
+
+    line = {
+        "start_sec": seg["start_sec"],
+        "end_sec": seg["end_sec"],
+        "speaker": _match_speaker(seg, turns),
+        "text": seg["text"],
+        "source_segment_id": source_segment_id,
+    }
+    for field_name in ("vad_source_ids", "avg_logprob", "no_speech_prob"):
+        if field_name in seg:
+            line[field_name] = seg[field_name]
+    return line
+
+
+def _assign_transcript(
+    scenes: list[dict],
+    transcript: list[dict],
+    speaker_turns: list[dict],
+) -> tuple[dict[object, list[dict]], list[object]]:
+    """Assign each positive-duration transcript to at most one scene."""
+
+    assigned = {scene["scene_id"]: [] for scene in scenes}
+    unassigned = []
+    for index, seg in enumerate(transcript, start=1):
+        source_segment_id = seg.get("segment_id", index)
+        scene_index = _best_overlap_index(seg, scenes)
+        if scene_index is None:
+            unassigned.append(source_segment_id)
+            continue
+        scene_id = scenes[scene_index]["scene_id"]
+        assigned[scene_id].append(
+            _transcript_line(seg, source_segment_id, speaker_turns)
         )
-        if overlap > best_overlap:
-            best, best_overlap = turn["speaker"], overlap
-    return best
+    return assigned, unassigned
 
 
 def _fmt_ts(sec: float) -> str:
@@ -62,24 +149,14 @@ def run(ctx: PipelineContext) -> dict:
              "화자 턴 %d개",
              len(scenes), len(captions), len(transcript), len(speaker_turns))
 
+    assigned, unassigned = _assign_transcript(
+        scenes,
+        transcript,
+        speaker_turns,
+    )
     cards = []
-    assigned = set()
     for scene in scenes:
-        lines = []
-        for idx, seg in enumerate(transcript):
-            overlap = min(scene["end_sec"], seg["end_sec"]) - max(
-                scene["start_sec"], seg["start_sec"]
-            )
-            seg_dur = seg["end_sec"] - seg["start_sec"]
-            # 겹침이 세그먼트 절반 이상인 씬에 귀속
-            if seg_dur > 0 and overlap / seg_dur >= 0.5:
-                lines.append({
-                    "start_sec": seg["start_sec"],
-                    "end_sec": seg["end_sec"],
-                    "speaker": _match_speaker(seg, speaker_turns),
-                    "text": seg["text"],
-                })
-                assigned.add(idx)
+        lines = assigned[scene["scene_id"]]
 
         card = {
             "scene_id": scene["scene_id"],
@@ -95,14 +172,27 @@ def run(ctx: PipelineContext) -> dict:
                   scene["scene_id"],
                   "있음" if card["caption"] else "없음", len(lines))
 
-    unassigned = len(transcript) - len(assigned)
     if unassigned:
-        log.warning("씬에 귀속되지 않은 전사 세그먼트 %d개 (경계 걸침)", unassigned)
+        log.warning(
+            "씬과 겹치지 않은 전사 세그먼트 %d개: %s",
+            len(unassigned),
+            unassigned,
+        )
 
     with_speech = sum(1 for c in cards if c["transcript"])
     log.info("씬 카드 %d개 생성 (발화 포함 씬 %d개)", len(cards), with_speech)
 
-    ctx.save_json(out_dir / "timeline.json", {"scene_cards": cards})
+    ctx.save_json(
+        out_dir / "timeline.json",
+        {
+            "interval_convention": INTERVAL_CONVENTION,
+            "transcript_assignment": ASSIGNMENT_POLICY,
+            "source_transcript_count": len(transcript),
+            "assigned_transcript_count": len(transcript) - len(unassigned),
+            "unassigned_source_segment_ids": unassigned,
+            "scene_cards": cards,
+        },
+    )
 
     md_lines = [f"# 타임라인: {ctx.video_path.name}", ""]
     for card in cards:
@@ -126,4 +216,9 @@ def run(ctx: PipelineContext) -> dict:
     (out_dir / "timeline.md").write_text("\n".join(md_lines), encoding="utf-8")
     log.debug("확인용 마크다운 저장: %s", out_dir / "timeline.md")
 
-    return {"scene_card_count": len(cards), "scenes_with_speech": with_speech}
+    return {
+        "scene_card_count": len(cards),
+        "scenes_with_speech": with_speech,
+        "assigned_transcript_count": len(transcript) - len(unassigned),
+        "unassigned_transcript_count": len(unassigned),
+    }

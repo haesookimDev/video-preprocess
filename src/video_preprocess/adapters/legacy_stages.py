@@ -501,7 +501,7 @@ def _final_definitions(
     return (
         LegacyStageDefinition(
             name="09_timeline",
-            stage_version="1.0.0",
+            stage_version="1.1.0",
             module=modules["09_timeline"],
             inputs=(scenes, keyframes, transcript, diarization, captions),
             config_fields=(),

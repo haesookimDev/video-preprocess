@@ -31,7 +31,7 @@ flowchart TD
     S07 --> S09
     S06 --> S09
 
-    S09["<b>09_timeline</b><br/>씬을 골격으로 전사·캡션·화자를<br/>겹침(overlap) 기준 병합 → 씬 카드<br/><i>규칙 기반 (모델 없음)</i>"]
+    S09["<b>09_timeline</b><br/>씬을 골격으로 전사·캡션·화자를<br/>반개구간 최대 겹침으로 단일 배정 → 씬 카드<br/><i>규칙 기반 (모델 없음)</i>"]
 
     S09 --> S10
     S09 --> S11
@@ -66,7 +66,7 @@ flowchart TD
 | 06_stt | 인접 VAD 구간 병합(gap ≤ 0.5s) 후 WAV ArtifactRef와 구간을 STT Provider에 전달. Provider가 원본 시간축으로 보정 | Local faster-whisper Provider `base`(기본)/`small` (CTranslate2 int8) | 5.6s / 13.9s |
 | 07_diarize | WAV ArtifactRef를 Diarization Provider에 전달. Provider가 화자 임베딩·클러스터링 후 발화 턴별 라벨 반환 | Local pyannote Provider `speaker-diarization-community-1` (HF 게이트) | 27.9s |
 | 08_captions | keyframe ArtifactRef batch를 VLM Provider에 입력해 캡션 생성. 이미지(수백~수천 토큰)를 텍스트(수십 토큰)로 압축 | Local BLIP Provider `image-captioning-base` | 3.0s |
-| 09_timeline | 씬을 골격으로 병합. 전사→씬은 겹침 ≥ 50% 기준 귀속, 전사→화자는 최대 겹침 턴의 라벨 채택 | 규칙 기반 | 0.0s |
+| 09_timeline | `[start,end)` 씬을 골격으로 병합. 전사→씬은 최대 겹침 단일 배정, 동률은 중점 포함 구간, 전사→화자도 같은 규칙 적용 | 규칙 기반 | 0.0s |
 | 10_index | 씬 카드 텍스트(캡션+전사)를 ① FTS5 역색인 ② 정규화 벡터로 이중 저장 | 주입된 `embedding.default` Local/HTTP Provider, SQLite FTS5 | local 기준 0.2s |
 | 11_context | 포맷 규칙 전문 + 메타데이터 + 씬 목차 + 씬 카드 전문을 하나의 자기완결 문서로 조립 | 규칙 기반 | 0.0s |
 | query.py | 키워드(bm25)·의미(코사인) 순위를 RRF(k=60)로 융합 → top-k 씬 + 앞뒤 문맥으로 축약 컨텍스트 조립 | index와 같은 `embedding.default` Local/HTTP Provider | local cold start ~10s |
@@ -84,6 +84,11 @@ flowchart TD
 
 `06_stt/transcript.json`은 기존 segment 구조를 유지하며 실제 `provider`, model `revision`,
 `runtime`, 감지 언어 확률인 `language_probability`를 추가로 기록한다.
+
+`09_timeline/timeline.json`은 모든 시간 구간을 `[start_sec,end_sec)`로 해석한다. 전사 세그먼트는
+양의 겹침이 가장 큰 씬 하나에만 들어가며 정확한 동률에서는 세그먼트 중점을 포함하는 씬을 택한다.
+씬 카드의 전사 줄에는 `source_segment_id`, `vad_source_ids`, `avg_logprob`, `no_speech_prob`를 가능한
+범위에서 보존하고, 씬과 전혀 겹치지 않은 source ID는 최상위 통계에 기록한다.
 
 `07_diarize/diarization.json`은 기존 speaker·turn 구조를 유지하며 실제 `provider`, model
 `revision`, `runtime`을 추가로 기록한다. HF token은 Provider 설정에만 존재하며 산출물이나

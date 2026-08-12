@@ -1,8 +1,8 @@
 # 개발 상태와 세션 인수인계
 
 - 마지막 갱신: **2026-08-12**
-- 현재 단계: **Phase 5 완료 — 외부 서비스 연동**
-- 다음 작업: **Phase 6 — 타임라인 반개구간 경계와 전사 중복 P0 수정**
+- 현재 단계: **Phase 6 진행 중 — 검색·긴 영상 품질**
+- 다음 작업: **한국어 검색 정규화·문자 n-gram과 관련 결과 없음 판정**
 
 이 문서는 개발 진행 상황의 단일 진입점이다. 새로운 세션은 이 문서를 먼저 읽고, 실제 코드와
 Git 상태를 확인한 뒤 작업을 시작한다.
@@ -96,6 +96,8 @@ Git 상태를 확인한 뒤 작업을 시작한다.
   [`ADR-0024`](./adr/0024-reference-inference-server-runtime.md)
 - 공개 Pipeline API와 영속 run snapshot 결정:
   [`ADR-0025`](./adr/0025-durable-public-pipeline-api.md)
+- timeline 반개구간·단일 배정 결정:
+  [`ADR-0026`](./adr/0026-half-open-timeline-single-assignment.md)
 
 ## 3. 완료된 작업
 
@@ -171,14 +173,14 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - [x] Pipeline Application Service와 local runtime factory
 - [x] Application Service 기반 선택 실행 CLI
 - [x] API adapter
-- [ ] 타임라인 경계 정합성 개선
+- [x] 타임라인 경계 정합성 개선
 - [ ] 한국어 검색과 평가 체계
 - [ ] 실제 token budget
 
 문서가 존재한다고 구현된 것으로 간주하지 않는다. 완료 여부는 코드와 자동 테스트를 기준으로
 이 체크리스트에서 갱신한다.
 
-## 5. Phase 5 완료와 Phase 6 인수인계
+## 5. Phase 6 진행과 인수인계
 
 Phase 4 완료 순서:
 
@@ -229,14 +231,18 @@ Phase 5 완료 확인:
 - 외부 payload는 `media_id`와 `artifact://`만 사용하고 local output path를 노출하지 않는다.
 - 실제 `sample.mp4` REST create→status→artifact→query E2E가 11단계 succeeded와 씬 02 top-1로 통과했다.
 
-Phase 6 첫 작업은 09 timeline의 전사→씬 귀속을 반개구간 `[start, end)` 기준으로 명시하고, 정확히
-50:50 경계에 걸친 전사가 두 씬에 중복 배정되지 않도록 단일 배정 규칙과 회귀 fixture를 추가하는 것이다.
+Phase 6 timeline slice는 09 timeline의 모든 구간을 반개구간 `[start, end)`로 통일했다. 각 전사는
+최대 겹침 씬 하나에만 배정하고, 50:50 동률이면 전사 중점을 포함하는 씬을 선택한다. 화자 턴도 같은
+규칙으로 정렬하며 source segment ID, VAD source와 STT confidence를 scene card에 보존한다.
+
+다음 slice는 10 index와 공통 QueryService에 Unicode·공백·문장부호 정규화, 한국어 문자 n-gram
+keyword signal과 embedding 유사도 하한을 추가한다. match JSON에는 keyword/semantic 순위·점수와
+선택 근거를 기록하고 고정 평가 질의로 Recall@3, MRR과 no-answer precision을 측정한다.
 
 ## 6. 알려진 중요 문제
 
 | 우선순위 | 문제 | 영향 |
 |---|---|---|
-| P0 | 씬 50:50 경계에서 전사 중복 가능 | timeline과 검색 내용 왜곡 |
 | P1 | 한국어 `unicode61` 정확 일치 의존 | 조사·어미가 다른 키워드 검색 누락 |
 | P1 | 별도 query CLI 프로세스는 embedding 모델을 매번 로드 | 프로세스 간 cold query 지연 |
 | P1 | 관련도 하한 없음 | 무관 질의도 항상 top-k 반환 |
@@ -338,6 +344,18 @@ Phase 6 첫 작업은 09 timeline의 전사→씬 귀속을 반개구간 `[start
 
 최신 기록을 위에 추가한다. 긴 구현 설명은 PR이나 ADR에 두고 여기에는 다음 세션이 재개하는 데
 필요한 정보만 적는다.
+
+### 2026-08-12 — Phase 6 timeline 반개구간·단일 배정
+
+- 목표: 씬 경계에 정확히 50:50으로 걸친 전사가 두 카드에 중복되는 P0 제거
+- 완료: `[start_sec,end_sec)` overlap helper, 최대 겹침 단일 배정, midpoint 동률 해소,
+  화자 턴 동일 정렬, source segment/VAD ID와 STT confidence 보존, Stage 09 version 1.1.0
+- 주요 결정: 양의 겹침이 없는 전사만 unassigned로 기록하며 경계 동률의 midpoint가 경계와 같으면
+  반개구간상 오른쪽 씬/화자 턴에 귀속; ADR-0026
+- 검증: timeline/planner/final binding 22 passed; 50:50·정확 경계·무겹침 회귀 fixture 통과
+- 호환성: 기존 scene card 필드는 유지하고 metadata를 추가; 변경된 귀속 의미로 09 cache version을
+  올려 09와 checksum 의존 downstream을 안전하게 재실행
+- 다음 작업: 한국어 정규화·문자 n-gram index, 유사도 하한/no-answer와 검색 평가 harness
 
 ### 2026-08-12 — Phase 5 production REST sample E2E와 완료
 

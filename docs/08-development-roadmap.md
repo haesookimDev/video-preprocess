@@ -1,6 +1,6 @@
 # 엔진·실행기 분리 개발 로드맵
 
-상태: **Phase 5 완료 — 다음 Phase 6**
+상태: **Phase 6 진행 중 — timeline 완료, 검색·context 진행 예정**
 기준일: 2026-08-12
 대상 설계: [`06-target-architecture.md`](./06-target-architecture.md)  
 공개 계약: [`07-execution-inference-contracts.md`](./07-execution-inference-contracts.md)
@@ -348,10 +348,10 @@ query top-1 씬 02를 확인했다. queue consumer와 direct upload는 초기 �
 
 ### 타임라인
 
-- 반개구간 `[start, end)` 통일
-- 최대 겹침 단일 배정 또는 word timestamp 기반 분할
-- 화자 턴 경계 정렬
-- source segment와 confidence 보존
+- [x] 반개구간 `[start, end)` 통일
+- [x] 최대 겹침 단일 배정
+- [x] 화자 턴 경계 정렬
+- [x] source segment와 confidence 보존
 
 ### 검색
 

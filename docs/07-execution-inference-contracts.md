@@ -337,6 +337,13 @@ code로 반환한다.
 전체 registry는 mutable legacy context 보호를 위해 하나의 실행 잠금을 공유한다. 상세 결정은
 [`ADR-0016`](./adr/0016-legacy-final-stage-and-pipeline-bindings.md)에 기록한다.
 
+09 timeline version 1.1.0은 scene, transcript와 speaker turn을 모두 반개구간
+`[start_sec,end_sec)`으로 해석한다. 각 transcript는 양의 overlap이 가장 큰 scene 하나에만 배정하고,
+동률이면 transcript midpoint를 포함하는 interval, 그래도 결정되지 않으면 입력 순서를 사용한다.
+speaker turn도 같은 규칙으로 하나를 고른다. timeline은 assignment policy와 assigned/unassigned 수를
+기록하며 각 transcript line에 source segment identity, VAD source ID와 STT confidence를 가능한 범위에서
+보존한다. 결정 근거는 [`ADR-0026`](./adr/0026-half-open-timeline-single-assignment.md)에 기록한다.
+
 ### 4.7 Pipeline Application Service
 
 `PipelineRunRequest`는 local video/output 경로, pipeline 설정, 선택 실행 범위, 선택적 run/trace ID와
