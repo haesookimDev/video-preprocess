@@ -658,6 +658,10 @@ Artifact 전송은 v1에서 공유 Store 방식만 지원한다. 대용량 입�
 보내고 서버는 허용 namespace, size와 checksum을 검증한다. `file://`, 호스트 절대 경로, base64 media,
 임의 URL fetch와 credential 직렬화는 금지한다. 제한된 upload API는 후속 호환 확장으로 둔다.
 
+현재 loopback fake server fixture가 health/capability, queued→running→terminal, submit 복구·충돌,
+bearer 인증과 cancel 계약을 구현한다. socket을 사용하는 이 테스트는 `integration` marker로 기본
+network-free suite와 분리한다.
+
 ## 8. 오류 계약과 재시도
 
 공통 오류 객체:

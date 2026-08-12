@@ -2,7 +2,7 @@
 
 - 마지막 갱신: **2026-08-12**
 - 현재 단계: **Phase 4 — HTTP Inference Provider**
-- 다음 작업: **OpenAPI v1을 구현하는 local fake model server contract**
+- 다음 작업: **비동기 HTTP Inference Provider와 오류·재시도·취소 구현**
 
 이 문서는 개발 진행 상황의 단일 진입점이다. 새로운 세션은 이 문서를 먼저 읽고, 실제 코드와
 Git 상태를 확인한 뒤 작업을 시작한다.
@@ -174,7 +174,7 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 1. [x] `docs/openapi/inference-v1.yaml`에 health, capability, async job, cancel과 공통 오류 schema를 고정한다.
 2. [x] 공유 Artifact Store URI, idempotency key, deadline과 effective model metadata의 전송 규칙을
    `docs/07-execution-inference-contracts.md`와 ADR-0022에 확정한다.
-3. [ ] 외부 network나 실제 모델 없이 실행되는 local fake model server contract fixture를 추가한다.
+3. [x] 외부 network나 실제 모델 없이 실행되는 local fake model server contract fixture를 추가한다.
 4. [ ] `src/video_preprocess/inference/`에 HTTP Provider를 구현하고 timeout, 429, 5xx, 인증 실패와
    cancellation을 공통 `InferenceError`로 정규화한다.
 5. [ ] embedding alias를 첫 원격화 대상으로 local/HTTP 설정 전환과 cache fingerprint E2E를 검증한다.
@@ -290,6 +290,19 @@ compatibility 구현으로만 남아 있으며 Phase 4에서도 CLI와 Stage가 
 
 최신 기록을 위에 추가한다. 긴 구현 설명은 PR이나 ADR에 두고 여기에는 다음 세션이 재개하는 데
 필요한 정보만 적는다.
+
+### 2026-08-12 — Phase 4 local fake inference server
+
+- 목표: 외부 endpoint·model 없이 OpenAPI v1의 실제 HTTP 상호작용을 반복 검증할 fixture 구축
+- 완료: stdlib loopback server, health/capability, queued→running→terminal, submit/poll/cancel,
+  bearer 인증, idempotent 복구와 conflict 처리
+- 검증: explicit `integration` HTTP contract 7개 통과; 기본 network-free suite 287개 통과,
+  HTTP 테스트 7개 deselected
+- 주요 결정: local Provider와 같은 task/model/input/parameter fingerprint를 사용하고 credential은
+  비교에만 사용하며 response/log에 출력하지 않음
+- 호환성: 기본 pytest는 `integration`, `model` marker를 제외하도록 명시하고 loopback 검증은
+  `-m integration`으로 실행
+- 다음 작업: HTTP client Provider의 capability/submit/poll/cancel, total deadline와 표준 오류 매핑
 
 ### 2026-08-12 — Phase 4 HTTP Inference v1 계약
 

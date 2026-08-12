@@ -242,6 +242,12 @@ HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
 .venv/bin/python -m pytest
 ```
 
+loopback port를 여는 HTTP contract test는 기본 경로에서 제외하고 명시적으로 실행한다.
+
+```bash
+.venv/bin/python -m pytest -m integration tests/contracts/test_fake_inference_server.py
+```
+
 미디어·모델 통합 변경은 `samples/sample.mp4` 전체 실행과 query까지 별도로 검증한다.
 
 ```bash

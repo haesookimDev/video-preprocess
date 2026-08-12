@@ -1,6 +1,12 @@
 [tool.pytest.ini_options]
 minversion = "8.0"
-addopts = ["-ra", "--strict-config", "--strict-markers"]
+addopts = [
+    "-ra",
+    "--strict-config",
+    "--strict-markers",
+    "-m",
+    "not integration and not model",
+]
 testpaths = ["tests"]
 pythonpath = ["src"]
 markers = [
