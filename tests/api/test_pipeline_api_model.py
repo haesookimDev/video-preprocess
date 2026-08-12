@@ -104,6 +104,8 @@ def test_sample_pipeline_and_query_cross_public_http_boundary(
                 "schema_version": "1",
                 "query": "음성 구간 검출",
                 "top_k": 2,
+                "max_context_tokens": 256,
+                "adjacent_scenes": 1,
             },
         )
 
@@ -126,5 +128,8 @@ def test_sample_pipeline_and_query_cross_public_http_boundary(
     assert query_status == 200
     assert query["matches"][0]["scene_id"] == 2
     assert "### 씬 02" in query["context"]
+    assert query["context_stats"]["max_tokens"] == 256
+    assert query["context_stats"]["token_count"] <= 256
+    assert query["context_stats"]["included_scene_ids"]
     assert persisted is not None
     assert persisted.status is PublicRunStatus.SUCCEEDED

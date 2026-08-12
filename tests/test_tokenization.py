@@ -1,6 +1,9 @@
 """Unit tests for the lazy Hugging Face token counter adapter."""
 
-from video_preprocess.tokenization import HuggingFaceTokenCounter
+from video_preprocess.tokenization import (
+    HuggingFaceTokenCounter,
+    sentence_transformer_tokenizer_model,
+)
 
 
 class FakeTokenizer:
@@ -36,3 +39,11 @@ def test_hugging_face_counter_loads_once_and_truncates_exact_tokens() -> None:
     assert counter.count("가나다라") == 4
     assert counter.truncate("가나다라", 2) == "가나"
     assert loaded == [("target/model", "rev-1")]
+
+
+def test_sentence_transformer_short_model_uses_default_organization() -> None:
+    assert (
+        sentence_transformer_tokenizer_model("paraphrase-multilingual-MiniLM-L12-v2")
+        == "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+    )
+    assert sentence_transformer_tokenizer_model("owner/model") == "owner/model"
