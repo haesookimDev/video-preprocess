@@ -62,6 +62,7 @@ def test_dry_run_prints_cache_aware_exact_plan_without_writes(
         "stage_timeout_sec": None,
         "max_stage_attempts": 1,
         "retry_backoff_sec": 0.0,
+        "executor_max_concurrency": 1,
     }
     assert not (tmp_path / "output" / "video").exists()
 
@@ -138,6 +139,30 @@ def test_invalid_execution_policy_is_a_cli_input_error(
 
     assert run_pipeline.main() == 2
     assert "max_stage_attempts" in capsys.readouterr().err
+
+
+def test_invalid_executor_concurrency_is_a_cli_input_error(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    ready_preflight(monkeypatch)
+    video = tmp_path / "video.mp4"
+    video.write_bytes(b"video")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_pipeline.py",
+            str(video),
+            "--executor-max-concurrency",
+            "0",
+            "--dry-run",
+        ],
+    )
+
+    assert run_pipeline.main() == 2
+    assert "executor_max_concurrency" in capsys.readouterr().err
 
 
 def test_compatibility_summary_preserves_status_metrics_and_outputs(

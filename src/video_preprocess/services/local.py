@@ -73,6 +73,7 @@ class LocalPipelineRuntimeFactory:
         stage_modules: Mapping[str, object] | None = None,
         context_configurer: ContextConfigurer | None = None,
         project_root: Path | None = None,
+        executor_max_concurrency: int = 1,
     ) -> None:
         self.stage_modules = (
             None if stage_modules is None else dict(stage_modules)
@@ -84,6 +85,15 @@ class LocalPipelineRuntimeFactory:
         )
         self.context_configurer = context_configurer
         self._uses_default_inference = context_configurer is None
+        if (
+            isinstance(executor_max_concurrency, bool)
+            or not isinstance(executor_max_concurrency, int)
+            or executor_max_concurrency < 1
+        ):
+            raise ValueError(
+                "executor_max_concurrency must be a positive integer"
+            )
+        self.executor_max_concurrency = executor_max_concurrency
         if self.context_configurer is not None and not callable(
             self.context_configurer
         ):
@@ -160,7 +170,10 @@ class LocalPipelineRuntimeFactory:
             stage_modules=self.stage_modules,
         )
         engine = PipelineEngine(
-            LocalExecutor(bindings),
+            LocalExecutor(
+                bindings,
+                max_concurrency=self.executor_max_concurrency,
+            ),
             run_store=run_store,
             cache_evaluator=ManifestCacheEvaluator(artifact_store),
             model_resolver=model_resolver,

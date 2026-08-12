@@ -53,7 +53,10 @@ def test_sample_pipeline_and_query_cross_public_http_boundary(
     workspace_root = tmp_path / "runs"
     application = PipelineApplicationService(
         DAGPlanner(create_default_registry()),
-        LocalPipelineRuntimeFactory(project_root=PROJECT_ROOT),
+        LocalPipelineRuntimeFactory(
+            project_root=PROJECT_ROOT,
+            executor_max_concurrency=2,
+        ),
     )
     repository = LocalPipelineRunRepository(state_root)
     run_service = PipelineRunService(

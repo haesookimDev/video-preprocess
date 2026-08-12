@@ -24,8 +24,23 @@ def test_cli_composes_server_without_printing_token(monkeypatch, capsys) -> None
         def get(self, run_id):
             raise AssertionError("CLI composition must not query a run")
 
+    class RuntimeFactory:
+        def __init__(self, **options):
+            seen["runtime_factory"] = options
+
+        def create(self, request, *, run_id, boundary_inputs):
+            raise AssertionError("CLI composition must not create a runtime")
+
+        def create_preview(self, request, *, run_id, boundary_inputs):
+            raise AssertionError("CLI composition must not preview a runtime")
+
     monkeypatch.setattr(serve_pipeline, "PipelineHTTPServer", Server)
     monkeypatch.setattr(serve_pipeline, "PipelineRunService", RunService)
+    monkeypatch.setattr(
+        serve_pipeline,
+        "LocalPipelineRuntimeFactory",
+        RuntimeFactory,
+    )
     monkeypatch.setattr(
         serve_pipeline,
         "LocalPipelineRunRepository",
@@ -46,6 +61,8 @@ def test_cli_composes_server_without_printing_token(monkeypatch, capsys) -> None
             "PIPELINE_TOKEN",
             "--max-active-runs",
             "3",
+            "--executor-max-concurrency",
+            "2",
             "--retain-terminal-runs",
             "25",
         ],
@@ -55,6 +72,7 @@ def test_cli_composes_server_without_printing_token(monkeypatch, capsys) -> None
     output = capsys.readouterr().out
     assert seen["server"]["auth_token"] == "private-token"
     assert seen["run_service"]["max_active_runs"] == 3
+    assert seen["runtime_factory"]["executor_max_concurrency"] == 2
     assert "private-token" not in output
     assert "PIPELINE_TOKEN" not in output
 

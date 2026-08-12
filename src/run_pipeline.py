@@ -59,6 +59,12 @@ def main() -> int:
                         help="일시적 실패의 Stage 최대 시도 수 (기본: 1)")
     parser.add_argument("--retry-backoff-sec", type=float, default=0.0,
                         help="첫 재시도 전 대기 초 (기본: 0)")
+    parser.add_argument(
+        "--executor-max-concurrency",
+        type=int,
+        default=1,
+        help="동시에 실행할 local Stage 수 (기본: 1)",
+    )
     parser.add_argument("--embedding-endpoint", default=None,
                         help="embedding.default HTTP Inference v1 endpoint")
     parser.add_argument("--embedding-token-env", default=None,
@@ -133,11 +139,14 @@ def main() -> int:
     except (TypeError, ValueError) as exc:
         print(f"오류: {exc}", file=sys.stderr)
         return 2
-    service = PipelineApplicationService(
-        DAGPlanner(create_default_registry()),
-        LocalPipelineRuntimeFactory(project_root=project_root),
-    )
     try:
+        service = PipelineApplicationService(
+            DAGPlanner(create_default_registry()),
+            LocalPipelineRuntimeFactory(
+                project_root=project_root,
+                executor_max_concurrency=args.executor_max_concurrency,
+            ),
+        )
         plan = service.plan(request)
         if args.force:
             forced = tuple(sorted(set(request.force_stages) | set(plan.stage_names)))
@@ -154,6 +163,9 @@ def main() -> int:
                         "stage_timeout_sec": request.stage_timeout_sec,
                         "max_stage_attempts": request.max_stage_attempts,
                         "retry_backoff_sec": request.retry_backoff_sec,
+                        "executor_max_concurrency": (
+                            args.executor_max_concurrency
+                        ),
                     },
                     "inference_deployments": (
                         request.deployments.public_dict()

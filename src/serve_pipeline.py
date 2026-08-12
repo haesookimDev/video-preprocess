@@ -44,6 +44,7 @@ def main() -> int:
         help="API bearer token을 읽을 환경변수 이름",
     )
     parser.add_argument("--max-active-runs", type=int, default=1)
+    parser.add_argument("--executor-max-concurrency", type=int, default=1)
     parser.add_argument("--retain-terminal-runs", type=int, default=1000)
     parser.add_argument("--max-request-bytes", type=int, default=1024 * 1024)
     parser.add_argument("--embedding-endpoint", default=None)
@@ -71,7 +72,10 @@ def main() -> int:
         )
         application = PipelineApplicationService(
             DAGPlanner(create_default_registry()),
-            LocalPipelineRuntimeFactory(project_root=project_root),
+            LocalPipelineRuntimeFactory(
+                project_root=project_root,
+                executor_max_concurrency=args.executor_max_concurrency,
+            ),
         )
         run_service = PipelineRunService(
             application,

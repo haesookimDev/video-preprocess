@@ -269,16 +269,28 @@ def test_local_runtime_ingests_video_and_composes_all_bindings(
     runtime = LocalPipelineRuntimeFactory(
         stage_modules=modules,
         context_configurer=configure,
+        executor_max_concurrency=3,
     ).create(request, run_id="run-123", boundary_inputs=("video",))
 
     context, store = seen[0]
     assert runtime.engine.executor.bindings.names == names
+    assert runtime.engine.executor.max_concurrency == 3
     assert context.scene_threshold == 31.5
     assert context.video_path == video.resolve()
     assert store.verify(runtime.artifacts["video"]).ok
     assert (request.output_root / "00_input" / "video.mp4").read_bytes() == (
         b"video-bytes"
     )
+
+
+@pytest.mark.parametrize("max_concurrency", [True, 0, -1, 1.5])
+def test_local_runtime_rejects_invalid_executor_concurrency(
+    max_concurrency,
+) -> None:
+    with pytest.raises(ValueError, match="executor_max_concurrency"):
+        LocalPipelineRuntimeFactory(
+            executor_max_concurrency=max_concurrency,
+        )
 
 
 def test_local_runtime_requires_manifest_for_partial_execution(

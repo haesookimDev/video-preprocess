@@ -212,6 +212,50 @@ def test_cancel_is_cooperative_and_terminal_snapshot_is_durable(
     asyncio.run(scenario())
 
 
+def test_failed_snapshot_prefers_failed_branch_over_cancelled_peer(
+    tmp_path: Path,
+) -> None:
+    class BranchFailureApplication:
+        def plan(self, request):
+            return SimpleNamespace(
+                stage_names=("01_visual", "02_audio", "03_join")
+            )
+
+        async def run(self, request, *, cancellation=None):
+            return PipelineRunResult(
+                run_id=request.run_id,
+                status=RunStatus.FAILED,
+                stages=(
+                    stage_record(
+                        request.run_id,
+                        "01_visual",
+                        StageStatus.FAILED,
+                    ),
+                    stage_record(
+                        request.run_id,
+                        "02_audio",
+                        StageStatus.CANCELLED,
+                    ),
+                ),
+                artifacts={},
+                transitions=(),
+            )
+
+    async def scenario():
+        service, _ = make_service(tmp_path, BranchFailureApplication())
+        accepted, _ = await service.create(
+            PipelineRunSubmission("idem-failed-branch", "sample.mp4")
+        )
+        failed = await service.wait(accepted.run_id)
+
+        assert failed.status is PublicRunStatus.FAILED
+        assert failed.failure.code == "PIPELINE_FAILED"
+        assert failed.failure.stage == "01_visual"
+        assert failed.failure.message == "stage failed"
+
+    asyncio.run(scenario())
+
+
 def test_restart_reconciles_non_terminal_snapshot_as_interrupted(
     tmp_path: Path,
 ) -> None:

@@ -608,7 +608,7 @@ class LocalPipelineProgressReader:
         results = []
         warnings = list(manifest.warnings)
         outputs: dict[str, ArtifactRef] = {}
-        failure = None
+        terminal_results = []
         for reference in manifest.stages:
             stage = store.load_stage(run_id, reference)
             if stage is None:
@@ -618,7 +618,24 @@ class LocalPipelineProgressReader:
             warnings.extend(result.warnings)
             outputs.update(result.outputs)
             if result.status in {StageStatus.FAILED, StageStatus.CANCELLED}:
-                failure = PipelineFailure(
+                terminal_results.append((stage.task.stage, result))
+        target_status = (
+            StageStatus.FAILED
+            if manifest.status is RunStatus.FAILED
+            else StageStatus.CANCELLED
+        )
+        terminal = next(
+            (
+                item
+                for item in reversed(terminal_results)
+                if item[1].status is target_status
+            ),
+            terminal_results[-1] if terminal_results else None,
+        )
+        failure = None
+        if terminal is not None:
+            stage_name, result = terminal
+            failure = PipelineFailure(
                     code=(
                         "CANCELLED"
                         if result.status is StageStatus.CANCELLED
@@ -626,7 +643,7 @@ class LocalPipelineProgressReader:
                     ),
                     message=result.reason or "pipeline stage did not succeed",
                     retryable=False,
-                    stage=stage.task.stage,
+                    stage=stage_name,
                 )
         return EngineRunObservation(
             status=manifest.status,
@@ -873,7 +890,19 @@ class PipelineRunService:
         )
         failure = None
         if status in {PublicRunStatus.FAILED, PublicRunStatus.CANCELLED}:
-            final = result.stages[-1] if result.stages else None
+            target_status = (
+                StageStatus.FAILED
+                if status is PublicRunStatus.FAILED
+                else StageStatus.CANCELLED
+            )
+            final = next(
+                (
+                    record
+                    for record in reversed(result.stages)
+                    if record.result.status is target_status
+                ),
+                result.stages[-1] if result.stages else None,
+            )
             failure = PipelineFailure(
                 code=(
                     "CANCELLED"
