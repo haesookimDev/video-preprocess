@@ -44,6 +44,7 @@ def main() -> int:
         help="API bearer token을 읽을 환경변수 이름",
     )
     parser.add_argument("--max-active-runs", type=int, default=1)
+    parser.add_argument("--retain-terminal-runs", type=int, default=1000)
     parser.add_argument("--max-request-bytes", type=int, default=1024 * 1024)
     parser.add_argument("--embedding-endpoint", default=None)
     parser.add_argument("--embedding-token-env", default=None)
@@ -69,7 +70,10 @@ def main() -> int:
         )
         run_service = PipelineRunService(
             application,
-            LocalPipelineRunRepository(args.state_root),
+            LocalPipelineRunRepository(
+                args.state_root,
+                retain_terminal_runs=args.retain_terminal_runs,
+            ),
             LocalMediaCatalog(args.media_root),
             args.workspace_root,
             deployments=deployments,

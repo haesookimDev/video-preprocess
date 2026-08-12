@@ -480,13 +480,27 @@ class PipelineRunRepository(Protocol):
 class LocalPipelineRunRepository:
     """Atomic JSON repository for public run and idempotency snapshots."""
 
-    def __init__(self, root: Path) -> None:
+    def __init__(
+        self,
+        root: Path,
+        *,
+        retain_terminal_runs: int = 1000,
+    ) -> None:
+        if (
+            isinstance(retain_terminal_runs, bool)
+            or not isinstance(retain_terminal_runs, int)
+            or retain_terminal_runs < 1
+        ):
+            raise ValueError("retain_terminal_runs must be positive")
         configured_root = Path(root)
         if configured_root.is_symlink():
             raise ValueError("pipeline run repository must not be a symlink")
         self.root = configured_root.resolve()
         self.root.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
+        self.retain_terminal_runs = retain_terminal_runs
+        with self._lock:
+            self._prune_terminal_locked()
 
     def save(self, snapshot: PipelineRunSnapshot) -> None:
         if not isinstance(snapshot, PipelineRunSnapshot):
@@ -495,6 +509,7 @@ class LocalPipelineRunRepository:
             atomic_write_json(
                 self._path(snapshot.run_id), snapshot.record_dict()
             )
+            self._prune_terminal_locked()
 
     def load(self, run_id: str) -> PipelineRunSnapshot | None:
         path = self._path(run_id)
@@ -537,6 +552,25 @@ class LocalPipelineRunRepository:
         except ValueError as exc:
             raise ValueError("pipeline run record path escapes root") from exc
         return path
+
+    def _prune_terminal_locked(self) -> None:
+        terminal_records = []
+        for path in self.root.glob("run-*.json"):
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(payload, dict):
+                raise ValueError("pipeline run record must be an object")
+            snapshot = PipelineRunSnapshot.from_record_dict(payload)
+            if snapshot.status.terminal:
+                terminal_records.append((snapshot, path))
+        terminal_records.sort(
+            key=lambda item: (
+                item[0].completed_at or item[0].updated_at,
+                item[0].run_id,
+            ),
+            reverse=True,
+        )
+        for _, path in terminal_records[self.retain_terminal_runs :]:
+            path.unlink()
 
 
 @dataclass(frozen=True, slots=True)

@@ -29,7 +29,7 @@ def test_cli_composes_server_without_printing_token(monkeypatch, capsys) -> None
     monkeypatch.setattr(
         serve_pipeline,
         "LocalPipelineRunRepository",
-        lambda path: ("repository", path),
+        lambda path, **options: ("repository", path, options),
     )
     monkeypatch.setattr(
         serve_pipeline,
@@ -46,6 +46,8 @@ def test_cli_composes_server_without_printing_token(monkeypatch, capsys) -> None
             "PIPELINE_TOKEN",
             "--max-active-runs",
             "3",
+            "--retain-terminal-runs",
+            "25",
         ],
     )
 

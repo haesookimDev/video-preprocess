@@ -25,6 +25,9 @@ Phase 5에서는 기존 CLI와 같은 `PipelineApplicationService`/Engine 경로
 - 공개 artifact는 `artifact://` 참조만 반환하고 실제 materialize 경로와 output root는 내부에 둔다.
 - v1 요청은 JSON만 허용한다. request byte limit, 동시 실행 capacity, bearer auth와 완료 run retention은
   deployment 설정이며 secret과 절대 경로를 payload 또는 manifest에 기록하지 않는다.
+- reference local repository의 retention은 최근 terminal control snapshot 개수로 설정한다(기본 1000).
+  한도를 넘으면 오래된 API 상태와 idempotency record만 제거하고 Engine manifest, workspace와 artifact
+  본문은 삭제하지 않는다. 미디어/artifact 삭제 lifecycle은 별도 관리 기능의 책임이다.
 - pipeline provider 배포 설정은 서버 composition이 소유한다. 클라이언트가 inference endpoint나
   credential을 요청별로 주입할 수 없게 한다.
 - v1은 단일 process reference adapter다. durable distributed queue와 media upload protocol은 별도
@@ -35,4 +38,3 @@ Phase 5에서는 기존 CLI와 같은 `PipelineApplicationService`/Engine 경로
 외부 서비스는 로컬 출력 구조 없이 run을 생성하고 상태·아티팩트·검색 결과를 조회할 수 있다. 서버
 재시작 후에도 마지막 상태를 조회할 수 있고 중단은 명시적 오류로 관측된다. 반면 media는 API 호출 전
 허용된 catalog에 등록되어 있어야 하며, process restart 시 진행 중 작업 자동 재개는 지원하지 않는다.
-

@@ -2,7 +2,7 @@
 
 - 마지막 갱신: **2026-08-12**
 - 현재 단계: **Phase 5 진행 중 — 외부 서비스 연동**
-- 다음 작업: **Phase 5 통합 회귀, 보존 정책 구현과 README/운영 문서 완료**
+- 다음 작업: **Phase 5 실제 sample REST E2E와 README/운영 문서 완료**
 
 이 문서는 개발 진행 상황의 단일 진입점이다. 새로운 세션은 이 문서를 먼저 읽고, 실제 코드와
 Git 상태를 확인한 뒤 작업을 시작한다.
@@ -324,6 +324,17 @@ Phase 5 첫 slice:
 
 최신 기록을 위에 추가한다. 긴 구현 설명은 PR이나 ADR에 두고 여기에는 다음 세션이 재개하는 데
 필요한 정보만 적는다.
+
+### 2026-08-12 — Phase 5 terminal API snapshot retention
+
+- 목표: 완료 상태와 멱등성 record가 무제한 증가하지 않도록 안전한 reference 정책 구현
+- 완료: `retain_terminal_runs` repository 설정과 server CLI option, 최신 terminal snapshot 개수 기반
+  원자적 정리, ADR/contract 보존 범위 명시
+- 주요 결정: 기본 1000개; queued/running은 제거하지 않고 Engine manifest, workspace, artifact body도
+  자동 삭제하지 않음; 보존 범위 밖 idempotency key는 새 run에 재사용 가능
+- 검증: 기본 suite 341 passed, 15 deselected; compileall과 diff check 성공; 임시 workspace 보존 테스트
+- 호환성: 기존 state root는 startup 시 정책 한도를 적용하며 기본 한도보다 적으면 변경 없음
+- 다음 작업: 실제 sample REST create/status/artifact/query E2E와 README/Phase 5 종료 문서
 
 ### 2026-08-12 — Phase 5 QueryService와 CLI/API 통합
 

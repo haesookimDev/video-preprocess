@@ -67,6 +67,10 @@ run ID를 private workspace에 매핑한다. 두 adapter 모두 같은 FTS5 + em
 경로를 사용한다. API 결과는 rank, scene ID, 구간, RRF score와 card text를 포함하되 DB나 timeline의
 물리 경로는 포함하지 않는다.
 
+local reference server는 `--retain-terminal-runs`로 최근 terminal API snapshot 수를 제한한다. 이
+정리는 API 조회/idempotency control record에만 적용하며 Engine manifest와 artifact body를 삭제하지
+않는다. 보존 범위를 지난 run은 `404`이고 같은 idempotency key는 새 실행으로 사용할 수 있다.
+
 ## 2. 공통 식별자
 
 | 필드 | 의미 | 생성 주체 |

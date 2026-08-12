@@ -2,6 +2,7 @@
 
 import asyncio
 import hashlib
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -25,6 +26,7 @@ from video_preprocess.services import (
     PipelineIdempotencyConflictError,
     PipelineRunNotReadyError,
     PipelineRunService,
+    PipelineRunSnapshot,
     PipelineRunSubmission,
     PublicRunStatus,
 )
@@ -311,3 +313,42 @@ def test_status_projects_engine_progress_without_exposing_paths(
         await service.wait(accepted.run_id)
 
     asyncio.run(scenario())
+
+
+def test_repository_prunes_only_old_terminal_control_snapshots(
+    tmp_path: Path,
+) -> None:
+    repository = LocalPipelineRunRepository(
+        tmp_path / "state",
+        retain_terminal_runs=1,
+    )
+    artifact_file = tmp_path / "runs" / "run_old" / "artifact.json"
+    artifact_file.parent.mkdir(parents=True)
+    artifact_file.write_text("preserved", encoding="utf-8")
+    base = PipelineRunSnapshot(
+        run_id="run_old",
+        status=PublicRunStatus.SUCCEEDED,
+        created_at="2026-08-12T00:00:00Z",
+        updated_at="2026-08-12T00:01:00Z",
+        completed_at="2026-08-12T00:01:00Z",
+        planned_stage_names=("01_probe",),
+        completed_stage_names=("01_probe",),
+        idempotency_key="idem-old",
+        request_fingerprint="fingerprint-old",
+    )
+    repository.save(base)
+    repository.save(
+        replace(
+            base,
+            run_id="run_new",
+            created_at="2026-08-12T00:02:00Z",
+            updated_at="2026-08-12T00:03:00Z",
+            completed_at="2026-08-12T00:03:00Z",
+            idempotency_key="idem-new",
+            request_fingerprint="fingerprint-new",
+        )
+    )
+
+    assert repository.load("run_old") is None
+    assert repository.load("run_new") is not None
+    assert artifact_file.read_text(encoding="utf-8") == "preserved"
