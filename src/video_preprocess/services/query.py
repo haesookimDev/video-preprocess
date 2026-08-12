@@ -17,6 +17,7 @@ from video_preprocess.inference import (
     InferenceDeploymentSettings,
     create_configured_embedding_service,
 )
+from video_preprocess.retrieval import normalize_search_text, search_terms
 
 from .pipeline_runs import PipelineRunService, PublicRunStatus
 
@@ -48,6 +49,7 @@ class PipelineQueryRequest:
     run_id: str
     query: str
     top_k: int = 5
+    min_similarity: float = 0.35
     schema_version: str = SCHEMA_VERSION
 
     def __post_init__(self) -> None:
@@ -68,6 +70,15 @@ class PipelineQueryRequest:
             or not 1 <= self.top_k <= 100
         ):
             raise QueryServiceInputError("top_k must be between 1 and 100")
+        if (
+            isinstance(self.min_similarity, bool)
+            or not isinstance(self.min_similarity, (int, float))
+            or not -1.0 <= self.min_similarity <= 1.0
+        ):
+            raise QueryServiceInputError(
+                "min_similarity must be between -1 and 1"
+            )
+        object.__setattr__(self, "min_similarity", float(self.min_similarity))
 
     @classmethod
     def from_dict(
@@ -80,7 +91,7 @@ class PipelineQueryRequest:
         ):
             raise QueryServiceInputError("query request must be an object")
         required = {"schema_version", "query"}
-        allowed = required | {"top_k"}
+        allowed = required | {"top_k", "min_similarity"}
         missing = sorted(required - set(data))
         unknown = sorted(set(data) - allowed)
         if missing:
@@ -96,6 +107,7 @@ class PipelineQueryRequest:
             run_id=run_id,
             query=data["query"],
             top_k=data.get("top_k", 5),
+            min_similarity=data.get("min_similarity", 0.35),
             schema_version=data["schema_version"],
         )
 
@@ -110,6 +122,17 @@ class QueryMatch:
     end_sec: float
     score: float
     text: str
+    keyword_rank: int | None = None
+    keyword_score: float | None = None
+    semantic_rank: int | None = None
+    semantic_similarity: float | None = None
+    reasons: Sequence[str] = ()
+
+    def __post_init__(self) -> None:
+        normalized = tuple(self.reasons)
+        if not all(isinstance(reason, str) and reason for reason in normalized):
+            raise TypeError("reasons must contain non-empty strings")
+        object.__setattr__(self, "reasons", normalized)
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -119,6 +142,11 @@ class QueryMatch:
             "end_sec": self.end_sec,
             "score": self.score,
             "text": self.text,
+            "keyword_rank": self.keyword_rank,
+            "keyword_score": self.keyword_score,
+            "semantic_rank": self.semantic_rank,
+            "semantic_similarity": self.semantic_similarity,
+            "reasons": list(self.reasons),
         }
 
 
@@ -130,6 +158,8 @@ class PipelineQueryResult:
     query: str
     context: str
     matches: Sequence[QueryMatch]
+    normalized_query: str = ""
+    no_answer: bool = False
     schema_version: str = SCHEMA_VERSION
 
     def __post_init__(self) -> None:
@@ -139,12 +169,21 @@ class PipelineQueryResult:
         if not all(isinstance(match, QueryMatch) for match in normalized):
             raise TypeError("matches must contain QueryMatch values")
         object.__setattr__(self, "matches", normalized)
+        normalized_query = self.normalized_query or normalize_search_text(
+            self.query
+        )
+        object.__setattr__(self, "normalized_query", normalized_query)
+        if not isinstance(self.no_answer, bool):
+            raise TypeError("no_answer must be a boolean")
+        object.__setattr__(self, "no_answer", self.no_answer or not normalized)
 
     def to_dict(self) -> dict[str, object]:
         return {
             "schema_version": self.schema_version,
             "run_id": self.run_id,
             "query": self.query,
+            "normalized_query": self.normalized_query,
+            "no_answer": self.no_answer,
             "context": self.context,
             "matches": [match.to_dict() for match in self.matches],
         }
@@ -194,6 +233,20 @@ class LocalPipelineRunQueryResolver:
 EmbeddingFactory = Callable[[str, str | None], EmbeddingService]
 
 
+@dataclass(frozen=True, slots=True)
+class KeywordHit:
+    scene_id: int
+    rank: int
+    score: float
+
+
+@dataclass(frozen=True, slots=True)
+class SemanticHit:
+    scene_id: int
+    rank: int
+    similarity: float
+
+
 class QueryService:
     """Search one index and assemble context through shared inference."""
 
@@ -227,6 +280,11 @@ class QueryService:
                 "completed run does not contain index and timeline artifacts"
             )
         self.log.info("질의: %s (topk=%d)", request.query, request.top_k)
+        normalized_query = normalize_search_text(request.query)
+        if not normalized_query:
+            raise QueryServiceInputError(
+                "query must contain at least one letter or number"
+            )
         try:
             with sqlite3.connect(db_path) as db:
                 model_name = _meta_value(db, "embed_model")
@@ -242,16 +300,29 @@ class QueryService:
                     model_name,
                     requested_revision,
                 )
-                fts_ranking = fts_search(db, request.query, self.log)
-                embed_ranking = await _embed_search_async(
+                keyword_hits = fts_search_with_scores(
                     db,
-                    request.query,
+                    normalized_query,
+                    self.log,
+                )
+                semantic_hits = await _embed_search_with_scores_async(
+                    db,
+                    normalized_query,
                     self.log,
                     embedding_service,
                     run_id=request.run_id,
                 )
+                accepted_semantic = [
+                    hit
+                    for hit in semantic_hits
+                    if hit.similarity >= request.min_similarity
+                ]
                 fused = rrf_fuse_with_scores(
-                    [fts_ranking, embed_ranking], self.log
+                    [
+                        [hit.scene_id for hit in keyword_hits],
+                        [hit.scene_id for hit in accepted_semantic],
+                    ],
+                    self.log,
                 )
                 selected = fused[: request.top_k]
                 rows = _scene_rows(db, [scene_id for scene_id, _ in selected])
@@ -259,24 +330,47 @@ class QueryService:
             raise QueryServiceInputError("search index is invalid") from exc
         top_ids = [scene_id for scene_id, _ in selected if scene_id in rows]
         context = assemble_context(output_root, top_ids)
-        matches = tuple(
-            QueryMatch(
-                rank=rank,
-                scene_id=scene_id,
-                start_sec=float(rows[scene_id][0]),
-                end_sec=float(rows[scene_id][1]),
-                score=score,
-                text=str(rows[scene_id][2]),
+        keyword_by_id = {hit.scene_id: hit for hit in keyword_hits}
+        semantic_by_id = {hit.scene_id: hit for hit in semantic_hits}
+        matches = []
+        for rank, (scene_id, score) in enumerate(selected, start=1):
+            if scene_id not in rows:
+                continue
+            keyword = keyword_by_id.get(scene_id)
+            semantic = semantic_by_id.get(scene_id)
+            reasons = []
+            if keyword is not None:
+                reasons.append("keyword")
+            if (
+                semantic is not None
+                and semantic.similarity >= request.min_similarity
+            ):
+                reasons.append("semantic")
+            matches.append(
+                QueryMatch(
+                    rank=rank,
+                    scene_id=scene_id,
+                    start_sec=float(rows[scene_id][0]),
+                    end_sec=float(rows[scene_id][1]),
+                    score=score,
+                    text=str(rows[scene_id][2]),
+                    keyword_rank=None if keyword is None else keyword.rank,
+                    keyword_score=None if keyword is None else keyword.score,
+                    semantic_rank=None if semantic is None else semantic.rank,
+                    semantic_similarity=(
+                        None if semantic is None else semantic.similarity
+                    ),
+                    reasons=reasons,
+                )
             )
-            for rank, (scene_id, score) in enumerate(selected, start=1)
-            if scene_id in rows
-        )
         self.log.info("최종 top-%d 씬: %s", request.top_k, top_ids)
         return PipelineQueryResult(
             run_id=request.run_id,
             query=request.query,
             context=context,
             matches=matches,
+            normalized_query=normalized_query,
+            no_answer=not matches,
         )
 
     def _embedding_service(
@@ -299,20 +393,56 @@ def _fmt_ts(sec: float) -> str:
 def fts_search(db: sqlite3.Connection, query: str, log) -> list[int]:
     """Return FTS5 scene IDs ordered by ascending bm25."""
 
-    tokens = [token for token in query.split() if token]
-    if not tokens:
+    return [hit.scene_id for hit in fts_search_with_scores(db, query, log)]
+
+
+def fts_search_with_scores(
+    db: sqlite3.Connection,
+    query: str,
+    log,
+) -> list[KeywordHit]:
+    """Return ranked keyword hits from v2 n-grams or a legacy FTS table."""
+
+    words, ngrams = search_terms(query)
+    if not words:
         return []
-    match_expr = " OR ".join(f'"{token}"' for token in tokens)
+    columns = {
+        str(row[1]) for row in db.execute("PRAGMA table_info(cards_fts)")
+    }
+    modern = {"normalized_text", "ngram_text"}.issubset(columns)
+    if modern:
+        terms = [f'normalized_text:"{word}"' for word in words]
+        terms.extend(f'ngram_text:"{gram}"' for gram in ngrams[:128])
+        match_expr = " OR ".join(terms)
+        score_expression = "bm25(cards_fts, 5.0, 1.0)"
+    else:
+        match_expr = " OR ".join(f'"{word}"' for word in words)
+        score_expression = "bm25(cards_fts)"
     try:
         rows = db.execute(
-            "SELECT rowid, bm25(cards_fts) FROM cards_fts "
-            "WHERE cards_fts MATCH ? ORDER BY bm25(cards_fts)",
+            f"SELECT rowid, {score_expression} FROM cards_fts "
+            f"WHERE cards_fts MATCH ? ORDER BY {score_expression}, rowid",
             (match_expr,),
         ).fetchall()
     except sqlite3.OperationalError as exc:
         log.warning("FTS 질의 실패 (%s) — 키워드 검색 생략", exc)
         return []
-    return [int(scene_id) for scene_id, _ in rows]
+    hits = [
+        KeywordHit(
+            scene_id=int(scene_id),
+            rank=rank,
+            score=-float(bm25_score),
+        )
+        for rank, (scene_id, bm25_score) in enumerate(rows, start=1)
+    ]
+    for hit in hits:
+        log.debug(
+            "키워드 %d위: 씬 %02d (score=%.4f)",
+            hit.rank,
+            hit.scene_id,
+            hit.score,
+        )
+    return hits
 
 
 def _meta_value(db: sqlite3.Connection, key: str) -> str | None:
@@ -331,7 +461,10 @@ def embed_search(
     batch = embedding_service.embed(
         [query], run_id="query", stage_run_id="query_embedding"
     )
-    return _rank_embeddings(db, batch.vectors[0], log)
+    return [
+        hit.scene_id
+        for hit in _rank_embeddings_with_scores(db, batch.vectors[0], log)
+    ]
 
 
 async def _embed_search_async(
@@ -345,7 +478,24 @@ async def _embed_search_async(
     batch = await embedding_service.embed_async(
         [query], run_id=run_id, stage_run_id="query_embedding"
     )
-    return _rank_embeddings(db, batch.vectors[0], log)
+    return [
+        hit.scene_id
+        for hit in _rank_embeddings_with_scores(db, batch.vectors[0], log)
+    ]
+
+
+async def _embed_search_with_scores_async(
+    db: sqlite3.Connection,
+    query: str,
+    log,
+    embedding_service: EmbeddingService,
+    *,
+    run_id: str,
+) -> list[SemanticHit]:
+    batch = await embedding_service.embed_async(
+        [query], run_id=run_id, stage_run_id="query_embedding"
+    )
+    return _rank_embeddings_with_scores(db, batch.vectors[0], log)
 
 
 def _rank_embeddings(
@@ -353,6 +503,19 @@ def _rank_embeddings(
     query_vector: Sequence[float],
     log,
 ) -> list[int]:
+    """Compatibility helper returning semantic IDs without scores."""
+
+    return [
+        hit.scene_id
+        for hit in _rank_embeddings_with_scores(db, query_vector, log)
+    ]
+
+
+def _rank_embeddings_with_scores(
+    db: sqlite3.Connection,
+    query_vector: Sequence[float],
+    log,
+) -> list[SemanticHit]:
     qvec = np.asarray(query_vector, dtype=np.float32)
     if qvec.ndim != 1 or not np.all(np.isfinite(qvec)):
         raise QueryServiceInputError("query embedding is invalid")
@@ -366,14 +529,18 @@ def _rank_embeddings(
             )
         scored.append((int(scene_id), float(np.dot(qvec, vector))))
     scored.sort(key=lambda item: (-item[1], item[0]))
-    for rank, (scene_id, similarity) in enumerate(scored, start=1):
+    hits = [
+        SemanticHit(scene_id=scene_id, rank=rank, similarity=similarity)
+        for rank, (scene_id, similarity) in enumerate(scored, start=1)
+    ]
+    for hit in hits:
         log.debug(
             "임베딩 %d위: 씬 %02d (cos=%.4f)",
-            rank,
-            scene_id,
-            similarity,
+            hit.rank,
+            hit.scene_id,
+            hit.similarity,
         )
-    return [scene_id for scene_id, _ in scored]
+    return hits
 
 
 def rrf_fuse_with_scores(

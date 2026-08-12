@@ -335,14 +335,18 @@ StageTask 입력·설정·binding, StageResult 출력·상태·사유·metrics�
 
 ## 검색과 컨텍스트 조립
 
-`query.py`는 SQLite FTS5 키워드 순위와 multilingual embedding cosine 순위를 RRF로 결합한다.
-상위 씬 카드와 전체 씬 목차를 조립해 stdout으로 출력하며 LLM을 호출하지 않는다.
+`query.py`는 NFKC 정규화 단어·문자 2~3-gram FTS5 순위와 multilingual embedding cosine 순위를
+RRF로 결합한다. keyword가 없는 semantic 결과는 기본 cosine 0.35 이상만 사용하고, 통과한 결과가
+없으면 `no_answer`로 판정한다. 상위 씬 카드와 전체 씬 목차를 조립하며 LLM을 호출하지 않는다.
 
 ```bash
 .venv/bin/python src/query.py output/sample "음성 구간 검출 얘기는 어디서 해?" --topk 2
+.venv/bin/python src/query.py output/sample "음성 구간 검출" --json
 ```
 
-검색 순위 근거는 `logs/query_<timestamp>.log`에 DEBUG로 기록된다. 별도 query 프로세스는 현재
+`--min-similarity`로 의미 검색 하한을 -1~1 범위에서 조정할 수 있다. `--json`은 최종 RRF 점수,
+keyword/semantic 순위·점수, 선택 근거와 `no_answer`를 출력한다. 검색 순위 근거는
+`logs/query_<timestamp>.log`에도 DEBUG로 기록된다. 별도 query 프로세스는 현재
 embedding 모델을 매번 로드한다. cached Hugging Face 모델이 있어도 metadata HEAD 요청이 발생하는
 환경에서는 다음처럼 명시적인 offline 실행을 사용할 수 있다.
 

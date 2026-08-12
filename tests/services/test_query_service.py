@@ -149,10 +149,59 @@ def test_query_service_returns_ranked_matches_and_context(tmp_path: Path) -> Non
     assert seen == [("fake/model", "rev-1")]
     assert result.matches[0].scene_id == 2
     assert result.matches[0].rank == 1
-    assert result.matches[0].score > result.matches[1].score
+    assert result.matches[0].reasons == ("keyword", "semantic")
+    assert result.matches[0].keyword_rank == 1
+    assert result.matches[0].semantic_similarity == 1.0
+    assert result.normalized_query == "두 번째"
+    assert result.no_answer is False
     assert "### 씬 02" in result.context
     assert result.to_dict()["matches"][0]["scene_id"] == 2
     assert str(tmp_path) not in str(result.to_dict())
+
+
+def test_query_service_rejects_semantic_only_results_below_threshold(
+    tmp_path: Path,
+) -> None:
+    write_query_fixture(tmp_path)
+
+    class LowSimilarityService(FakeEmbeddingService):
+        async def embed_async(self, texts, **options):
+            assert texts == ["존재하지 않는 주제"]
+            return self._batch()
+
+        @staticmethod
+        def _batch():
+            return EmbeddingBatch(
+                vectors=((0.1, 0.1),),
+                dimension=2,
+                model=EffectiveModel(
+                    provider="fake",
+                    name="fake/model",
+                    revision="rev-1",
+                ),
+                usage={},
+                timing={},
+            )
+
+    service = QueryService(
+        FixedQueryTargetResolver(tmp_path),
+        embedding_factory=lambda *_: LowSimilarityService(),
+        logger=LOG,
+    )
+
+    result = asyncio.run(
+        service.query(
+            PipelineQueryRequest(
+                "run-test",
+                "존재하지 않는 주제",
+                min_similarity=0.5,
+            )
+        )
+    )
+
+    assert result.no_answer is True
+    assert result.matches == ()
+    assert "질의 관련 씬 카드" in result.context
 
 
 def test_query_service_classifies_missing_or_invalid_index(

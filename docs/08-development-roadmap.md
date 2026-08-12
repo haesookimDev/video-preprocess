@@ -355,10 +355,10 @@ query top-1 씬 02를 확인했다. queue consumer와 direct upload는 초기 �
 
 ### 검색
 
-- 한국어 Unicode·공백·문장부호 정규화
-- 문자 n-gram FTS
-- 유사도 하한과 관련 결과 없음 판정
-- 점수·선택 근거 JSON 출력
+- [x] 한국어 Unicode·공백·문장부호 정규화
+- [x] 문자 n-gram FTS
+- [x] 유사도 하한과 관련 결과 없음 판정
+- [x] 점수·선택 근거 JSON 출력
 - 30~50개 평가 질의로 Recall@k, MRR, no-answer precision 측정
 
 ### 컨텍스트

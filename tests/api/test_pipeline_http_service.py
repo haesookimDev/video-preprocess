@@ -153,8 +153,10 @@ def test_http_service_maps_query_result() -> None:
     assert status == 200
     assert body == {
         "schema_version": "1",
-        "run_id": "run_test",
-        "query": "질의",
-        "context": "assembled context",
+            "run_id": "run_test",
+            "query": "질의",
+            "normalized_query": "질의",
+            "no_answer": True,
+            "context": "assembled context",
         "matches": [],
     }

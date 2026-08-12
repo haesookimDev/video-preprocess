@@ -1,6 +1,6 @@
 """10단계: 씬 카드를 SQLite FTS5 + 임베딩으로 인덱싱한다.
 
-- 키워드 검색: FTS5 (unicode61 토크나이저)
+- 키워드 검색: NFKC 정규화 + FTS5 단어/문자 2~3-gram
 - 의미 검색: sentence-transformers 다국어 임베딩 (정규화 float32 BLOB 저장)
 
 입력: 09_timeline/timeline.json
@@ -13,6 +13,9 @@ import sqlite3
 import time
 
 import numpy as np
+
+from video_preprocess.retrieval import character_ngrams, normalize_search_text
+from video_preprocess.retrieval.text import NGRAM_VERSION, NORMALIZATION_VERSION
 
 from ..context import PipelineContext
 from ..logging_setup import stage_logger
@@ -69,10 +72,12 @@ def run(ctx: PipelineContext) -> dict:
         CREATE TABLE scene_cards (
             scene_id INTEGER PRIMARY KEY,
             start_sec REAL, end_sec REAL,
-            caption TEXT, card_text TEXT
+            caption TEXT, card_text TEXT,
+            normalized_text TEXT, ngram_text TEXT
         );
         CREATE VIRTUAL TABLE cards_fts USING fts5(
-            card_text, content='scene_cards', content_rowid='scene_id',
+            normalized_text, ngram_text,
+            content='scene_cards', content_rowid='scene_id',
             tokenize='unicode61'
         );
         CREATE TABLE embeddings (
@@ -93,16 +98,30 @@ def run(ctx: PipelineContext) -> dict:
         "INSERT INTO meta VALUES ('embed_runtime', ?)",
         (batch.model.runtime or "",),
     )
+    db.execute(
+        "INSERT INTO meta VALUES ('search_schema', 'hybrid-search-v2')"
+    )
+    db.execute(
+        "INSERT INTO meta VALUES ('text_normalization', ?)",
+        (NORMALIZATION_VERSION,),
+    )
+    db.execute(
+        "INSERT INTO meta VALUES ('keyword_index', ?)",
+        (NGRAM_VERSION,),
+    )
 
     for card, text, vec in zip(cards, texts, vectors):
+        normalized_text = normalize_search_text(text)
+        ngram_text = " ".join(character_ngrams(normalized_text))
         db.execute(
-            "INSERT INTO scene_cards VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO scene_cards VALUES (?, ?, ?, ?, ?, ?, ?)",
             (card["scene_id"], card["start_sec"], card["end_sec"],
-             card["caption"], text),
+             card["caption"], text, normalized_text, ngram_text),
         )
         db.execute(
-            "INSERT INTO cards_fts(rowid, card_text) VALUES (?, ?)",
-            (card["scene_id"], text),
+            "INSERT INTO cards_fts(rowid, normalized_text, ngram_text) "
+            "VALUES (?, ?, ?)",
+            (card["scene_id"], normalized_text, ngram_text),
         )
         db.execute(
             "INSERT INTO embeddings VALUES (?, ?)",
@@ -123,6 +142,9 @@ def run(ctx: PipelineContext) -> dict:
         "embed_dim": dim,
         "card_count": len(cards),
         "fts_tokenizer": "unicode61",
+        "search_schema": "hybrid-search-v2",
+        "text_normalization": NORMALIZATION_VERSION,
+        "keyword_index": NGRAM_VERSION,
     }
     ctx.save_json(out_dir / "index_summary.json", summary)
     return {"card_count": len(cards), "embed_dim": dim}

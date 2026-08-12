@@ -1,6 +1,7 @@
 """Compatibility tests for the provider-backed embedding index Stage."""
 
 import json
+import logging
 import sqlite3
 from pathlib import Path
 
@@ -8,6 +9,7 @@ from pipeline.context import PipelineContext
 from pipeline.stages import s10_index
 from video_preprocess.domain import EffectiveModel
 from video_preprocess.inference import EmbeddingBatch
+from video_preprocess.services.query import fts_search
 
 
 class FakeEmbeddingService:
@@ -72,6 +74,11 @@ def test_index_stage_keeps_sqlite_schema_with_provider_metadata(
         embedding_count = db.execute(
             "SELECT count(*) FROM embeddings"
         ).fetchone()[0]
+        keyword_ranking = fts_search(
+            db,
+            "첫　내용은?",
+            logging.getLogger("test.index"),
+        )
     finally:
         db.close()
     assert result == {"card_count": 2, "embed_dim": 2}
@@ -79,7 +86,11 @@ def test_index_stage_keeps_sqlite_schema_with_provider_metadata(
     assert meta["embed_model"] == "fake/model"
     assert meta["embed_provider"] == "fake.embedding"
     assert meta["embed_revision"] == "rev-1"
+    assert meta["search_schema"] == "hybrid-search-v2"
+    assert meta["text_normalization"].startswith("nfkc-")
+    assert meta["keyword_index"] == "char-2-3gram-v1"
     assert embedding_count == 2
+    assert keyword_ranking[0] == 1
 
 
 def test_index_stage_requires_composed_embedding_service(

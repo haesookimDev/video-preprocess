@@ -36,7 +36,7 @@ flowchart TD
     S09 --> S10
     S09 --> S11
 
-    S10["<b>10_index</b><br/>씬 카드 텍스트를 키워드 역색인 +<br/>의미 벡터로 이중 인덱싱<br/><i>모델: multilingual-MiniLM 임베딩<br/>도구: SQLite FTS5</i>"]
+    S10["<b>10_index</b><br/>정규화 단어·문자 n-gram 역색인 +<br/>의미 벡터로 이중 인덱싱<br/><i>모델: multilingual-MiniLM 임베딩<br/>도구: SQLite FTS5</i>"]
 
     S11["<b>11_context</b><br/>포맷 안내 + 메타데이터 + 씬 목차 +<br/>씬 카드 전문으로 최종본 조립<br/><i>규칙 기반 (모델 없음)</i>"]
 
@@ -44,7 +44,7 @@ flowchart TD
 
     S10 -.-> Q
     S09 -.-> Q
-    Q["<b>query.py</b> (질의 시점)<br/>FTS bm25 + 임베딩 코사인을 RRF 융합<br/>→ top-k 씬 선별 → 축약 컨텍스트 조립<br/><i>모델: multilingual-MiniLM 임베딩</i>"]
+    Q["<b>query.py</b> (질의 시점)<br/>FTS bm25 + 하한 통과 임베딩을 RRF 융합<br/>→ top-k/no-answer → 축약 컨텍스트 조립<br/><i>모델: multilingual-MiniLM 임베딩</i>"]
 
     classDef rule fill:#dbeafe,stroke:#3b82f6,color:#1e3a5f
     classDef ml fill:#ede9fe,stroke:#8b5cf6,color:#3b2a6e
@@ -67,9 +67,9 @@ flowchart TD
 | 07_diarize | WAV ArtifactRef를 Diarization Provider에 전달. Provider가 화자 임베딩·클러스터링 후 발화 턴별 라벨 반환 | Local pyannote Provider `speaker-diarization-community-1` (HF 게이트) | 27.9s |
 | 08_captions | keyframe ArtifactRef batch를 VLM Provider에 입력해 캡션 생성. 이미지(수백~수천 토큰)를 텍스트(수십 토큰)로 압축 | Local BLIP Provider `image-captioning-base` | 3.0s |
 | 09_timeline | `[start,end)` 씬을 골격으로 병합. 전사→씬은 최대 겹침 단일 배정, 동률은 중점 포함 구간, 전사→화자도 같은 규칙 적용 | 규칙 기반 | 0.0s |
-| 10_index | 씬 카드 텍스트(캡션+전사)를 ① FTS5 역색인 ② 정규화 벡터로 이중 저장 | 주입된 `embedding.default` Local/HTTP Provider, SQLite FTS5 | local 기준 0.2s |
+| 10_index | 씬 카드 텍스트(캡션+전사)를 ① NFKC 정규화 단어·문자 2~3-gram FTS5 역색인 ② 정규화 벡터로 이중 저장 | 주입된 `embedding.default` Local/HTTP Provider, SQLite FTS5 | local 기준 0.2s |
 | 11_context | 포맷 규칙 전문 + 메타데이터 + 씬 목차 + 씬 카드 전문을 하나의 자기완결 문서로 조립 | 규칙 기반 | 0.0s |
-| query.py | 키워드(bm25)·의미(코사인) 순위를 RRF(k=60)로 융합 → top-k 씬 + 앞뒤 문맥으로 축약 컨텍스트 조립 | index와 같은 `embedding.default` Local/HTTP Provider | local cold start ~10s |
+| query.py | 키워드(bm25)·하한 통과 의미(코사인) 순위를 RRF(k=60)로 융합 → top-k 또는 no-answer와 근거 JSON | index와 같은 `embedding.default` Local/HTTP Provider | local cold start ~10s |
 
 ## 설계 대응 관계
 

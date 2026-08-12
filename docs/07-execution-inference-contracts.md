@@ -67,6 +67,13 @@ run ID를 private workspace에 매핑한다. 두 adapter 모두 같은 FTS5 + em
 경로를 사용한다. API 결과는 rank, scene ID, 구간, RRF score와 card text를 포함하되 DB나 timeline의
 물리 경로는 포함하지 않는다.
 
+Phase 6의 additive query 필드 `min_similarity`는 keyword hit가 없는 semantic-only candidate의 cosine
+하한이며 기본값은 0.35다. index와 query는 NFKC/casefold/문장부호·공백 정규화와 문자 2~3-gram을
+공유한다. 응답은 `normalized_query`, `no_answer`와 match별 keyword/semantic rank·score 및
+`keyword|semantic` 선택 근거를 포함한다. threshold를 통과한 신호가 하나도 없으면 빈 match와
+`no_answer=true`를 반환한다. 기존 v1 request는 기본값으로 동작하고 새 response 필드는 additive다.
+결정은 [`ADR-0027`](./adr/0027-normalized-hybrid-retrieval-threshold.md)에 기록한다.
+
 local reference server는 `--retain-terminal-runs`로 최근 terminal API snapshot 수를 제한한다. 이
 정리는 API 조회/idempotency control record에만 적용하며 Engine manifest와 artifact body를 삭제하지
 않는다. 보존 범위를 지난 run은 `404`이고 같은 idempotency key는 새 실행으로 사용할 수 있다.

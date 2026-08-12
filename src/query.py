@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import os
 import sys
 from datetime import datetime
@@ -36,6 +37,17 @@ def main() -> int:
     parser.add_argument("query", help="질의 문장")
     parser.add_argument("--topk", type=int, default=3)
     parser.add_argument(
+        "--min-similarity",
+        type=float,
+        default=0.35,
+        help="키워드 미일치 결과의 최소 cosine 유사도 (기본: 0.35)",
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="context 대신 점수·선택 근거를 포함한 JSON 출력",
+    )
+    parser.add_argument(
         "--embedding-endpoint",
         default=None,
         help="embedding.default HTTP Inference v1 endpoint",
@@ -58,6 +70,7 @@ def main() -> int:
             run_id=datetime.now().strftime("%Y%m%d_%H%M%S"),
             query=args.query,
             top_k=args.topk,
+            min_similarity=args.min_similarity,
         )
     except (TypeError, ValueError, QueryServiceError) as exc:
         print(f"오류: {exc}", file=sys.stderr)
@@ -78,10 +91,13 @@ def main() -> int:
         print(f"오류: {exc}", file=sys.stderr)
         return 1
 
-    print("\n" + "=" * 60)
-    print("조립된 LLM 입력 컨텍스트")
-    print("=" * 60)
-    print(result.context)
+    if args.json:
+        print(json.dumps(result.to_dict(), ensure_ascii=False, indent=2))
+    else:
+        print("\n" + "=" * 60)
+        print("조립된 LLM 입력 컨텍스트")
+        print("=" * 60)
+        print(result.context)
     return 0
 
 

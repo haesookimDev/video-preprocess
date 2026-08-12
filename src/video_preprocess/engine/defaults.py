@@ -111,7 +111,7 @@ DEFAULT_STAGE_SPECS = (
     ),
     StageSpec(
         name="10_index",
-        stage_version="1.0.0",
+        stage_version="1.1.0",
         dependencies=("09_timeline",),
         required_inputs=("timeline",),
         outputs=("search_index", "index_summary"),

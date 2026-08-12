@@ -330,14 +330,23 @@ components:
         schema_version: {type: string, const: '1'}
         query: {type: string, minLength: 1, maxLength: 4000}
         top_k: {type: integer, minimum: 1, maximum: 100, default: 5}
+        min_similarity:
+          type: number
+          minimum: -1
+          maximum: 1
+          default: 0.35
+          description: Minimum cosine similarity for semantic-only matches.
     PipelineQueryResponse:
       type: object
       additionalProperties: false
-      required: [schema_version, run_id, query, context, matches]
+      required: [schema_version, run_id, query, normalized_query, no_answer,
+                 context, matches]
       properties:
         schema_version: {type: string, const: '1'}
         run_id: {type: string}
         query: {type: string}
+        normalized_query: {type: string}
+        no_answer: {type: boolean}
         context: {type: string}
         matches:
           type: array
@@ -345,7 +354,9 @@ components:
     QueryMatch:
       type: object
       additionalProperties: false
-      required: [rank, scene_id, start_sec, end_sec, score, text]
+      required: [rank, scene_id, start_sec, end_sec, score, text,
+                 keyword_rank, keyword_score, semantic_rank,
+                 semantic_similarity, reasons]
       properties:
         rank: {type: integer, minimum: 1}
         scene_id: {type: integer, minimum: 1}
@@ -353,6 +364,13 @@ components:
         end_sec: {type: number, minimum: 0}
         score: {type: number}
         text: {type: string}
+        keyword_rank: {type: [integer, 'null'], minimum: 1}
+        keyword_score: {type: [number, 'null']}
+        semantic_rank: {type: [integer, 'null'], minimum: 1}
+        semantic_similarity: {type: [number, 'null'], minimum: -1, maximum: 1}
+        reasons:
+          type: array
+          items: {type: string, enum: [keyword, semantic]}
     ArtifactRef:
       type: object
       additionalProperties: false

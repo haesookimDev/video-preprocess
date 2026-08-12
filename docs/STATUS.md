@@ -98,6 +98,8 @@ Git 상태를 확인한 뒤 작업을 시작한다.
   [`ADR-0025`](./adr/0025-durable-public-pipeline-api.md)
 - timeline 반개구간·단일 배정 결정:
   [`ADR-0026`](./adr/0026-half-open-timeline-single-assignment.md)
+- 검색 정규화·n-gram·no-answer 결정:
+  [`ADR-0027`](./adr/0027-normalized-hybrid-retrieval-threshold.md)
 
 ## 3. 완료된 작업
 
@@ -236,8 +238,9 @@ Phase 6 timeline slice는 09 timeline의 모든 구간을 반개구간 `[start, 
 규칙으로 정렬하며 source segment ID, VAD source와 STT confidence를 scene card에 보존한다.
 
 다음 slice는 10 index와 공통 QueryService에 Unicode·공백·문장부호 정규화, 한국어 문자 n-gram
-keyword signal과 embedding 유사도 하한을 추가한다. match JSON에는 keyword/semantic 순위·점수와
-선택 근거를 기록하고 고정 평가 질의로 Recall@3, MRR과 no-answer precision을 측정한다.
+keyword signal과 embedding 유사도 하한을 추가했다. match JSON에는 keyword/semantic 순위·점수와
+선택 근거를 기록하고 threshold를 통과한 신호가 없으면 `no_answer=true`를 반환한다. 다음 slice는
+고정 평가 질의 30~50개로 Recall@3, MRR과 no-answer precision을 측정하는 harness와 baseline을 만든다.
 
 ## 6. 알려진 중요 문제
 
@@ -344,6 +347,19 @@ keyword signal과 embedding 유사도 하한을 추가한다. match JSON에는 k
 
 최신 기록을 위에 추가한다. 긴 구현 설명은 PR이나 ADR에 두고 여기에는 다음 세션이 재개하는 데
 필요한 정보만 적는다.
+
+### 2026-08-12 — Phase 6 한국어 hybrid retrieval과 no-answer
+
+- 목표: `unicode61` 완전 token 일치 의존과 무관 질의의 무조건 top-k 반환 제거
+- 완료: NFKC/casefold/문장부호·공백 정규화, 단어 경계를 넘지 않는 2~3자 n-gram index,
+  legacy FTS 호환 query, 기본 cosine 0.35 하한, `no_answer`, signal별 rank/score/reason JSON,
+  CLI `--min-similarity`·`--json`, Stage 10 version 1.1.0과 Pipeline OpenAPI additive 필드
+- 주요 결정: keyword hit는 유지하고 keyword가 없는 semantic-only scene만 cosine 하한 적용;
+  query/index가 같은 정규화 함수를 공유하며 자동 local fallback은 추가하지 않음; ADR-0027
+- 검증: retrieval/index/query/service/OpenAPI/API/planner/binding 41 passed, 2 deselected
+- 호환성: 새 index는 hybrid-search-v2 metadata와 FTS 두 열을 사용하고 QueryService는 기존 단일
+  `card_text` FTS도 읽음; 기존 request는 기본 하한을 사용하고 response에는 additive 필드가 생김
+- 다음 작업: 30~50개 고정 평가 dataset, Recall@3/MRR/no-answer precision harness와 sample baseline
 
 ### 2026-08-12 — Phase 6 timeline 반개구간·단일 배정
 

@@ -510,7 +510,7 @@ def _final_definitions(
         ),
         LegacyStageDefinition(
             name="10_index",
-            stage_version="1.0.0",
+            stage_version="1.1.0",
             module=modules["10_index"],
             inputs=(timeline,),
             config_fields=("embed_model",),
