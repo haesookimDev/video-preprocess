@@ -24,7 +24,8 @@ flowchart TD
         S05["<b>05_vad</b><br/>음성 확률로 발화 구간만 검출<br/>무음·비음성 제거 → STT 대상 축소<br/><i>모델: Silero VAD (ONNX)</i>"]
         S06["<b>06_stt</b><br/>VAD 구간을 병합(gap≤0.5s) 후<br/>구간별 전사, 타임스탬프 원본 보정<br/><i>모델: faster-whisper base/small</i>"]
         S07["<b>07_diarize</b><br/>화자 임베딩 클러스터링으로<br/>발화 턴별 화자 라벨 부여<br/><i>모델: pyannote community-1</i>"]
-        S04 --> S05 --> S06 --> S07
+        S04 --> S05 --> S06
+        S04 --> S07
     end
 
     S08 --> S09
@@ -120,6 +121,10 @@ PipelineEngine→LocalExecutor에서 실행한다. 입력 영상은 cache integr
 .venv/bin/python src/run_pipeline.py samples/sample.mp4 \
   --stage-timeout-sec 900 --max-stage-attempts 2 --retry-backoff-sec 1
 
+# visual/audio 독립 분기를 최대 2개 local Stage로 병렬 실행
+.venv/bin/python src/run_pipeline.py samples/sample.mp4 \
+  --executor-max-concurrency 2
+
 # target tokenizer의 실제 2048 token 이하로 final context 제한
 .venv/bin/python src/run_pipeline.py samples/sample.mp4 \
   --max-context-tokens 2048 \
@@ -137,6 +142,12 @@ effective model fingerprint와 모든 input/output artifact checksum을 다시 �
 timeout과 run cancellation은 attempt별 `ExecutionControl`을 통해 Executor와 control-aware runner에
 전달된다. timeout은 안전한 반환 경계 뒤 `STAGE_TIMEOUT`으로 기록하고 Executor submit/result 실패와
 함께 설정된 최대 attempt까지 bounded retry한다. 영구 Stage 실패와 cancellation은 retry하지 않는다.
+
+Engine은 plan 내부 dependency가 완료된 Stage를 ready set으로 만들고 LocalExecutor의 semaphore
+capacity 안에서 실행한다. 09 timeline은 03/06/07/08 결과가 모두 끝난 뒤에만 시작하며, 10 index와
+11 context는 09 이후 서로 독립적으로 실행될 수 있다. 한 branch가 실패하면 active peer에 cooperative
+cancel을 전달하고 안전한 반환까지 기다린다. manifest Stage reference는 completion timing이 아니라
+plan/attempt 순서로 유지한다.
 
 ## Service와 REST 실행
 

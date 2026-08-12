@@ -29,7 +29,7 @@ flowchart LR
 
 구현된 범위:
 
-- 11단계 DAG 계획과 순차 `LocalExecutor` 실행
+- 11단계 DAG의 dependency-ready scheduling과 bounded `LocalExecutor` 실행
 - 입력·설정·모델 binding·산출물 checksum 기반 manifest cache
 - VAD, STT, diarization, caption, embedding Local Inference Provider
 - 전체·단계별·from/to 선택 실행과 같은 local run 재개
@@ -169,6 +169,7 @@ curl -sS -X DELETE \
 | `--max-active-runs N` | 동시에 허용할 local pipeline run 수. 기본값 1 |
 | `--max-request-bytes N` | JSON request body 상한. 기본값 1 MiB |
 | `--retain-terminal-runs N` | 유지할 최신 terminal API 상태 수. 기본값 1000 |
+| `--executor-max-concurrency N` | run 내부에서 동시에 실행할 local Stage 수. 기본값 1 |
 | `--auth-token-env NAME` | Bearer token 값을 읽을 환경변수 이름 |
 | `--context-tokenizer-model MODEL` | query context를 계산할 server-side target tokenizer |
 
@@ -214,6 +215,7 @@ bind할 때는 Bearer 인증과 reverse proxy/service mesh의 TLS 종료를 사�
 | `--stage-timeout-sec N` | 각 Stage timeout. 기본값은 제한 없음 |
 | `--max-stage-attempts N` | 일시적 실패의 Stage별 최대 시도 수. 기본값은 1 |
 | `--retry-backoff-sec N` | 첫 재시도 전 대기 시간. 기본값은 0초 |
+| `--executor-max-concurrency N` | 동시에 실행할 local Stage 상한. 기본값은 1 |
 | `--embedding-endpoint URL` | `embedding.default`를 HTTP Inference v1 endpoint에 연결 |
 | `--embedding-token-env NAME` | bearer token 값을 읽을 환경변수 이름 |
 | `--embedding-artifact-namespace NAME` | endpoint가 읽을 수 있는 Artifact namespace. 반복 가능 |
@@ -227,6 +229,11 @@ bind할 때는 Bearer 인증과 reverse proxy/service mesh의 TLS 종료를 사�
 `--stage`는 `--from-stage` 또는 `--to-stage`와 함께 사용할 수 없다. 부분 실행은 같은 run의
 이전 manifest에 필요한 boundary artifact가 있고 현재 영상 checksum과 일치할 때만 허용된다.
 처음 실행하는 output이라면 전체 실행 또는 필요한 상위 단계를 포함한 `--to-stage`부터 수행한다.
+
+Engine은 dependency가 끝난 Stage만 ready로 만들고 `--executor-max-concurrency` 범위에서 실행한다.
+값을 2 이상으로 설정하면 visual/audio와 09 이후 index/context 분기가 겹칠 수 있지만 local 모델의
+메모리 사용도 동시에 증가한다. 기본값 1은 기존 순차 resource 동작을 유지한다. 완료 결과와 manifest는
+실제 완료 순서가 아니라 deterministic plan 순서로 기록된다.
 
 `--dry-run`은 output·manifest를 만들지 않는 read-only 경로다. 각 Stage를 `hit`, `miss`,
 `forced`, `blocked`로 표시하고 `will_execute`와 stable reason code를 출력한다. 상위 Stage가

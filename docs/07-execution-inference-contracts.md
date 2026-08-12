@@ -14,8 +14,8 @@ Artifact·Run Store Port와 로컬 구현은
 [`src/video_preprocess/storage/`](../src/video_preprocess/storage/)에 있고 저장 규칙은
 [`ADR-0003`](./adr/0003-local-artifact-and-manifest-storage.md)에 기록한다. Stage registry와
 DAG planner는 [`src/video_preprocess/engine/`](../src/video_preprocess/engine/)에 구현됐다.
-Executor Port와 LocalExecutor는
-[`src/video_preprocess/executors/`](../src/video_preprocess/executors/)에 구현됐다. 순차
+Executor Port와 bounded LocalExecutor는
+[`src/video_preprocess/executors/`](../src/video_preprocess/executors/)에 구현됐다. dependency-ready
 PipelineEngine과 상태 머신은
 [`src/video_preprocess/engine/`](../src/video_preprocess/engine/)에 구현됐다. manifest cache key와
 decision, RunStore journal, 같은 run resume와 Store 범위 global cache index도 구현됐다. 전체 01~11
@@ -299,22 +299,23 @@ artifact가 있는지 확인해야 한다. 결정 근거는
 수행한다.
 
 - plan 전체의 boundary input, stage config, model binding과 attempt를 첫 제출 전에 검증한다.
-- required input을 logical key로 resolve하고 Stage별 `StageTask`를 순차 생성한다.
+- plan 내부 dependency가 모두 성공한 ready Stage의 `StageTask`를 stable plan 순서로 생성한다.
 - run ID, Stage name, attempt, version, input, config와 model binding으로 deterministic task
   identity와 idempotency key를 만든다. trace ID는 결과 fingerprint에서 제외한다.
 - run은 `pending → running → terminal`, 실행 Stage는 `pending → queued → running → terminal`,
   cache hit는 `pending → cached` 전이를 따르며 잘못된 전이를 거부한다.
-- `succeeded`와 `skipped` output을 다음 Stage의 artifact map에 합치고 `failed` 또는 `cancelled`면
-  후속 제출을 중단한다.
+- `succeeded`와 `skipped` output을 artifact map에 합치고 모든 필수 dependency가 끝난 뒤에만 join을
+  제출한다. `failed` 또는 `cancelled`면 후속 제출을 중단하고 active peer를 cooperative cancel한다.
 - 선언되지 않은 output을 거부하고 downstream required input이 실제로 없을 때 stable failed
   result로 정규화한다.
 
 RunStore가 주입되면 Engine은 시작, 각 Stage terminal과 run terminal 시점에 manifest를 저장한다.
 같은 run/stage attempt의 성공 manifest가 cache 검증을 통과하면 Executor 제출 없이 output을
-전달한다. 결정 근거는
+전달한다. 실제 completion timing과 무관하게 result와 RunManifest Stage reference는 plan/attempt
+순서로 공개한다. 결정 근거는
 [`ADR-0011`](./adr/0011-sequential-pipeline-engine-artifact-orchestration.md)과
-[`ADR-0013`](./adr/0013-pipeline-engine-run-journal-and-cache-resume.md)에 기록한다. retry와 global
-cache index는 후속 slice다.
+[`ADR-0013`](./adr/0013-pipeline-engine-run-journal-and-cache-resume.md),
+[`ADR-0029`](./adr/0029-dependency-ready-bounded-local-concurrency.md)에 기록한다.
 
 ### 4.6 Legacy 01~11 compatibility binding
 
@@ -359,7 +360,8 @@ code로 반환한다.
 10은 `embedding.default`를 exact match하고 `embed_model` config를 task/cache semantics에 포함한다.
 성공한 index summary의 embed provider/model/revision/runtime은 `embedding` slot의
 `ModelExecution`으로 변환한다. 세 binding 묶음과 전체 11단계 binding은 각각 생성할 수 있고,
-전체 registry는 mutable legacy context 보호를 위해 하나의 실행 잠금을 공유한다. 상세 결정은
+전체 registry는 서로 다른 Stage가 사용하는 config field를 분리하고 binding별 잠금으로 적용·복원을
+보호해 독립 Stage 본문을 병렬 실행할 수 있다. 상세 결정은
 [`ADR-0016`](./adr/0016-legacy-final-stage-and-pipeline-bindings.md)에 기록한다.
 
 09 timeline version 1.1.0은 scene, transcript와 speaker turn을 모두 반개구간
@@ -414,7 +416,9 @@ class Executor(Protocol):
 현재 구현은 다음 규칙을 사용한다.
 
 - `StageBindingRegistry`로 stable Stage name에 sync/async runner callable을 주입한다.
-- `submit`은 `queued` handle을 즉시 반환하고 한 async lock으로 current process에서 순차 실행한다.
+- `submit`은 `queued` handle을 즉시 반환하고 검증된 `max_concurrency` semaphore 안에서 실행한다.
+- 기본 capacity는 1이며 CLI/reference server composition에서만 명시적으로 늘린다. 이 배포 설정은
+  Stage 결과 의미나 cache key를 바꾸지 않는다.
 - sync runner는 `asyncio.to_thread`, async runner는 현재 event loop에서 실행한다.
 - 동일 idempotency key·동일 task는 같은 handle을 반환하고 다른 task면 충돌로 거부한다.
 - runner exception, non-StageResult, run/stage/attempt mismatch는 stable reason code를 가진
@@ -430,9 +434,9 @@ runner는 `(task)` 호출을 유지한다. LocalExecutor cancel은 token을 먼�
 호출은 안전하게 강제 종료하지 않고 반환 결과를 폐기하는 기존 경계를 유지한다.
 
 현재 handle/job은 in-memory이며 같은 service event loop lifecycle에서 사용한다. Engine의
-run/stage terminal manifest는 저장되지만 Executor handle status는 저장하지 않는다. Engine의 Stage별
-timeout/cancel orchestration과 persisted job status는 후속 slice다. 결정 근거는
-[`ADR-0010`](./adr/0010-async-sequential-local-executor.md)에 기록한다.
+run/stage terminal manifest는 저장되지만 Executor handle status는 저장하지 않는다. 결정 근거는
+[`ADR-0010`](./adr/0010-async-sequential-local-executor.md)과
+[`ADR-0029`](./adr/0029-dependency-ready-bounded-local-concurrency.md)에 기록한다.
 
 ### 5.2 RemoteExecutor
 

@@ -177,10 +177,10 @@ flowchart LR
     S09 --> S11
 ```
 
-초기 `LocalExecutor`는 순차 실행으로 동등성을 확보한다. 이후 비주얼 경로와 오디오
-경로를 병렬화한다. Engine은 dependency-ready 판정·join·실패/취소 전파를,
-Executor는 실행 위치·local capacity를 소유하며 Stage는 둘 모두를 알지 못한다. Phase 7은
-기본 concurrency 1을 유지하면서 이 경계를 구현한다.
+초기 `LocalExecutor`는 순차 실행으로 동등성을 확보했다. Phase 7부터 Engine은
+dependency-ready 판정·join·실패/취소 전파를, Executor는 실행 위치·local capacity를 소유한다.
+Stage는 둘 모두를 알지 못한다. 기본 concurrency는 1이고 명시적으로 늘리면 visual/audio와
+09 이후 10/11 분기가 bounded capacity 안에서 병렬 실행된다.
 
 현재 `StageRegistry`와 `DAGPlanner`가 이 11개 Stage의 logical input/output과 dependency를
 검증하고 stable name 사전순 tie-break로 deterministic topological plan을 만든다. exact,
@@ -188,12 +188,12 @@ from, to 선택과 plan 밖에서 필요한 `boundary_inputs` 규칙은
 [`ADR-0009`](./adr/0009-deterministic-stage-registry-and-dag-planner.md)에 기록한다. 기존 runner
 대신 01~11 compatibility binding이 이 plan을 실행하며, 기존 runner는 호환 구현으로만 남아 있다.
 
-`LocalExecutor`는 injected Stage runner를 `StageTask`로 submit하고 단일 local execution slot에서
-순차 실행한다. async handle, idempotency, 결과 identity와 취소 경계는
-[`ADR-0010`](./adr/0010-async-sequential-local-executor.md)에 기록한다. Planner를 소비하는
-최소 `PipelineEngine`은 plan 순서, StageTask identity, logical artifact 전달과 fail/cancel 중단을
-구현했다. 결정은
-[`ADR-0011`](./adr/0011-sequential-pipeline-engine-artifact-orchestration.md)에 기록한다.
+`LocalExecutor`는 injected Stage runner를 `StageTask`로 submit하고 검증된 semaphore capacity 안에서
+실행한다. async handle, idempotency, 결과 identity와 취소 경계는
+[`ADR-0010`](./adr/0010-async-sequential-local-executor.md)에 기록한다. `PipelineEngine`은 ready set,
+StageTask identity, logical artifact 전달, join과 fail/cancel 전파를 소유한다. 초기 순차 결정은
+[`ADR-0011`](./adr/0011-sequential-pipeline-engine-artifact-orchestration.md), 병렬 확장은
+[`ADR-0029`](./adr/0029-dependency-ready-bounded-local-concurrency.md)에 기록한다.
 Content-addressed Stage cache key와 manifest/artifact 검증 기반 cache decision 계층도 구현했으며
 결정은 [`ADR-0012`](./adr/0012-content-addressed-manifest-cache-decisions.md)에 기록한다.
 PipelineEngine은 선택적으로 RunStore journal과 cache evaluator를 연결해 같은 run/stage attempt를

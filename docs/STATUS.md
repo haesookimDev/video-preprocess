@@ -1,8 +1,8 @@
 # 개발 상태와 세션 인수인계
 
 - 마지막 갱신: **2026-08-12**
-- 현재 단계: **Phase 6 완료 — 타임라인·검색·context 품질**
-- 다음 작업: **Phase 7 — Engine dependency-ready set과 LocalExecutor bounded concurrency**
+- 현재 단계: **Phase 7 진행 중 — ready-set local 병렬 실행 완료**
+- 다음 작업: **씬 길이 기반 1~3장 adaptive keyframe과 다중 caption 계약**
 
 이 문서는 개발 진행 상황의 단일 진입점이다. 새로운 세션은 이 문서를 먼저 읽고, 실제 코드와
 Git 상태를 확인한 뒤 작업을 시작한다.
@@ -20,7 +20,7 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - `src/video_preprocess/domain/`: 버전이 있는 Artifact·Stage 공개 계약
 - `src/video_preprocess/storage/`: Artifact·Run Store Port와 로컬 구현
 - `src/video_preprocess/engine/`: planner, PipelineEngine, manifest cache와 RunStore journal
-- `src/video_preprocess/executors/`: async Executor Port, Stage binding과 순차 LocalExecutor
+- `src/video_preprocess/executors/`: async Executor Port, Stage binding과 bounded LocalExecutor
 - `src/video_preprocess/adapters/`: legacy 01~11 StageTask compatibility binding
 - `src/video_preprocess/services/`: pipeline Application Service와 local composition root
 - 기본 CLI는 manifest·checksum·설정·model binding 기반 cache 사용
@@ -33,6 +33,8 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - timeline 반개구간·단일 배정과 source/confidence 보존 구현 완료
 - 한국어 정규화·문자 n-gram hybrid 검색, no-answer·고정 평가 dataset 구현 완료
 - 실제 tokenizer 기반 static/query context 예산과 포함·제외 통계 구현 완료
+- Engine dependency-ready scheduling, plan-order manifest와 branch fail/cancel 전파 구현 완료
+- 기본 1·설정 가능 bounded LocalExecutor와 legacy Stage 실제 병렬 실행 구현 완료
 - queue consumer, direct upload와 RemoteExecutor는 아직 미구현
 - Local Store가 input copy, 단계 산출물과 run/stage manifest를 관리
 
@@ -105,6 +107,8 @@ Git 상태를 확인한 뒤 작업을 시작한다.
   [`ADR-0027`](./adr/0027-normalized-hybrid-retrieval-threshold.md)
 - tokenizer 기반 context budget 결정:
   [`ADR-0028`](./adr/0028-tokenizer-bounded-context-selection.md)
+- dependency-ready·bounded local concurrency 결정:
+  [`ADR-0029`](./adr/0029-dependency-ready-bounded-local-concurrency.md)
 
 ## 3. 완료된 작업
 
@@ -153,6 +157,7 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - [x] global cache index와 run 간 content-addressed 재사용
 - [x] Executor `ExecutionControl`과 cooperative cancellation token 전달
 - [x] Engine Stage timeout·run cancellation·bounded retry policy
+- [x] dependency-ready Engine·bounded LocalExecutor와 branch fail/cancel 전파
 
 ## 4. 아직 구현되지 않은 작업
 
@@ -183,11 +188,13 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - [x] 타임라인 경계 정합성 개선
 - [x] 한국어 검색과 평가 체계
 - [x] 실제 token budget
+- [x] visual/audio·index/context 분기 병렬 실행
+- [ ] 씬 길이 기반 adaptive keyframe 1~3장과 다중 caption
 
 문서가 존재한다고 구현된 것으로 간주하지 않는다. 완료 여부는 코드와 자동 테스트를 기준으로
 이 체크리스트에서 갱신한다.
 
-## 5. Phase 6 완료와 인수인계
+## 5. Phase 7 진행과 인수인계
 
 Phase 4 완료 순서:
 
@@ -251,11 +258,18 @@ context slice는 대상 Hugging Face tokenizer의 실제 token count로 static/q
 query의 인접 scene 확장·중복 제거, 낮은 우선순위 card 축약/제거와 사용·제외 통계를 구현했다.
 
 Phase 6은 default suite, offline sample 11단계, CLI query, retrieval evaluation, public REST E2E,
-preflight·dependency·SQLite integrity를 모두 재검증하고 완료했다. 다음 세션은 Phase 7의 첫
-slice로 `engine/pipeline.py`의 순차 루프를 dependency-ready set scheduler로 변경하고,
-`executors/local.py`에 기본 1을 유지하는 bounded concurrency를 추가한다. fake runner로 visual/audio
-분기의 실제 겹침, 09 join 이전 dependency 준수, deterministic manifest 순서와
-실패·취소 전파를 먼저 고정한다.
+preflight·dependency·SQLite integrity를 모두 재검증하고 완료했다.
+
+Phase 7 첫 slice는 Engine의 dependency-ready set scheduler, LocalExecutor semaphore capacity,
+plan/attempt 순서 result·manifest, branch fail/cancel cooperative propagation을 구현했다. legacy
+binding의 pipeline-wide lock도 Stage별 config guard로 바꿔 실제 Stage 본문이 겹치게 했다.
+`--executor-max-concurrency` 기본값은 1이고 CLI와 reference server에서 명시적으로만
+늘린다. sample concurrency 2 로그에서 02/04, 05/07, 06/08, 10/11 분기 겹침과
+09 join을 확인했다.
+
+다음 slice는 `s03_keyframes.py`의 씬 길이 기반 1~3장 timestamp·filename 계약을
+고정하고, deterministic `keyframe_images` ZIP과 Stage version, `s08_captions.py`의 씬별
+다중 caption, `s09_timeline.py`의 시각 요약 호환성을 fixture로 검증한 뒤 구현하는 것이다.
 
 ## 6. 알려진 중요 문제
 
@@ -359,6 +373,26 @@ slice로 `engine/pipeline.py`의 순차 루프를 dependency-ready set scheduler
 
 최신 기록을 위에 추가한다. 긴 구현 설명은 PR이나 ADR에 두고 여기에는 다음 세션이 재개하는 데
 필요한 정보만 적는다.
+
+### 2026-08-12 — Phase 7 dependency-ready·bounded local concurrency
+
+- 목표: 독립 visual/audio Stage를 겹쳐 실행하되 DAG, cache, retry, join과 취소
+  계약을 유지
+- 완료: Engine ready set scheduling, LocalExecutor semaphore capacity, CLI/server
+  `--executor-max-concurrency`, legacy binding별 config guard, plan-order result/RunManifest,
+  failed branch 우선 API failure 원인; ADR-0029
+- 계약 검증: fake delayed branch의 실제 overlap·09 join, completion 순서와 무관한
+  manifest, cache/retry 회귀, branch failure peer cancel, 외부 run cancel, legacy Context config 복원
+- 실제 검증: offline `sample.mp4 --force --executor-max-concurrency 2` 11/11 `ok`;
+  02/04·05/07·06/08·10/11 로그 겹침, 09 join, static context 256/256 token,
+  query top-1 scene 02·168/256 token, SQLite integrity `ok`
+- 회귀: default 371 passed/16 deselected; non-model HTTP 2 passed; concurrency 2 actual model
+  REST E2E 1 passed; compileall·diff check 성공
+- 호환성: 기본 concurrency 1은 기존 resource 동작 유지; capacity는 Stage config/cache가
+  아닌 local 배포 설정; 값을 늘리면 모델 메모리도 동시 사용
+- 관찰: macOS FFmpeg dylib·PySceneDetect deprecated getter·pyannote 짧은 입력 warning은
+  기존과 동일하며 실패로 이어지지 않음
+- 다음 작업: adaptive keyframe 1~3장 policy·schema·ZIP·caption/timeline fixture 계약
 
 ### 2026-08-12 — Phase 6 최종 검증과 완료
 

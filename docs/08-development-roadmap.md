@@ -1,6 +1,6 @@
 # 엔진·실행기 분리 개발 로드맵
 
-상태: **Phase 6 완료 — 다음 Phase 7 ready-set 병렬 실행**
+상태: **Phase 7 진행 중 — ready-set 병렬 완료, 다음 adaptive keyframe**
 기준일: 2026-08-12
 대상 설계: [`06-target-architecture.md`](./06-target-architecture.md)  
 공개 계약: [`07-execution-inference-contracts.md`](./07-execution-inference-contracts.md)
@@ -389,22 +389,25 @@ static/API query context가 지정한 256 token 예산을 넘지 않음을 확�
 
 후속 우선순위:
 
-1. Executor의 비주얼·오디오 분기 병렬 실행
-2. 씬 길이에 따른 키프레임 1~3장 추출
-3. perceptual hash 중복 제거
-4. caption device 자동 선택과 batch 크기 tuning
-5. OCR provider
-6. 내장 자막·챕터 활용
-7. 오디오 이벤트 provider
-8. 질의 기반 2-pass 고품질 재처리
-9. 필요 시 RemoteExecutor와 분산 worker
+1. [x] Executor의 비주얼·오디오 분기 병렬 실행
+2. [ ] 씬 길이에 따른 키프레임 1~3장 추출
+3. [ ] perceptual hash 중복 제거
+4. [ ] caption device 자동 선택과 batch 크기 tuning
+5. [ ] OCR provider
+6. [ ] 내장 자막·챕터 활용
+7. [ ] 오디오 이벤트 provider
+8. [ ] 질의 기반 2-pass 고품질 재처리
+9. [ ] 필요 시 RemoteExecutor와 분산 worker
 
-첫 slice는 Engine이 단일 topological list를 순차 소비하는 대신 dependency-ready set을
-스케줄하도록 변경하고, LocalExecutor에 기본 1을 유지하는 설정 가능 bounded
-concurrency를 추가한다. 03→08 visual 분기와 04→05→06/07 audio 분기를 동시에
-진행하되 09 join은 모든 필수 의존성이 완료된 후에만 시작해야 한다. manifest의
-공개 순서, cache, retry, 한 분기 실패와 run cancellation은 동시성과 무관하게 결정적이어야
-한다. 계약 변경은 ADR과 fake delayed runner 테스트로 먼저 고정한다.
+첫 slice는 완료했다. Engine은 dependency-ready set을 스케줄하고 LocalExecutor는
+기본 1의 설정 가능 semaphore capacity를 적용한다. visual/audio와 10/11 분기의
+실제 겹침, 09 join, plan-order manifest, cache/retry, branch fail/cancel 전파를 fake·sample·REST
+경계에서 검증했다. 결정은
+[`ADR-0029`](./adr/0029-dependency-ready-bounded-local-concurrency.md)에 기록한다.
+
+다음 slice는 `s03_keyframes.py`의 씬 길이 기반 1~3장 deterministic timestamp·filename
+계약, keyframe ZIP member와 Stage version, `s08_captions.py`의 씬별 다중 caption 정규화,
+`s09_timeline.py`의 시각 요약 호환성을 fixture로 먼저 고정하는 것이다.
 
 ## 12. 테스트 전략
 

@@ -2,6 +2,8 @@
 
 - 상태: Accepted
 - 결정일: 2026-08-06
+- 후속 변경: Phase 7의 bounded concurrency는
+  [`ADR-0029`](./0029-dependency-ready-bounded-local-concurrency.md)에서 확장한다.
 - 관련 문서:
   [`../07-execution-inference-contracts.md`](../07-execution-inference-contracts.md)
 
