@@ -26,6 +26,7 @@ flowchart LR
 - VAD, STT, diarization, caption, embedding Local Inference Provider
 - 전체·단계별·from/to 선택 실행과 같은 local run 재개
 - Stage별 cache 상태·실행 예상·stable reason을 제공하는 read-only dry-run
+- offline snapshot·immutable revision·VAD asset 기반 local model fingerprint 확인
 - 기존 JSON·Markdown·SQLite 출력 구조와 query CLI
 
 아직 구현되지 않은 범위:
@@ -33,7 +34,6 @@ flowchart LR
 - HTTP Inference Provider와 모델 서버
 - REST API·queue adapter와 RemoteExecutor
 - run 사이의 global content-addressed cache
-- 실행 전 local model fingerprint 자동 확인
 
 정확한 완료 상태와 다음 작업은 [docs/STATUS.md](docs/STATUS.md)를 기준으로 한다.
 
@@ -137,8 +137,9 @@ sed -n '1,120p' output/sample/11_context/context.md
 `--dry-run`은 output·manifest를 만들지 않는 read-only 경로다. 각 Stage를 `hit`, `miss`,
 `forced`, `blocked`로 표시하고 `will_execute`와 stable reason code를 출력한다. 상위 Stage가
 실행되어야 새 output checksum을 알 수 있으면 stale downstream manifest를 추정하지 않고
-`REQUIRED_INPUT_UNAVAILABLE`로 차단한다. 현재 model fingerprint를 실행 전에 확정할 수 없는
-Stage는 안전하게 `EFFECTIVE_MODELS_UNAVAILABLE` miss로 표시한다.
+`REQUIRED_INPUT_UNAVAILABLE`로 차단한다. 로드된 모델, immutable revision, offline local snapshot과
+VAD asset은 실행 전에 fingerprint를 확인한다. 온라인의 변경 가능한 `main/default`처럼 현재
+revision을 확정할 수 없는 Stage는 안전하게 `EFFECTIVE_MODELS_UNAVAILABLE` miss로 표시한다.
 
 ## 11단계 파이프라인
 

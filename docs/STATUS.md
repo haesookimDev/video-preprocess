@@ -2,7 +2,7 @@
 
 - 마지막 갱신: **2026-08-12**
 - 현재 단계: **Phase 3 — Pipeline Engine과 LocalExecutor**
-- 다음 작업: **local effective model resolver**
+- 다음 작업: **global cache index와 run 간 재사용**
 
 이 문서는 개발 진행 상황의 단일 진입점이다. 새로운 세션은 이 문서를 먼저 읽고, 실제 코드와
 Git 상태를 확인한 뒤 작업을 시작한다.
@@ -78,6 +78,8 @@ Git 상태를 확인한 뒤 작업을 시작한다.
   [`ADR-0017`](./adr/0017-pipeline-application-service-and-local-runtime.md)
 - Engine 기반 CLI 전환 결정:
   [`ADR-0018`](./adr/0018-engine-backed-cli-and-local-run-resume.md)
+- 안전한 local effective model resolution 결정:
+  [`ADR-0019`](./adr/0019-safe-local-effective-model-resolution.md)
 
 ## 3. 완료된 작업
 
@@ -122,6 +124,7 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - [x] 기본 CLI의 Engine 전환과 stage/from/to/force/run-id/basic dry-run
 - [x] Engine의 read-only cache preview와 downstream blocked 판정
 - [x] Application Service/CLI cache-aware read-only dry-run
+- [x] local provider effective model fingerprint resolver
 
 ## 4. 아직 구현되지 않은 작업
 
@@ -160,9 +163,9 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 권장 순서:
 
 1. [x] Engine의 task/cache preview가 실제 실행과 동일한 task identity·입력 전파 규칙을 사용하도록 공개 API 추가
-2. local provider의 현재 effective provider/model/revision/runtime을 안전하게 resolve하는 adapter 구현
+2. [x] local provider의 현재 effective provider/model/revision/runtime을 안전하게 resolve하는 adapter 구현
 3. [x] `--dry-run`에 Stage별 `hit/miss/forced/blocked`, stable reason과 예상 실행 여부 출력
-4. model 미로드·credential 변경 시 거짓 hit 없이 reason을 표시하는 contract test 추가
+4. [x] model 미로드·credential 변경 시 거짓 hit 없이 reason을 표시하는 contract test 추가
 5. 이후 global cache index와 run 간 content-addressed manifest 조회를 구현
 
 기본 CLI 전환은 완료됐고, `pipeline.runner`는 명시적 compatibility 구현으로만 남아 있다.
@@ -275,6 +278,18 @@ dry-run은 read-only Store와 실제 cache evaluator를 사용하며 model finge
 
 최신 기록을 위에 추가한다. 긴 구현 설명은 PR이나 ADR에 두고 여기에는 다음 세션이 재개하는 데
 필요한 정보만 적는다.
+
+### 2026-08-12 — Phase 3 safe local effective model resolver
+
+- 목표: model load·network 요청 없이 현재 local deployment fingerprint를 안전하게 cache에 반영
+- 완료: Provider optional effective model capability, Gateway→Engine resolver, Hub cache/VAD asset
+  read-only probe와 run/preview composition 구현; ADR-0019
+- 주요 결정: loaded·immutable·offline snapshot만 resolve하고 online mutable revision, local directory,
+  diarization credential 부재는 `None`으로 두어 `EFFECTIVE_MODELS_UNAVAILABLE` miss 유지
+- 검증: 기본 pytest 262개 통과; offline sample dry-run에서 01~11 모두 hit, resolver·mutable online·
+  offline snapshot·credential 미확정 contract test 확인
+- 호환성: model fingerprint 미확정 시 기존 safe miss 동작을 유지하며 Provider inference API는 변경 없음
+- 다음 작업: content-addressed global cache index와 다른 run의 manifest 재사용
 
 ### 2026-08-12 — Phase 3 cache-aware local/CLI dry-run
 

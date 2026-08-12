@@ -29,6 +29,11 @@ from video_preprocess.domain import (
 from video_preprocess.inference.embedding import EmbeddingService
 from video_preprocess.inference.gateway import InferenceGateway
 
+from .fingerprints import (
+    resolve_hf_cache_revision,
+    sentence_transformer_repo_id,
+)
+
 
 class EmbeddingModel(Protocol):
     """Subset of SentenceTransformer used by this provider."""
@@ -144,6 +149,26 @@ class LocalEmbeddingProvider:
             provider=self.PROVIDER_NAME,
             status=HealthState.AVAILABLE,
             details={"model_loaded": self.is_loaded},
+        )
+
+    async def effective_model(self) -> EffectiveModel | None:
+        """Resolve the model this provider would use without loading it."""
+
+        revision = self.effective_revision if self.is_loaded else await (
+            asyncio.to_thread(
+                resolve_hf_cache_revision,
+                sentence_transformer_repo_id(self.model_name),
+                "modules.json",
+                self.revision,
+            )
+        )
+        if revision is None:
+            return None
+        return EffectiveModel(
+            provider=self.PROVIDER_NAME,
+            name=self.model_name,
+            revision=revision,
+            runtime=_runtime_name(),
         )
 
     async def warmup(self) -> None:

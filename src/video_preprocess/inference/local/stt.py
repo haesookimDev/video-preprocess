@@ -35,6 +35,11 @@ from video_preprocess.storage.errors import (
     ArtifactNotFoundError,
 )
 
+from .fingerprints import (
+    faster_whisper_repo_id,
+    resolve_hf_cache_revision,
+)
+
 
 class AudioBuffer(Protocol):
     """Sliceable decoded mono audio used by faster-whisper."""
@@ -223,6 +228,26 @@ class LocalSTTProvider:
                 "device": self.device,
                 "compute_type": self.compute_type,
             },
+        )
+
+    async def effective_model(self) -> EffectiveModel | None:
+        """Resolve the model this provider would use without loading it."""
+
+        revision = self.effective_revision if self.is_loaded else await (
+            asyncio.to_thread(
+                resolve_hf_cache_revision,
+                faster_whisper_repo_id(self.model_name),
+                "config.json",
+                self.revision,
+            )
+        )
+        if revision is None:
+            return None
+        return EffectiveModel(
+            provider=self.PROVIDER_NAME,
+            name=self.model_name,
+            revision=revision,
+            runtime=_runtime_name(),
         )
 
     async def warmup(self) -> None:

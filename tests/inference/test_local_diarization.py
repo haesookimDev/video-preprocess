@@ -186,13 +186,15 @@ def test_provider_normalizes_credential_and_load_failures(
         load_count += 1
         return FakePipeline(), "revision"
 
-    _, missing_service = make_service(
+    missing_provider, missing_service = make_service(
         store,
         loader=should_not_load,
         token=None,
     )
     with pytest.raises(InferenceCallError) as missing_error:
         missing_service.diarize(audio)
+
+    assert asyncio.run(missing_provider.effective_model()) is None
 
     class UnauthorizedError(Exception):
         def __init__(self):

@@ -90,6 +90,32 @@ def test_gateway_routes_bound_alias() -> None:
     assert provider.infer_count == 1
 
 
+def test_gateway_returns_optional_effective_model_fingerprint() -> None:
+    class ResolvableProvider(FakeProvider):
+        async def effective_model(self):
+            return EffectiveModel(
+                provider="fake",
+                name="example/model",
+                revision="commit-123",
+                runtime="fake/1",
+            )
+
+    resolved = asyncio.run(
+        InferenceGateway(
+            {"embedding.default": ResolvableProvider()}
+        ).effective_model("embedding.default")
+    )
+    unresolved = asyncio.run(
+        InferenceGateway(
+            {"embedding.default": FakeProvider()}
+        ).effective_model("embedding.default")
+    )
+
+    assert resolved is not None
+    assert resolved.revision == "commit-123"
+    assert unresolved is None
+
+
 def test_gateway_rejects_unbound_alias_without_calling_provider() -> None:
     provider = FakeProvider()
     gateway = InferenceGateway({"embedding.default": provider})

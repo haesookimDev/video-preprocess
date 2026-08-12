@@ -593,6 +593,14 @@ lazy model load, process 내 재사용, warmup hook과 idempotent 결과 cache�
 CLI/Stage는 task별 동기 Service를 사용하고 async application은 각 Service의 async 메서드를
 사용한다.
 
+local Provider는 optional `effective_model() -> EffectiveModel | None` capability도 제공한다. 이
+메서드는 model load나 network 요청 없이 현재 실행 model을 증명할 수 있을 때만 값을 반환한다.
+이미 로드된 model, immutable/offline Hub snapshot, packaged VAD asset은 resolve하고 온라인 mutable
+revision, local directory와 credential 미확정 상태는 `None`을 반환한다. Gateway adapter가 이를
+Stage slot별 `ModelExecution`으로 변환하며 한 slot이라도 미확정이면 Engine은
+`EFFECTIVE_MODELS_UNAVAILABLE` miss를 사용한다. 결정 근거는
+[`ADR-0019`](./adr/0019-safe-local-effective-model-resolution.md)에 기록한다.
+
 ### 7.1 capability 확인
 
 최소 정보:

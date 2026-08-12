@@ -14,11 +14,13 @@ from video_preprocess.adapters import create_legacy_pipeline_bindings
 from video_preprocess.domain import ArtifactRef, Checksum
 from video_preprocess.engine import ManifestCacheEvaluator, PipelineEngine
 from video_preprocess.executors import LocalExecutor
+from video_preprocess.inference import GatewayEffectiveModelResolver
 from video_preprocess.inference.local import (
     create_local_caption_service,
     create_local_diarization_service,
     create_local_stt_service,
     create_local_vad_service,
+    get_local_embedding_service,
 )
 from video_preprocess.storage import (
     LocalArtifactStore,
@@ -78,6 +80,7 @@ class LocalPipelineRuntimeFactory:
             if context_configurer is None
             else context_configurer
         )
+        self._uses_default_inference = context_configurer is None
         if not callable(self.context_configurer):
             raise TypeError("context_configurer must be callable")
 
@@ -123,6 +126,13 @@ class LocalPipelineRuntimeFactory:
         setup_logging(context.log_dir / f"run_{run_id}.log")
         context.artifact_registrar = LegacyOutputAdapter(artifact_store)
         self.context_configurer(context, artifact_store)
+        model_resolver = self._model_resolver(
+            context.caption_service,
+            context.stt_service,
+            context.diarization_service,
+            context.vad_service,
+            get_local_embedding_service(context.embed_model),
+        )
         bindings = create_legacy_pipeline_bindings(
             context,
             context.artifact_registrar,
@@ -132,6 +142,7 @@ class LocalPipelineRuntimeFactory:
             LocalExecutor(bindings),
             run_store=run_store,
             cache_evaluator=ManifestCacheEvaluator(artifact_store),
+            model_resolver=model_resolver,
         )
         return PipelineRuntime(engine=engine, artifacts=artifacts)
 
@@ -164,10 +175,31 @@ class LocalPipelineRuntimeFactory:
             boundary_inputs=boundary_inputs,
             video=video,
         )
+        model_resolver = None
+        if self._uses_default_inference:
+            settings = request.settings
+            model_resolver = self._model_resolver(
+                create_local_caption_service(
+                    settings.caption_model,
+                    artifact_store,
+                ),
+                create_local_stt_service(
+                    settings.whisper_model,
+                    artifact_store,
+                ),
+                create_local_diarization_service(
+                    settings.diarize_model,
+                    artifact_store,
+                    token=load_hf_token(self.project_root),
+                ),
+                create_local_vad_service(artifact_store),
+                get_local_embedding_service(settings.embed_model),
+            )
         engine = PipelineEngine(
             _PreviewExecutor(),
             run_store=run_store,
             cache_evaluator=ManifestCacheEvaluator(artifact_store),
+            model_resolver=model_resolver,
         )
         return PipelineRuntime(engine=engine, artifacts=artifacts)
 
@@ -190,6 +222,20 @@ class LocalPipelineRuntimeFactory:
             token=load_hf_token(self.project_root),
         )
         context.vad_service = create_local_vad_service(artifact_store)
+
+    @staticmethod
+    def _model_resolver(*services) -> GatewayEffectiveModelResolver | None:
+        gateways = {}
+        for service in services:
+            if service is None:
+                continue
+            alias = getattr(service, "alias", None)
+            gateway = getattr(service, "gateway", None)
+            if isinstance(alias, str) and gateway is not None:
+                gateways[alias] = gateway
+        if not gateways:
+            return None
+        return GatewayEffectiveModelResolver(gateways)
 
     @staticmethod
     def _ingest_video(

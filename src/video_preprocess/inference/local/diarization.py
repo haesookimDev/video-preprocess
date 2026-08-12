@@ -36,6 +36,8 @@ from video_preprocess.storage.errors import (
     ArtifactNotFoundError,
 )
 
+from .fingerprints import resolve_hf_cache_revision
+
 
 class DiarizationPipeline(Protocol):
     """Subset of a pyannote pipeline required by this provider."""
@@ -225,6 +227,28 @@ class LocalDiarizationProvider:
                 "model_loaded": self.is_loaded,
                 "device": self.device or "model_default",
             },
+        )
+
+    async def effective_model(self) -> EffectiveModel | None:
+        """Resolve the accessible model without loading the pipeline."""
+
+        if self._token is None:
+            return None
+        revision = self.effective_revision if self.is_loaded else await (
+            asyncio.to_thread(
+                resolve_hf_cache_revision,
+                self.model_name,
+                "config.yaml",
+                self.revision,
+            )
+        )
+        if revision is None:
+            return None
+        return EffectiveModel(
+            provider=self.PROVIDER_NAME,
+            name=self.model_name,
+            revision=revision,
+            runtime=_runtime_name(),
         )
 
     async def warmup(self) -> None:

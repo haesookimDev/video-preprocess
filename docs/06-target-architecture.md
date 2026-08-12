@@ -200,7 +200,7 @@ deterministic bundle로 추적하고 timeline/context companion 문서와 index 
 [`ADR-0014`](./adr/0014-legacy-media-stage-task-bindings.md)와
 [`ADR-0015`](./adr/0015-legacy-model-stage-bindings-and-sidecar-restore.md),
 [`ADR-0016`](./adr/0016-legacy-final-stage-and-pipeline-bindings.md)에 기록한다. global cache index와
-Application Service를 통한 기본 CLI 연결은 아직 구현되지 않았다.
+run 간 재사용은 아직 구현되지 않았다.
 
 `PipelineApplicationService`는 adapter-neutral run request를 검증하고 planner 선택, run/trace ID,
 Stage config/model binding 필터와 boundary artifact 요구를 조정한다. `LocalPipelineRuntimeFactory`는
@@ -213,6 +213,11 @@ LocalExecutor, 11-stage compatibility binding과 local inference service를 조�
 local workspace 기반 run 재개와 basic dry-run 결정은
 [`ADR-0018`](./adr/0018-engine-backed-cli-and-local-run-resume.md)에 기록한다. API와 queue adapter는
 같은 service boundary에 추가하고 Engine이나 Stage를 직접 조립하지 않는다.
+
+local model fingerprint는 optional Provider capability와 Gateway adapter로 resolve한다. 이미 로드된
+모델, immutable/offline Hub snapshot과 packaged VAD asset처럼 실제 실행과 동일함을 증명할 수 있는
+경우만 반환하고 나머지는 안전한 cache miss로 둔다. 결정은
+[`ADR-0019`](./adr/0019-safe-local-effective-model-resolution.md)에 기록한다.
 
 ## 8. 설정과 모델 binding
 

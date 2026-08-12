@@ -100,6 +100,7 @@ def test_provider_lazy_loads_once_and_reuses_idempotent_result() -> None:
     assert load_count == 1
     assert model.encode_count == 1
     assert provider.is_loaded
+    assert asyncio.run(provider.effective_model()).revision == "main"
 
 
 def test_provider_reuses_model_for_different_requests() -> None:

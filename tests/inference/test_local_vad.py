@@ -127,6 +127,10 @@ def test_provider_returns_segments_and_reuses_backend_and_result(
     assert backend.detect_count == 1
     assert load_count == 1
     assert provider.is_loaded
+    assert (
+        asyncio.run(provider.effective_model()).revision
+        == "sha256:model123"
+    )
 
 
 def test_provider_reuses_backend_for_different_options(tmp_path: Path) -> None:

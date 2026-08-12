@@ -35,6 +35,8 @@ from video_preprocess.storage.errors import (
     ArtifactNotFoundError,
 )
 
+from .fingerprints import resolve_vad_asset_revision
+
 
 class AudioBuffer(Protocol):
     """Decoded mono audio buffer used by Silero VAD."""
@@ -209,6 +211,21 @@ class LocalVADProvider:
             provider=self.PROVIDER_NAME,
             status=HealthState.AVAILABLE,
             details={"model_loaded": self.is_loaded},
+        )
+
+    async def effective_model(self) -> EffectiveModel | None:
+        """Resolve the packaged ONNX fingerprint without loading it."""
+
+        revision = self.effective_revision if self.is_loaded else await (
+            asyncio.to_thread(resolve_vad_asset_revision)
+        )
+        if revision is None:
+            return None
+        return EffectiveModel(
+            provider=self.PROVIDER_NAME,
+            name=self.model_name,
+            revision=revision,
+            runtime=_runtime_name(),
         )
 
     async def warmup(self) -> None:

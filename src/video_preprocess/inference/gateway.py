@@ -7,6 +7,7 @@ from collections.abc import Iterator, Mapping
 
 from video_preprocess.domain import (
     ArtifactRef,
+    EffectiveModel,
     InferenceErrorCode,
     InferenceFailure,
     InferenceRequest,
@@ -134,6 +135,20 @@ class InferenceGateway:
     async def health(self, alias: str) -> ProviderHealth:
         provider = self._provider(alias)
         return await provider.health()
+
+    async def effective_model(self, alias: str) -> EffectiveModel | None:
+        """Return a safely resolved deployment fingerprint when available."""
+
+        provider = self._provider(alias)
+        resolver = getattr(provider, "effective_model", None)
+        if not callable(resolver):
+            return None
+        model = await resolver()
+        if model is not None and not isinstance(model, EffectiveModel):
+            raise ProviderConfigurationError(
+                "provider returned an invalid effective model"
+            )
+        return model
 
     async def cancel(self, request_id: str) -> bool:
         provider = self._active.get(request_id)
