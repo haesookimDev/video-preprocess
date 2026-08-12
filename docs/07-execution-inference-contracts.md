@@ -21,7 +21,7 @@ PipelineEngine과 상태 머신은
 decision, RunStore journal, 같은 run resume와 Store 범위 global cache index도 구현됐다. 전체 01~11
 legacy Stage binding과 기본 CLI/cache-aware preview도 구현됐다. HTTP Inference v1 transport는
 [`openapi/inference-v1.yaml`](./openapi/inference-v1.yaml)로 확정했고 stdlib 기반 HTTP Provider
-client가 구현됐다. 배포별 local/HTTP binding 설정은 다음 slice에서 composition root에 연결한다.
+client와 reference server가 구현됐다. 배포별 local/HTTP binding 설정은 composition root에 연결됐다.
 Inference 공통 계약,
 Gateway, `LocalEmbeddingProvider`, `LocalCaptionProvider`, `LocalSTTProvider`,
 `LocalDiarizationProvider`와 `LocalVADProvider`는
@@ -42,6 +42,18 @@ Gateway, `LocalEmbeddingProvider`, `LocalCaptionProvider`, `LocalSTTProvider`,
 6. 취소와 timeout은 CLI뿐 아니라 원격 실행까지 전달된다.
 7. provider 고유 응답은 `metadata`에 보존할 수 있지만 공통 필드는 항상 정규화한다.
 8. 비밀값은 어떤 계약 객체에도 직렬화하지 않는다.
+
+## 1.1 공개 Pipeline HTTP 계약
+
+Phase 5의 공개 API는 [`openapi/pipeline-v1.yaml`](./openapi/pipeline-v1.yaml)에 고정한다. 외부 요청은
+`video_path`나 `output_root`가 아니라 server-side catalog의 `media_id`를 사용하며, adapter가 내부
+`PipelineRunRequest`로 변환한다. `Idempotency-Key` header와 body 값은 일치해야 한다.
+
+API run 상태는 `queued`, `running`, `succeeded`, `failed`, `cancelled`이고 진행률은 계획된 단계 수,
+완료 단계 수, 현재 단계와 시도를 포함한다. 완료된 artifact는 `artifact://` 논리 참조로만 공개한다.
+인증 token, provider endpoint와 로컬 materialize 경로는 계약 객체에 포함하지 않는다. 영속 snapshot,
+process restart 조정, body/capacity/retention 정책은
+[`ADR-0025`](./adr/0025-durable-public-pipeline-api.md)를 따른다.
 
 ## 2. 공통 식별자
 

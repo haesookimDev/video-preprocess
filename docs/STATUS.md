@@ -1,8 +1,8 @@
 # 개발 상태와 세션 인수인계
 
 - 마지막 갱신: **2026-08-12**
-- 현재 단계: **Phase 4 완료 — HTTP Inference Provider**
-- 다음 작업: **Phase 5 — pipeline run REST API 공개 schema와 adapter 첫 slice**
+- 현재 단계: **Phase 5 진행 중 — 외부 서비스 연동**
+- 다음 작업: **영속 PipelineRun service와 create/status/cancel/artifact use case 구현**
 
 이 문서는 개발 진행 상황의 단일 진입점이다. 새로운 세션은 이 문서를 먼저 읽고, 실제 코드와
 Git 상태를 확인한 뒤 작업을 시작한다.
@@ -92,6 +92,8 @@ Git 상태를 확인한 뒤 작업을 시작한다.
   [`ADR-0023`](./adr/0023-alias-based-inference-deployment-settings.md)
 - reference inference server runtime 결정:
   [`ADR-0024`](./adr/0024-reference-inference-server-runtime.md)
+- 공개 Pipeline API와 영속 run snapshot 결정:
+  [`ADR-0025`](./adr/0025-durable-public-pipeline-api.md)
 
 ## 3. 완료된 작업
 
@@ -198,11 +200,10 @@ remote effective model cache fingerprint와 실제 SentenceTransformer HTTP E2E�
 
 Phase 5 첫 slice:
 
-1. `POST /v1/pipeline-runs`, `GET /v1/pipeline-runs/{run_id}`와
-   `DELETE /v1/pipeline-runs/{run_id}` 공개 schema를 OpenAPI로 확정한다.
-2. API request가 `PipelineRunRequest`로 변환되고 CLI와 같은 `PipelineApplicationService`를 호출하는
-   adapter boundary를 만든다.
-3. fake runtime으로 create/status/cancel/result와 idempotency contract를 network-free 테스트한다.
+1. [x] pipeline run 생성·상태·취소·artifact·query 공개 schema를 OpenAPI v1로 확정한다.
+2. [ ] API request가 `PipelineRunRequest`로 변환되고 CLI와 같은 `PipelineApplicationService`를 호출하는
+   영속 service boundary를 만든다.
+3. [ ] fake runtime으로 create/status/cancel/result와 idempotency contract를 network-free 테스트한다.
 
 ## 6. 알려진 중요 문제
 

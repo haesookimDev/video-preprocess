@@ -1,0 +1,398 @@
+openapi: 3.1.0
+info:
+  title: Video Preprocess Pipeline API
+  version: 1.0.0
+  description: |
+    Asynchronous pipeline and query API. Public payloads use logical media
+    identifiers and artifact references; server-local filesystem paths are never
+    accepted or returned.
+servers:
+  - url: http://127.0.0.1:8090
+security:
+  - bearerAuth: []
+paths:
+  /v1/pipeline-runs:
+    post:
+      operationId: createPipelineRun
+      summary: Create or recover an idempotent pipeline run
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PipelineRunCreateRequest'
+      responses:
+        '200':
+          description: Existing run for the same idempotent request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PipelineRun'
+        '202':
+          description: Run accepted
+          headers:
+            Location:
+              schema: {type: string}
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PipelineRun'
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '413': {$ref: '#/components/responses/PayloadTooLarge'}
+        '429': {$ref: '#/components/responses/CapacityExceeded'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+  /v1/pipeline-runs/{run_id}:
+    parameters:
+      - $ref: '#/components/parameters/RunId'
+    get:
+      operationId: getPipelineRun
+      summary: Read the durable run snapshot
+      responses:
+        '200':
+          description: Current run snapshot
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PipelineRun'
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+    delete:
+      operationId: cancelPipelineRun
+      summary: Request cooperative cancellation
+      responses:
+        '202':
+          description: Cancellation accepted or run already terminal
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PipelineRun'
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /v1/pipeline-runs/{run_id}/artifacts:
+    parameters:
+      - $ref: '#/components/parameters/RunId'
+    get:
+      operationId: listPipelineRunArtifacts
+      summary: List published logical artifacts for a run
+      responses:
+        '200':
+          description: Published result artifacts
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PipelineArtifacts'
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+  /v1/pipeline-runs/{run_id}/queries:
+    parameters:
+      - $ref: '#/components/parameters/RunId'
+    post:
+      operationId: queryPipelineRun
+      summary: Search the completed index and assemble context
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PipelineQueryRequest'
+      responses:
+        '200':
+          description: Ranked matches and assembled context
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PipelineQueryResponse'
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '413': {$ref: '#/components/responses/PayloadTooLarge'}
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque
+      description: Token is supplied by deployment configuration and never serialized.
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: Must match idempotency_key in the request body.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 200
+    RunId:
+      name: run_id
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: '^run_[A-Za-z0-9_-]+$'
+  responses:
+    BadRequest:
+      description: Request validation failed
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/APIError'}
+    Unauthorized:
+      description: Bearer authentication failed
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/APIError'}
+    NotFound:
+      description: Run was not found or is outside its retention window
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/APIError'}
+    Conflict:
+      description: Idempotency, lifecycle, or result-readiness conflict
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/APIError'}
+    PayloadTooLarge:
+      description: JSON body exceeds the configured byte limit
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/APIError'}
+    CapacityExceeded:
+      description: Server has no run capacity
+      headers:
+        Retry-After:
+          schema: {type: integer, minimum: 1}
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/APIError'}
+    Unavailable:
+      description: Pipeline runtime is temporarily unavailable
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/APIError'}
+  schemas:
+    PipelineRunCreateRequest:
+      type: object
+      additionalProperties: false
+      required: [schema_version, idempotency_key, media_id]
+      properties:
+        schema_version: {type: string, const: '1'}
+        idempotency_key: {type: string, minLength: 1, maxLength: 200}
+        media_id:
+          type: string
+          minLength: 1
+          maxLength: 500
+          description: Opaque identifier resolved inside the configured media catalog.
+        selection: {$ref: '#/components/schemas/StageSelection'}
+        settings: {$ref: '#/components/schemas/PipelineSettings'}
+        execution_policy: {$ref: '#/components/schemas/ExecutionPolicy'}
+      example:
+        schema_version: '1'
+        idempotency_key: upload-42-preprocess-v1
+        media_id: upload-42.mp4
+        settings: {language: ko, whisper_model: base}
+        execution_policy: {max_stage_attempts: 2, retry_backoff_sec: 0.5}
+    StageSelection:
+      type: object
+      additionalProperties: false
+      properties:
+        stage: {$ref: '#/components/schemas/StageName'}
+        from_stage: {$ref: '#/components/schemas/StageName'}
+        to_stage: {$ref: '#/components/schemas/StageName'}
+        force_stages:
+          type: array
+          uniqueItems: true
+          items: {$ref: '#/components/schemas/StageName'}
+    StageName:
+      type: string
+      enum: [01_probe, 02_scenes, 03_keyframes, 04_audio, 05_vad, 06_stt,
+             07_diarize, 08_captions, 09_timeline, 10_index, 11_context]
+    PipelineSettings:
+      type: object
+      additionalProperties: false
+      properties:
+        scene_threshold: {type: number, default: 27.0}
+        min_scene_len_frames: {type: integer, minimum: 1, default: 15}
+        keyframes_per_scene: {type: integer, minimum: 1, default: 1}
+        vad_min_silence_ms: {type: integer, minimum: 0, default: 500}
+        vad_speech_pad_ms: {type: integer, minimum: 0, default: 200}
+        stt_merge_gap_sec: {type: number, minimum: 0, default: 0.5}
+        whisper_model: {type: string, minLength: 1, default: base}
+        language: {type: [string, 'null'], minLength: 1}
+        caption_model: {type: string, minLength: 1}
+        embed_model: {type: string, minLength: 1}
+        diarize_model: {type: string, minLength: 1}
+    ExecutionPolicy:
+      type: object
+      additionalProperties: false
+      properties:
+        stage_timeout_sec: {type: [number, 'null'], exclusiveMinimum: 0}
+        max_stage_attempts: {type: integer, minimum: 1, maximum: 10, default: 1}
+        retry_backoff_sec: {type: number, minimum: 0, maximum: 300, default: 0}
+    PipelineRun:
+      type: object
+      additionalProperties: false
+      required: [schema_version, run_id, status, created_at, updated_at, progress,
+                 warnings, links]
+      properties:
+        schema_version: {type: string, const: '1'}
+        run_id: {type: string}
+        status:
+          type: string
+          enum: [queued, running, succeeded, failed, cancelled]
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+        completed_at: {type: string, format: date-time}
+        progress: {$ref: '#/components/schemas/PipelineProgress'}
+        warnings:
+          type: array
+          items: {type: string}
+        failure:
+          oneOf:
+            - {$ref: '#/components/schemas/PipelineFailure'}
+            - {type: 'null'}
+        links: {$ref: '#/components/schemas/PipelineRunLinks'}
+      example:
+        schema_version: '1'
+        run_id: run_01JEXAMPLE
+        status: running
+        created_at: '2026-08-12T00:00:00Z'
+        updated_at: '2026-08-12T00:00:03Z'
+        progress:
+          planned_stages: 11
+          completed_stages: 3
+          ratio: 0.272727
+          current_stage: 04_audio
+          current_attempt: 1
+        warnings: []
+        failure: null
+        links:
+          self: /v1/pipeline-runs/run_01JEXAMPLE
+          artifacts: /v1/pipeline-runs/run_01JEXAMPLE/artifacts
+          queries: /v1/pipeline-runs/run_01JEXAMPLE/queries
+    PipelineProgress:
+      type: object
+      additionalProperties: false
+      required: [planned_stages, completed_stages, ratio]
+      properties:
+        planned_stages: {type: integer, minimum: 0}
+        completed_stages: {type: integer, minimum: 0}
+        ratio: {type: number, minimum: 0, maximum: 1}
+        current_stage:
+          oneOf:
+            - {$ref: '#/components/schemas/StageName'}
+            - {type: 'null'}
+        current_attempt: {type: [integer, 'null'], minimum: 1}
+    PipelineFailure:
+      type: object
+      additionalProperties: false
+      required: [code, message, retryable]
+      properties:
+        code:
+          type: string
+          enum: [INVALID_REQUEST, MEDIA_NOT_FOUND, RUN_INTERRUPTED,
+                 PIPELINE_FAILED, CANCELLED, INTERNAL]
+        message: {type: string}
+        retryable: {type: boolean}
+        stage:
+          oneOf:
+            - {$ref: '#/components/schemas/StageName'}
+            - {type: 'null'}
+    PipelineRunLinks:
+      type: object
+      additionalProperties: false
+      required: [self, artifacts, queries]
+      properties:
+        self: {type: string}
+        artifacts: {type: string}
+        queries: {type: string}
+    PipelineArtifacts:
+      type: object
+      additionalProperties: false
+      required: [schema_version, run_id, artifacts]
+      properties:
+        schema_version: {type: string, const: '1'}
+        run_id: {type: string}
+        artifacts:
+          type: object
+          additionalProperties: {$ref: '#/components/schemas/ArtifactRef'}
+    PipelineQueryRequest:
+      type: object
+      additionalProperties: false
+      required: [schema_version, query]
+      properties:
+        schema_version: {type: string, const: '1'}
+        query: {type: string, minLength: 1, maxLength: 4000}
+        top_k: {type: integer, minimum: 1, maximum: 100, default: 5}
+    PipelineQueryResponse:
+      type: object
+      additionalProperties: false
+      required: [schema_version, run_id, query, context, matches]
+      properties:
+        schema_version: {type: string, const: '1'}
+        run_id: {type: string}
+        query: {type: string}
+        context: {type: string}
+        matches:
+          type: array
+          items: {$ref: '#/components/schemas/QueryMatch'}
+    QueryMatch:
+      type: object
+      additionalProperties: false
+      required: [rank, scene_id, start_sec, end_sec, score, text]
+      properties:
+        rank: {type: integer, minimum: 1}
+        scene_id: {type: string}
+        start_sec: {type: number, minimum: 0}
+        end_sec: {type: number, minimum: 0}
+        score: {type: number}
+        text: {type: string}
+    ArtifactRef:
+      type: object
+      additionalProperties: false
+      required: [schema_version, artifact_id, kind, uri, media_type, size_bytes,
+                 checksum, metadata]
+      properties:
+        schema_version: {type: string, const: '1'}
+        artifact_id: {type: string}
+        kind: {type: string}
+        uri:
+          type: string
+          pattern: '^artifact://'
+          description: Logical URI; file and host path schemes are forbidden.
+        media_type: {type: string}
+        size_bytes: {type: integer, minimum: 0}
+        checksum: {$ref: '#/components/schemas/Checksum'}
+        metadata: {type: object}
+    Checksum:
+      type: object
+      additionalProperties: false
+      required: [algorithm, value]
+      properties:
+        algorithm: {type: string, const: sha256}
+        value: {type: string, pattern: '^[0-9a-f]{64}$'}
+    APIError:
+      type: object
+      additionalProperties: false
+      required: [schema_version, error]
+      properties:
+        schema_version: {type: string, const: '1'}
+        error:
+          type: object
+          additionalProperties: false
+          required: [code, message, retryable]
+          properties:
+            code:
+              type: string
+              enum: [INVALID_REQUEST, UNAUTHORIZED, RUN_NOT_FOUND,
+                     IDEMPOTENCY_CONFLICT, RUN_NOT_READY, PAYLOAD_TOO_LARGE,
+                     CAPACITY_EXCEEDED, SERVICE_UNAVAILABLE, INTERNAL]
+            message: {type: string}
+            retryable: {type: boolean}
+

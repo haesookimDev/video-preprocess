@@ -297,18 +297,23 @@ SentenceTransformer HTTP E2E 1개가 통과했다.
 
 ### 작업
 
-- `PipelineService` 유스케이스 구현
+- [ ] `PipelineService` 유스케이스 구현
   - 실행 생성
   - 실행 취소
   - 상태·진행률 조회
   - 결과 artifact 조회
-- `QueryService` 구현
-- 기존 CLI를 Service adapter로 변경
-- REST API adapter 추가
-- 필요 시 queue consumer adapter 추가
-- 입력 요청과 결과의 공개 schema 문서화
-- 사용자 제공 idempotency key 지원
-- 인증·업로드 제한·보존 정책 정의
+- [ ] `QueryService` 구현
+- [ ] 기존 CLI를 Service adapter로 변경
+- [ ] REST API adapter 추가
+- [ ] 필요 시 queue consumer adapter 추가
+- [x] 입력 요청과 결과의 공개 schema 문서화
+- [x] 사용자 제공 idempotency key 계약 정의
+- [x] 인증·업로드 제한·보존 정책 정의
+
+공개 schema는 [`openapi/pipeline-v1.yaml`](./openapi/pipeline-v1.yaml), media ID·영속 snapshot·
+재시작 정책은 [`ADR-0025`](./adr/0025-durable-public-pipeline-api.md)에 기록한다. 초기 v1은 허용된
+media catalog를 사용하며 직접 upload와 분산 queue consumer는 실제 배포 요구가 생길 때 후속
+adapter로 추가한다.
 
 ### API 최소 범위
 
