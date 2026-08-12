@@ -1,6 +1,6 @@
 # 엔진·실행기 분리 개발 로드맵
 
-상태: **Phase 4 완료 — 다음 Phase 5**
+상태: **Phase 5 완료 — 다음 Phase 6**
 기준일: 2026-08-12
 대상 설계: [`06-target-architecture.md`](./06-target-architecture.md)  
 공개 계약: [`07-execution-inference-contracts.md`](./07-execution-inference-contracts.md)
@@ -307,7 +307,7 @@ SentenceTransformer HTTP E2E 1개가 통과했다.
 - [x] REST API adapter 추가
   - [x] pipeline create/status/cancel/artifact route와 server composition
   - [x] query route 연결
-- [ ] 필요 시 queue consumer adapter 추가
+- [x] queue consumer 필요성 평가 — 초기 v1 요구가 없어 후속 배포 adapter로 보류
 - [x] 입력 요청과 결과의 공개 schema 문서화
 - [x] 사용자 제공 idempotency key 계약 정의
 - [x] 인증·업로드 제한·보존 정책 정의
@@ -333,6 +333,14 @@ POST   /v1/pipeline-runs/{run_id}/queries
 - API 요청이 프로세스 종료와 무관한 run 상태로 조회된다.
 - 상태 응답에 현재 단계, progress, warning, 실패 code가 포함된다.
 - 외부 서비스가 로컬 output 경로를 알 필요가 없다.
+
+Phase 5는 2026-08-12에 완료했다. Pipeline REST OpenAPI v1, 영속 run snapshot과 멱등성,
+create/status/cancel/artifact/query route, Bearer/body/capacity/retention 경계, 공통 QueryService와
+production server CLI를 구현했다. 기본 suite 341개(16 deselected)와 non-model loopback 2개가
+통과했고, 실제
+`sample.mp4` 11단계 REST E2E에서 30.84초 내 succeeded, 11/11 progress, logical artifact, 영속 상태와
+query top-1 씬 02를 확인했다. queue consumer와 direct upload는 초기 배포 요구가 없어 후속 adapter로
+보류한다.
 
 ## 10. Phase 6: 기존 품질 계획 재개
 

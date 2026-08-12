@@ -6,11 +6,13 @@ SQLite 검색 인덱스와 자기완결형 `context.md`를 생성한다. LLM 호
 
 ## 현재 구현 상태
 
-기본 CLI는 다음 실행 경로를 사용한다.
+CLI와 REST API는 같은 Application Service와 Engine 실행 경로를 사용한다.
 
 ```mermaid
 flowchart LR
     CLI[run_pipeline.py] --> APP[Pipeline Application Service]
+    API[Pipeline REST API] --> RUNS[Durable PipelineRun Service]
+    RUNS --> APP
     APP --> ENGINE[Pipeline Engine]
     ENGINE --> EXECUTOR[LocalExecutor]
     EXECUTOR --> STAGES[01~11 Stage bindings]
@@ -19,6 +21,10 @@ flowchart LR
     GATEWAY -. endpoint 설정 .-> HTTP[HTTP Inference Provider]
     HTTP --> SERVER[Inference v1 Model Server]
     ENGINE --> STORES[Artifact / Run Stores]
+    QCLI[query.py] --> QUERY[QueryService]
+    API --> QUERY
+    QUERY --> GATEWAY
+    QUERY --> STORES
 ```
 
 구현된 범위:
@@ -34,12 +40,13 @@ flowchart LR
 - HTTP Inference v1 client, async job submit/poll/cancel, retry와 circuit breaker
 - `embedding.default`의 local/HTTP 배포 설정과 원격 effective model cache fingerprint
 - LocalEmbeddingProvider를 공개하는 production HTTP server adapter와 실행 CLI
-- 기존 JSON·Markdown·SQLite 출력 구조와 query CLI
+- 영속 run 상태, 멱등성, 취소, artifact와 query를 공개하는 Pipeline REST API v1
+- 기존 JSON·Markdown·SQLite 출력 구조와 공통 QueryService 기반 query CLI
 
 아직 구현되지 않은 범위:
 
 - embedding 외 alias의 HTTP 배포 연결
-- REST API·queue adapter와 RemoteExecutor
+- 직접 media upload, queue adapter와 RemoteExecutor
 
 정확한 완료 상태와 다음 작업은 [docs/STATUS.md](docs/STATUS.md)를 기준으로 한다.
 
@@ -97,6 +104,75 @@ sed -n '1,120p' output/sample/11_context/context.md
 
 기본 출력 위치는 `output/<video_stem>/`이다. 같은 출력 위치에는 안정적인 local run ID가
 사용되므로 중단된 실행을 다시 시작하거나 검증된 산출물을 재사용할 수 있다.
+
+## Pipeline REST API
+
+`serve_pipeline.py`는 허용된 media catalog의 ID를 받아 CLI와 같은
+`PipelineApplicationService`/Engine을 실행한다. 외부 요청과 응답에는 로컬 video/output 경로 대신
+`media_id`, `run_id`와 `artifact://` 참조만 사용한다.
+
+```bash
+export PIPELINE_API_TOKEN=replace-me
+
+.venv/bin/python src/serve_pipeline.py \
+  --host 127.0.0.1 \
+  --port 8090 \
+  --media-root samples \
+  --auth-token-env PIPELINE_API_TOKEN
+```
+
+다른 terminal에서 run을 생성한다. `Idempotency-Key` header는 body 값과 같아야 한다. 동일 키와
+동일 요청을 다시 보내면 새 실행을 만들지 않고 기존 run을 반환한다.
+
+```bash
+curl -sS http://127.0.0.1:8090/v1/pipeline-runs \
+  -H "Authorization: Bearer $PIPELINE_API_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -H 'Idempotency-Key: sample-preprocess-v1' \
+  -d '{
+    "schema_version": "1",
+    "idempotency_key": "sample-preprocess-v1",
+    "media_id": "sample.mp4",
+    "settings": {"language": "ko"}
+  }'
+```
+
+응답의 `run_id`를 아래 `RUN_ID`에 넣어 상태, artifact와 검색 결과를 조회한다.
+
+```bash
+RUN_ID=run_replace_me
+
+curl -sS "http://127.0.0.1:8090/v1/pipeline-runs/$RUN_ID" \
+  -H "Authorization: Bearer $PIPELINE_API_TOKEN"
+
+curl -sS "http://127.0.0.1:8090/v1/pipeline-runs/$RUN_ID/artifacts" \
+  -H "Authorization: Bearer $PIPELINE_API_TOKEN"
+
+curl -sS "http://127.0.0.1:8090/v1/pipeline-runs/$RUN_ID/queries" \
+  -H "Authorization: Bearer $PIPELINE_API_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"schema_version":"1","query":"음성 구간 검출","top_k":2}'
+
+curl -sS -X DELETE \
+  "http://127.0.0.1:8090/v1/pipeline-runs/$RUN_ID" \
+  -H "Authorization: Bearer $PIPELINE_API_TOKEN"
+```
+
+| 서버 옵션 | 의미 |
+|---|---|
+| `--media-root DIR` | `media_id`를 해석할 허용 root. 기본값 `samples` |
+| `--workspace-root DIR` | run별 내부 Engine/Artifact workspace. 기본값 `output/api-runs` |
+| `--state-root DIR` | 프로세스와 분리된 공개 상태 snapshot. 기본값 `output/api-state` |
+| `--max-active-runs N` | 동시에 허용할 local pipeline run 수. 기본값 1 |
+| `--max-request-bytes N` | JSON request body 상한. 기본값 1 MiB |
+| `--retain-terminal-runs N` | 유지할 최신 terminal API 상태 수. 기본값 1000 |
+| `--auth-token-env NAME` | Bearer token 값을 읽을 환경변수 이름 |
+
+현재 v1은 media upload를 제공하지 않으므로 파일을 `--media-root` 아래에 먼저 등록해야 한다.
+완료 상태 보존 한도를 넘으면 오래된 API 상태와 멱등성 record만 제거하며 Engine manifest,
+workspace와 artifact는 자동 삭제하지 않는다. 서버 재시작 시 완료 상태는 계속 조회할 수 있고 당시
+실행 중이던 local run은 조용히 재실행하지 않고 `RUN_INTERRUPTED` 실패로 조정한다. loopback 밖에
+bind할 때는 Bearer 인증과 reverse proxy/service mesh의 TLS 종료를 사용한다.
 
 ## 실행 범위와 옵션
 
@@ -292,6 +368,9 @@ loopback port를 여는 HTTP contract와 production client integration test는 �
   tests/inference/test_http_provider_integration.py \
   tests/inference/test_embedding_deployment_integration.py \
   tests/inference/test_http_server_integration.py
+
+.venv/bin/python -m pytest -m integration \
+  tests/api/test_pipeline_http_server_integration.py
 ```
 
 cached 실제 SentenceTransformer까지 포함한 server E2E는 명시적으로 실행한다.
@@ -300,6 +379,11 @@ cached 실제 SentenceTransformer까지 포함한 server E2E는 명시적으로 
 HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
   .venv/bin/python -m pytest -o addopts='' \
   tests/inference/test_http_server_model.py
+
+# 실제 sample의 11단계 REST run + artifact + query E2E
+HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
+  .venv/bin/python -m pytest -m 'integration and model' \
+  tests/api/test_pipeline_api_model.py
 ```
 
 미디어·모델 통합 변경은 `samples/sample.mp4` 전체 실행과 query까지 별도로 검증한다.
@@ -318,6 +402,7 @@ HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
 - [목표 아키텍처](docs/06-target-architecture.md)
 - [실행·추론 계약](docs/07-execution-inference-contracts.md)
 - [HTTP Inference OpenAPI v1](docs/openapi/inference-v1.yaml)
+- [Pipeline REST OpenAPI v1](docs/openapi/pipeline-v1.yaml)
 - [개발 로드맵](docs/08-development-roadmap.md)
 - [Architecture Decision Records](docs/adr/)
 

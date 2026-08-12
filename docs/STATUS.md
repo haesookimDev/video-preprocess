@@ -1,18 +1,19 @@
 # 개발 상태와 세션 인수인계
 
 - 마지막 갱신: **2026-08-12**
-- 현재 단계: **Phase 5 진행 중 — 외부 서비스 연동**
-- 다음 작업: **Phase 5 실제 sample REST E2E와 README/운영 문서 완료**
+- 현재 단계: **Phase 5 완료 — 외부 서비스 연동**
+- 다음 작업: **Phase 6 — 타임라인 반개구간 경계와 전사 중복 P0 수정**
 
 이 문서는 개발 진행 상황의 단일 진입점이다. 새로운 세션은 이 문서를 먼저 읽고, 실제 코드와
 Git 상태를 확인한 뒤 작업을 시작한다.
 
 ## 1. 현재 제품 상태
 
-현재 저장소는 로컬 단일 프로세스 MVP다.
+현재 저장소는 LocalExecutor를 기본으로 하는 CLI·단일 process reference service다.
 
 - `src/run_pipeline.py`: 전처리 CLI
-- `src/query.py`: 기존 index 검색·context 조립 CLI
+- `src/query.py`: 공통 QueryService를 사용하는 index 검색·context 조립 CLI
+- `src/serve_pipeline.py`: 영속 상태·artifact·query를 제공하는 Pipeline REST API v1 server
 - `src/pipeline/runner.py`: 이전 파일 marker 방식의 compatibility runner
 - `src/pipeline/context.py`: 경로·설정·JSON I/O 공유
 - `src/pipeline/stages/s01_*`~`s11_*`: 단계 구현
@@ -28,7 +29,8 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - 기본 CLI는 Application Service를 통해 새 Engine과 01~11 binding을 실행
 - embedding은 설정에 따라 local 또는 HTTP provider client를 사용하며 기본값은 local
 - production embedding inference server adapter와 실행 CLI 구현 완료
-- pipeline REST API와 queue adapter는 아직 미구현
+- pipeline REST API와 durable control snapshot, QueryService 구현 완료
+- queue consumer, direct upload와 RemoteExecutor는 아직 미구현
 - Local Store가 input copy, 단계 산출물과 run/stage manifest를 관리
 
 기존 샘플 산출물은 `output/` 아래에 있으나 생성물이며 Git에 커밋하지 않는다.
@@ -168,7 +170,7 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - [x] production inference model server adapter
 - [x] Pipeline Application Service와 local runtime factory
 - [x] Application Service 기반 선택 실행 CLI
-- [ ] API adapter
+- [x] API adapter
 - [ ] 타임라인 경계 정합성 개선
 - [ ] 한국어 검색과 평가 체계
 - [ ] 실제 token budget
@@ -176,7 +178,7 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 문서가 존재한다고 구현된 것으로 간주하지 않는다. 완료 여부는 코드와 자동 테스트를 기준으로
 이 체크리스트에서 갱신한다.
 
-## 5. Phase 4 완료와 Phase 5 인수인계
+## 5. Phase 5 완료와 Phase 6 인수인계
 
 Phase 4 완료 순서:
 
@@ -217,6 +219,18 @@ Phase 5 첫 slice:
   제공하며 `serve_pipeline.py`가 local media/state/workspace와 Engine runtime을 조합한다.
 - `QueryService`가 FTS5·embedding·RRF·context 조립을 소유하고 typed match/score를 반환한다.
 - 기존 `query.py`와 REST query route가 각각 resolver만 달리해 같은 QueryService를 호출한다.
+
+Phase 5 완료 확인:
+
+- CLI와 API pipeline 요청은 같은 `PipelineApplicationService`와 Engine을 호출한다.
+- CLI와 API 검색은 같은 `QueryService`를 호출한다.
+- API control snapshot은 process와 분리해 저장하고 비종료 restart는 `RUN_INTERRUPTED`로 조정한다.
+- status는 current stage/attempt, progress, warnings와 classified failure를 제공한다.
+- 외부 payload는 `media_id`와 `artifact://`만 사용하고 local output path를 노출하지 않는다.
+- 실제 `sample.mp4` REST create→status→artifact→query E2E가 11단계 succeeded와 씬 02 top-1로 통과했다.
+
+Phase 6 첫 작업은 09 timeline의 전사→씬 귀속을 반개구간 `[start, end)` 기준으로 명시하고, 정확히
+50:50 경계에 걸친 전사가 두 씬에 중복 배정되지 않도록 단일 배정 규칙과 회귀 fixture를 추가하는 것이다.
 
 ## 6. 알려진 중요 문제
 
@@ -324,6 +338,19 @@ Phase 5 첫 slice:
 
 최신 기록을 위에 추가한다. 긴 구현 설명은 PR이나 ADR에 두고 여기에는 다음 세션이 재개하는 데
 필요한 정보만 적는다.
+
+### 2026-08-12 — Phase 5 production REST sample E2E와 완료
+
+- 목표: 문서상 계약이 아닌 실제 영상·모델·HTTP 경계에서 Phase 5 완료 조건 검증
+- 완료: explicit model integration test, README REST 운영/요청 예제, pipeline 문서와 architecture,
+  contract/roadmap/status의 구현 상태 동기화
+- 검증: 기본 suite 341 passed, 16 deselected; non-model loopback 2 passed; offline `sample.mp4`
+  REST E2E 1 passed(30.84초), 11/11 succeeded, artifact URI/영속 snapshot, query `음성 구간 검출`
+  top-1 씬 02; 기존 query CLI top-2 `[2, 3]`; preflight 전체 OK; `pip check` no broken requirements
+- 관찰: 기존 macOS OpenCV/PyAV/FFmpeg dylib duplicate warning과 PySceneDetect deprecated API warning 유지
+- 호환성: 기존 pipeline/query positional CLI와 산출물 구조 유지; API는 local catalog 사전 등록 방식이며
+  direct upload, queue consumer와 RemoteExecutor는 후속 범위
+- 다음 작업: Phase 6 timeline `[start, end)` 단일 배정으로 정확히 50:50인 전사 중복 P0 수정
 
 ### 2026-08-12 — Phase 5 terminal API snapshot retention
 

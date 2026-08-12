@@ -127,3 +127,16 @@ effective model fingerprint와 모든 input/output artifact checksum을 다시 �
 timeout과 run cancellation은 attempt별 `ExecutionControl`을 통해 Executor와 control-aware runner에
 전달된다. timeout은 안전한 반환 경계 뒤 `STAGE_TIMEOUT`으로 기록하고 Executor submit/result 실패와
 함께 설정된 최대 attempt까지 bounded retry한다. 영구 Stage 실패와 cancellation은 retry하지 않는다.
+
+## Service와 REST 실행
+
+`src/serve_pipeline.py`는 같은 `PipelineApplicationService`를 영속 `PipelineRunService`와 REST API에
+연결한다. 공개 요청의 `media_id`는 설정된 catalog root 안에서만 실제 영상으로 해석하고 run별 내부
+workspace는 서버가 결정한다. 생성 후 queued/running/succeeded/failed/cancelled 상태, 현재 단계와
+attempt, 완료 비율, warning과 failure code를 조회할 수 있다. 결과는 물리 경로가 아니라
+`artifact://` 참조로 반환한다.
+
+검색은 CLI와 API 모두 `QueryService`를 사용한다. FTS5와 embedding 순위를 RRF로 합치고 rank,
+scene/time range, score와 card text를 typed result로 반환한 뒤 동일한 축약 context를 조립한다. API
+resolver는 succeeded run만 private workspace에 매핑하므로 caller가 `10_index/index.db` 경로를 알
+필요가 없다. 공개 route와 payload는 [`openapi/pipeline-v1.yaml`](./openapi/pipeline-v1.yaml)에 있다.

@@ -212,7 +212,11 @@ LocalExecutor, 11-stage compatibility binding과 local inference service를 조�
 기본 CLI도 이 Application Service를 호출하며 stage/from/to/force 선택을 request로만 변환한다.
 local workspace 기반 run 재개와 cache-aware read-only dry-run 결정은
 [`ADR-0018`](./adr/0018-engine-backed-cli-and-local-run-resume.md)에 기록한다. API와 queue adapter는
-같은 service boundary에 추가하고 Engine이나 Stage를 직접 조립하지 않는다.
+같은 service boundary에 추가하고 Engine이나 Stage를 직접 조립하지 않는다. 현재
+`PipelineRunService`와 `PipelineHTTPServer`가 영속 create/status/cancel/artifact use case를 제공하고
+CLI/API의 검색은 같은 `QueryService`를 사용한다. media ID, API snapshot, 재시작과 보존 경계는
+[`ADR-0025`](./adr/0025-durable-public-pipeline-api.md)에 기록한다. queue adapter는 실제 배포 요구가
+생길 때 이 service boundary에 추가한다.
 
 local model fingerprint는 optional Provider capability와 Gateway adapter로 resolve한다. 이미 로드된
 모델, immutable/offline Hub snapshot과 packaged VAD asset처럼 실제 실행과 동일함을 증명할 수 있는
