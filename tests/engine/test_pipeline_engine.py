@@ -16,6 +16,7 @@ from video_preprocess.engine import (
     DAGPlanner,
     EngineInputError,
     PipelineEngine,
+    RetryPolicy,
     RunStateMachine,
     StageLifecycle,
     StageRegistry,
@@ -23,9 +24,12 @@ from video_preprocess.engine import (
     StateTransitionError,
 )
 from video_preprocess.executors import (
+    CancellationToken,
     ExecutionHandle,
     ExecutionState,
     ExecutionStatus,
+    LocalExecutor,
+    StageBindingRegistry,
 )
 
 
@@ -75,12 +79,14 @@ class FakeExecutor:
         self.submit_error = submit_error
         self.result_error = result_error
         self.tasks = []
+        self.controls = []
         self.by_execution_id = {}
 
-    async def submit(self, task):
+    async def submit(self, task, *, control=None):
         if self.submit_error is not None:
             raise self.submit_error
         self.tasks.append(task)
+        self.controls.append(control)
         handle = ExecutionHandle(
             execution_id=f"exec_{len(self.tasks)}",
             stage_run_id=task.stage_run_id,
@@ -371,6 +377,141 @@ def test_engine_normalizes_executor_infrastructure_errors(
 
     assert result.status is RunStatus.FAILED
     assert result.stages[0].result.reason_code == reason_code
+
+
+def test_engine_retries_only_classified_failures_with_new_attempt() -> None:
+    def resolver(task):
+        if task.attempt == 1:
+            return StageResult(
+                run_id=task.run_id,
+                stage_run_id=task.stage_run_id,
+                attempt=task.attempt,
+                status=StageStatus.FAILED,
+                reason_code="EXECUTOR_RESULT_FAILED",
+                reason="transient result transport failure",
+            )
+        return default_resolver(task)
+
+    planner = pipeline_plan()
+    executor = FakeExecutor(resolver)
+    result = run_engine(
+        executor,
+        planner.plan(stage="01_prepare"),
+        retry_policy=RetryPolicy(max_attempts=2),
+        stage_configs={},
+        model_bindings={},
+    )
+
+    assert result.status is RunStatus.SUCCEEDED
+    assert [record.task.attempt for record in result.stages] == [1, 2]
+    assert result.stages[0].result.status is StageStatus.FAILED
+    assert result.stages[1].result.status is StageStatus.SUCCEEDED
+    assert executor.tasks[0].stage_run_id == executor.tasks[1].stage_run_id
+    assert (
+        executor.tasks[0].idempotency_key
+        != executor.tasks[1].idempotency_key
+    )
+
+
+def test_engine_does_not_retry_permanent_stage_failure() -> None:
+    def resolver(task):
+        return StageResult(
+            run_id=task.run_id,
+            stage_run_id=task.stage_run_id,
+            attempt=task.attempt,
+            status=StageStatus.FAILED,
+            reason_code="INVALID_REQUEST",
+            reason="permanent failure",
+        )
+
+    result = run_engine(
+        FakeExecutor(resolver),
+        pipeline_plan().plan(stage="01_prepare"),
+        retry_policy=RetryPolicy(max_attempts=3),
+        stage_configs={},
+        model_bindings={},
+    )
+
+    assert result.status is RunStatus.FAILED
+    assert len(result.stages) == 1
+
+
+def test_engine_times_out_cooperative_stage_and_retries() -> None:
+    async def scenario():
+        async def runner(task, control):
+            if task.attempt == 1:
+                await control.cancellation.wait()
+            return default_resolver(task)
+
+        executor = LocalExecutor(
+            StageBindingRegistry([("01_prepare", runner)])
+        )
+        result = await PipelineEngine(executor).run(
+            pipeline_plan().plan(stage="01_prepare"),
+            run_id="run_123",
+            trace_id="trace_123",
+            artifacts={"source": artifact("source")},
+            stage_timeouts={"01_prepare": 0.01},
+            retry_policy=RetryPolicy(max_attempts=2),
+        )
+
+        assert result.status is RunStatus.SUCCEEDED
+        assert [record.result.reason_code for record in result.stages] == [
+            "STAGE_TIMEOUT",
+            None,
+        ]
+        assert [record.task.attempt for record in result.stages] == [1, 2]
+
+    asyncio.run(scenario())
+
+
+def test_engine_propagates_external_cancellation_to_running_stage() -> None:
+    async def scenario():
+        started = asyncio.Event()
+
+        async def runner(task, control):
+            started.set()
+            await control.cancellation.wait()
+            return default_resolver(task)
+
+        executor = LocalExecutor(
+            StageBindingRegistry([("01_prepare", runner)])
+        )
+        cancellation = CancellationToken()
+        running = asyncio.create_task(
+            PipelineEngine(executor).run(
+                pipeline_plan().plan(stage="01_prepare"),
+                run_id="run_123",
+                trace_id="trace_123",
+                artifacts={"source": artifact("source")},
+                cancellation=cancellation,
+            )
+        )
+        await started.wait()
+        cancellation.cancel()
+        result = await running
+
+        assert result.status is RunStatus.CANCELLED
+        assert result.stages[-1].result.reason_code == "ENGINE_CANCELLED"
+        assert result.stages[-1].state is StageLifecycle.CANCELLED
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    "stage_timeouts",
+    [
+        {"missing": 1.0},
+        {"01_prepare": 0},
+    ],
+)
+def test_engine_validates_stage_timeout_scope(stage_timeouts) -> None:
+    with pytest.raises(EngineInputError):
+        run_engine(
+            FakeExecutor(default_resolver),
+            pipeline_plan().plan(stage="01_prepare"),
+            stage_timeouts=stage_timeouts,
+        )
 
 
 def test_stage_and_run_state_machines_reject_invalid_transitions() -> None:

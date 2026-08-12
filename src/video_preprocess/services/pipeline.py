@@ -14,7 +14,9 @@ from video_preprocess.engine import (
     DAGPlanner,
     PipelinePreviewResult,
     PipelineRunResult,
+    RetryPolicy,
 )
+from video_preprocess.executors import CancellationToken
 from video_preprocess.engine.planner import ExecutionPlan
 
 
@@ -85,6 +87,9 @@ class PipelineRunRequest:
     from_stage: str | None = None
     to_stage: str | None = None
     force_stages: Collection[str] = ()
+    stage_timeout_sec: float | None = None
+    max_stage_attempts: int = 1
+    retry_backoff_sec: float = 0.0
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "video_path", Path(self.video_path))
@@ -116,6 +121,35 @@ class PipelineRunRequest:
                 )
             normalized_force.append(stage_name.strip())
         object.__setattr__(self, "force_stages", tuple(normalized_force))
+        if self.stage_timeout_sec is not None and (
+            isinstance(self.stage_timeout_sec, bool)
+            or not isinstance(self.stage_timeout_sec, (int, float))
+            or self.stage_timeout_sec <= 0
+        ):
+            raise ValueError("stage_timeout_sec must be positive or None")
+        if self.stage_timeout_sec is not None:
+            object.__setattr__(
+                self,
+                "stage_timeout_sec",
+                float(self.stage_timeout_sec),
+            )
+        if (
+            isinstance(self.max_stage_attempts, bool)
+            or not isinstance(self.max_stage_attempts, int)
+            or self.max_stage_attempts < 1
+        ):
+            raise ValueError("max_stage_attempts must be a positive integer")
+        if (
+            isinstance(self.retry_backoff_sec, bool)
+            or not isinstance(self.retry_backoff_sec, (int, float))
+            or self.retry_backoff_sec < 0
+        ):
+            raise ValueError("retry_backoff_sec must be non-negative")
+        object.__setattr__(
+            self,
+            "retry_backoff_sec",
+            float(self.retry_backoff_sec),
+        )
 
 
 class PipelineExecutionEngine(Protocol):
@@ -129,6 +163,9 @@ class PipelineExecutionEngine(Protocol):
         stage_configs: Mapping[str, Mapping[str, object]],
         model_bindings: Mapping[str, Mapping[str, str]],
         force_stages: Collection[str],
+        stage_timeouts: Mapping[str, float],
+        retry_policy: RetryPolicy,
+        cancellation: CancellationToken | None,
     ) -> PipelineRunResult: ...
 
     async def preview(
@@ -207,7 +244,12 @@ class PipelineApplicationService:
         self.run_id_factory = run_id_factory or _new_run_id
         self.trace_id_factory = trace_id_factory or _new_trace_id
 
-    async def run(self, request: PipelineRunRequest) -> PipelineRunResult:
+    async def run(
+        self,
+        request: PipelineRunRequest,
+        *,
+        cancellation: CancellationToken | None = None,
+    ) -> PipelineRunResult:
         plan = self.plan(request)
         run_id = request.run_id or self._new_identifier(
             self.run_id_factory,
@@ -229,6 +271,14 @@ class PipelineApplicationService:
                 + ", ".join(missing)
             )
         stage_configs, model_bindings = self._stage_options(request, plan)
+        stage_timeouts = (
+            {}
+            if request.stage_timeout_sec is None
+            else {
+                stage_name: request.stage_timeout_sec
+                for stage_name in plan.stage_names
+            }
+        )
         return await runtime.engine.run(
             plan,
             run_id=run_id,
@@ -237,6 +287,12 @@ class PipelineApplicationService:
             stage_configs=stage_configs,
             model_bindings=model_bindings,
             force_stages=request.force_stages,
+            stage_timeouts=stage_timeouts,
+            retry_policy=RetryPolicy(
+                max_attempts=request.max_stage_attempts,
+                initial_backoff_sec=request.retry_backoff_sec,
+            ),
+            cancellation=cancellation,
         )
 
     async def preview(

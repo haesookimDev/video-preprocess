@@ -330,6 +330,11 @@ output schema version
 - 모든 원격 요청은 `idempotency_key`를 가져야 한다.
 - fallback은 설정으로 명시된 경우에만 수행하며 조용히 모델을 바꾸지 않는다.
 
+현재 Engine은 attempt별 `ExecutionControl`로 timeout과 cooperative cancellation을 전달한다. timeout,
+Executor submit/result 실패만 bounded retry하고 각 attempt manifest를 먼저 저장한다. sync/native
+호출은 강제 종료하지 않고 safe return을 기다리는 결정은
+[`ADR-0021`](./adr/0021-engine-timeout-cancellation-retry-policy.md)에 기록한다.
+
 세부 계약은 [`07-execution-inference-contracts.md`](./07-execution-inference-contracts.md)를
 따른다.
 

@@ -23,6 +23,7 @@ from .errors import (
     UnknownDependencyError,
 )
 from .planner import DAGPlanner, ExecutionPlan
+from .policies import DEFAULT_RETRYABLE_REASONS, RetryPolicy
 from .pipeline import (
     PipelineEngine,
     PipelinePreviewResult,
@@ -42,6 +43,7 @@ __all__ = [
     "CacheMissReason",
     "CacheStatus",
     "DAGPlanner",
+    "DEFAULT_RETRYABLE_REASONS",
     "DEFAULT_STAGE_SPECS",
     "DependencyCycleError",
     "DuplicateOutputError",
@@ -58,6 +60,7 @@ __all__ = [
     "PipelineRunResult",
     "PlanSelectionError",
     "RunStateMachine",
+    "RetryPolicy",
     "StageRegistry",
     "StageExecutionRecord",
     "StageLifecycle",

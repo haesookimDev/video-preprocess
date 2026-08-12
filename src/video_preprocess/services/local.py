@@ -44,7 +44,7 @@ ContextConfigurer = Callable[
 class _PreviewExecutor:
     """Executor guard used by runtimes that must remain read-only."""
 
-    async def submit(self, task):
+    async def submit(self, task, *, control=None):
         raise RuntimeError("preview runtime cannot submit Stage tasks")
 
     async def status(self, handle):

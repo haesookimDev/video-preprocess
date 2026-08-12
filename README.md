@@ -28,6 +28,7 @@ flowchart LR
 - 같은 output workspace의 run 간 content-addressed cache 재사용
 - Stage별 cache 상태·실행 예상·stable reason을 제공하는 read-only dry-run
 - offline snapshot·immutable revision·VAD asset 기반 local model fingerprint 확인
+- Stage timeout, cooperative cancellation과 분류된 bounded retry
 - 기존 JSON·Markdown·SQLite 출력 구조와 query CLI
 
 아직 구현되지 않은 범위:
@@ -125,6 +126,9 @@ sed -n '1,120p' output/sample/11_context/context.md
 | `--force` | 현재 plan의 모든 Stage cache 무시 |
 | `--run-id ID` | 같은 manifest를 재개할 논리 run ID |
 | `--dry-run` | Stage별 cache 상태·실행 예상·reason을 JSON으로 출력하고 종료 |
+| `--stage-timeout-sec N` | 각 Stage timeout. 기본값은 제한 없음 |
+| `--max-stage-attempts N` | 일시적 실패의 Stage별 최대 시도 수. 기본값은 1 |
+| `--retry-backoff-sec N` | 첫 재시도 전 대기 시간. 기본값은 0초 |
 | `--whisper-model MODEL` | faster-whisper 모델. 기본값은 `base` |
 | `--language CODE` | STT 언어 고정. 생략하면 자동 감지 |
 | `--scene-threshold N` | 씬 변화 임계값. 낮을수록 민감 |
@@ -140,6 +144,12 @@ sed -n '1,120p' output/sample/11_context/context.md
 `REQUIRED_INPUT_UNAVAILABLE`로 차단한다. 로드된 모델, immutable revision, offline local snapshot과
 VAD asset은 실행 전에 fingerprint를 확인한다. 온라인의 변경 가능한 `main/default`처럼 현재
 revision을 확정할 수 없는 Stage는 안전하게 `EFFECTIVE_MODELS_UNAVAILABLE` miss로 표시한다.
+
+timeout은 attempt의 cooperative cancellation을 요청하고 Stage가 안전한 반환 경계에 도달한 뒤
+`STAGE_TIMEOUT`으로 기록한다. 따라서 token을 확인하지 않는 기존 sync/native 호출은 설정한 시간에
+즉시 강제 종료되지 않는다. 기본 retry 대상은 timeout과 Executor submit/result 전송 실패뿐이며,
+영구 입력 오류나 cancellation은 재시도하지 않는다. retry마다 attempt가 증가해 manifest와
+`run_summary.json`에 별도로 남는다.
 
 ## 11단계 파이프라인
 

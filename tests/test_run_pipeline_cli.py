@@ -58,6 +58,11 @@ def test_dry_run_prints_cache_aware_exact_plan_without_writes(
             ],
         }
     ]
+    assert payload["execution_policy"] == {
+        "stage_timeout_sec": None,
+        "max_stage_attempts": 1,
+        "retry_backoff_sec": 0.0,
+    }
     assert not (tmp_path / "output" / "video").exists()
 
 
@@ -111,6 +116,30 @@ def test_invalid_selection_is_a_cli_input_error(
     assert "cannot be combined" in capsys.readouterr().err
 
 
+def test_invalid_execution_policy_is_a_cli_input_error(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    ready_preflight(monkeypatch)
+    video = tmp_path / "video.mp4"
+    video.write_bytes(b"video")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_pipeline.py",
+            str(video),
+            "--max-stage-attempts",
+            "0",
+            "--dry-run",
+        ],
+    )
+
+    assert run_pipeline.main() == 2
+    assert "max_stage_attempts" in capsys.readouterr().err
+
+
 def test_compatibility_summary_preserves_status_metrics_and_outputs(
     tmp_path: Path,
 ) -> None:
@@ -120,6 +149,7 @@ def test_compatibility_summary_preserves_status_metrics_and_outputs(
         stages=(
             SimpleNamespace(
                 stage="01_probe",
+                task=SimpleNamespace(attempt=1),
                 from_cache=False,
                 cache_decision=None,
                 result=SimpleNamespace(

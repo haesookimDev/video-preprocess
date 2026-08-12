@@ -2,7 +2,7 @@
 
 - 마지막 갱신: **2026-08-12**
 - 현재 단계: **Phase 3 — Pipeline Engine과 LocalExecutor**
-- 다음 작업: **Stage timeout·cancellation token과 retry policy**
+- 다음 작업: **Phase 3 전체 회귀와 완료 기준 정리**
 
 이 문서는 개발 진행 상황의 단일 진입점이다. 새로운 세션은 이 문서를 먼저 읽고, 실제 코드와
 Git 상태를 확인한 뒤 작업을 시작한다.
@@ -82,6 +82,8 @@ Git 상태를 확인한 뒤 작업을 시작한다.
   [`ADR-0019`](./adr/0019-safe-local-effective-model-resolution.md)
 - Run Store global cache index 결정:
   [`ADR-0020`](./adr/0020-run-store-global-cache-index.md)
+- Engine timeout·cancellation·retry policy 결정:
+  [`ADR-0021`](./adr/0021-engine-timeout-cancellation-retry-policy.md)
 
 ## 3. 완료된 작업
 
@@ -129,6 +131,7 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - [x] local provider effective model fingerprint resolver
 - [x] global cache index와 run 간 content-addressed 재사용
 - [x] Executor `ExecutionControl`과 cooperative cancellation token 전달
+- [x] Engine Stage timeout·run cancellation·bounded retry policy
 
 ## 4. 아직 구현되지 않은 작업
 
@@ -282,6 +285,18 @@ dry-run은 read-only Store와 실제 cache evaluator를 사용하며 model finge
 
 최신 기록을 위에 추가한다. 긴 구현 설명은 PR이나 ADR에 두고 여기에는 다음 세션이 재개하는 데
 필요한 정보만 적는다.
+
+### 2026-08-12 — Phase 3 Engine timeout·cancel·retry policy
+
+- 목표: Executor/Stage에 deadline·cancel을 전달하고 transient failure만 제한적으로 재시도
+- 완료: `RetryPolicy`, Stage timeout map, run cancellation watcher, attempt별 control/manifest와
+  Application Service/CLI `--stage-timeout-sec`, `--max-stage-attempts`, `--retry-backoff-sec`; ADR-0021
+- 주요 결정: timeout 후 sync/native call을 강제 종료하지 않고 safe return까지 기다림; submit/result
+  실패와 timeout만 retry하며 동일 stage_run ID의 attempt/idempotency를 증가
+- 검증: Engine/Executor/service/CLI 관련 테스트 78개 통과; cooperative timeout→retry success,
+  external cancellation, permanent failure no-retry, retry attempt별 manifest 저장 확인
+- 호환성: 기본값 timeout 없음·최대 1 attempt로 기존 실행 동작 유지; run summary에 attempt 필드 추가
+- 다음 작업: 전체 pytest, sample full/cache resume/query와 Phase 3 exit criteria 문서 정리
 
 ### 2026-08-12 — Phase 3 Executor cooperative cancellation control
 

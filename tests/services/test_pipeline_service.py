@@ -122,6 +122,46 @@ def test_service_plans_selected_stage_and_forwards_exact_settings(
         "10_index": {"embedding": "embedding.default"}
     }
     assert options["force_stages"] == ("10_index",)
+    assert options["stage_timeouts"] == {}
+    assert options["retry_policy"].max_attempts == 1
+    assert options["cancellation"] is None
+
+
+def test_service_forwards_execution_policy_to_each_planned_stage(
+    tmp_path: Path,
+) -> None:
+    video = tmp_path / "video.mp4"
+    video.write_bytes(b"video")
+    engine = RecordingEngine()
+    factory = RecordingRuntimeFactory(
+        engine,
+        {"video": artifact("video")},
+    )
+    service = PipelineApplicationService(
+        DAGPlanner(create_default_registry()),
+        factory,
+    )
+
+    asyncio.run(
+        service.run(
+            PipelineRunRequest(
+                video_path=video,
+                output_root=tmp_path / "output",
+                to_stage="02_scenes",
+                stage_timeout_sec=30,
+                max_stage_attempts=3,
+                retry_backoff_sec=0.25,
+            )
+        )
+    )
+
+    _, options = engine.calls[0]
+    assert options["stage_timeouts"] == {
+        "01_probe": 30.0,
+        "02_scenes": 30.0,
+    }
+    assert options["retry_policy"].max_attempts == 3
+    assert options["retry_policy"].initial_backoff_sec == 0.25
 
 
 def test_service_rejects_missing_file_and_unresolved_boundary(

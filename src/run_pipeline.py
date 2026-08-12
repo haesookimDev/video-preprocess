@@ -41,6 +41,12 @@ def main() -> int:
                         help="캐시를 무시할 단계 (여러 번 지정 가능)")
     parser.add_argument("--dry-run", action="store_true",
                         help="실행 없이 단계 plan과 boundary input 출력")
+    parser.add_argument("--stage-timeout-sec", type=float, default=None,
+                        help="Stage별 timeout 초 (기본: 제한 없음)")
+    parser.add_argument("--max-stage-attempts", type=int, default=1,
+                        help="일시적 실패의 Stage 최대 시도 수 (기본: 1)")
+    parser.add_argument("--retry-backoff-sec", type=float, default=0.0,
+                        help="첫 재시도 전 대기 초 (기본: 0)")
     parser.add_argument("--preflight-only", action="store_true",
                         help="실행 환경만 검사하고 종료")
     args = parser.parse_args()
@@ -74,20 +80,27 @@ def main() -> int:
 
     output_root = (args.out / args.video.stem).resolve()
     run_id = args.run_id or _local_run_id(output_root)
-    request = PipelineRunRequest(
-        video_path=args.video.resolve(),
-        output_root=output_root,
-        run_id=run_id,
-        stage=args.stage,
-        from_stage=args.from_stage,
-        to_stage=args.to_stage,
-        force_stages=tuple(args.force_stage),
-        settings=PipelineSettings(
-            whisper_model=args.whisper_model,
-            language=args.language,
-            scene_threshold=args.scene_threshold,
-        ),
-    )
+    try:
+        request = PipelineRunRequest(
+            video_path=args.video.resolve(),
+            output_root=output_root,
+            run_id=run_id,
+            stage=args.stage,
+            from_stage=args.from_stage,
+            to_stage=args.to_stage,
+            force_stages=tuple(args.force_stage),
+            stage_timeout_sec=args.stage_timeout_sec,
+            max_stage_attempts=args.max_stage_attempts,
+            retry_backoff_sec=args.retry_backoff_sec,
+            settings=PipelineSettings(
+                whisper_model=args.whisper_model,
+                language=args.language,
+                scene_threshold=args.scene_threshold,
+            ),
+        )
+    except (TypeError, ValueError) as exc:
+        print(f"오류: {exc}", file=sys.stderr)
+        return 2
     service = PipelineApplicationService(
         DAGPlanner(create_default_registry()),
         LocalPipelineRuntimeFactory(project_root=project_root),
@@ -105,6 +118,11 @@ def main() -> int:
                     "stages": list(plan.stage_names),
                     "boundary_inputs": list(plan.boundary_inputs),
                     "force_stages": list(request.force_stages),
+                    "execution_policy": {
+                        "stage_timeout_sec": request.stage_timeout_sec,
+                        "max_stage_attempts": request.max_stage_attempts,
+                        "retry_backoff_sec": request.retry_backoff_sec,
+                    },
                     "cache_decisions": [
                         _preview_stage_payload(record)
                         for record in preview.stages
@@ -181,6 +199,7 @@ def _write_compatibility_summary(
         stages.append(
             {
                 "name": record.stage,
+                "attempt": record.task.attempt,
                 "status": status,
                 "result": dict(record.result.metrics),
                 "outputs": {

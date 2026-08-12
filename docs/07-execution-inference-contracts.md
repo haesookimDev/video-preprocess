@@ -391,8 +391,9 @@ pending → queued → running → succeeded
                          └→ cancelled
 ```
 
-`failed` 이후 재시도는 같은 `stage_run_id`의 새 attempt 또는 새 `stage_run_id` 중 한 정책을
-선택해야 한다. 권장 방식은 논리 stage run은 유지하고 attempt만 증가시키는 것이다.
+`failed` 이후 재시도는 같은 `stage_run_id`와 증가한 attempt를 사용한다. 각 실패 attempt를 먼저
+manifest에 저장하고 transient reason과 최대 시도 수를 확인한 뒤 bounded backoff한다. 한 Stage의
+여러 attempt는 `PipelineRunResult.stages`에도 순서대로 남는다.
 
 ## 6. 추론 계약
 
@@ -672,10 +673,16 @@ DELETE /v1/inference-jobs/{request_id}
 | `INFERENCE_FAILED` | 모델 실행 오류 | 기본 아니요 |
 | `CANCELLED` | 사용자 또는 상위 실행 취소 | 아니요 |
 
-재시도는 exponential backoff와 jitter를 사용하고 최대 횟수와 전체 deadline을 모두 제한한다.
-현재 Gateway는 한 요청의 capability 확인과 inference를 합친 전체 timeout만 구현한다. retry,
-backoff와 circuit breaker는 HTTP Provider 단계에서 추가한다. 현재 Local Provider 실행
-thread는 timeout 후 강제 중단할 수 없어 cancellation 미지원으로 capability에 표시한다.
+Engine Stage retry는 `EXECUTOR_SUBMIT_FAILED`, `EXECUTOR_RESULT_FAILED`, `STAGE_TIMEOUT`만 기본
+transient reason으로 분류하고 bounded exponential backoff를 적용한다. Gateway는 한 요청의
+capability 확인과 inference를 합친 전체 timeout만 구현한다. HTTP `Retry-After`, jitter와 circuit
+breaker는 HTTP Provider 단계에서 추가한다. 현재 Local Provider 실행 thread는 timeout 후 강제
+중단할 수 없어 cancellation 미지원으로 capability에 표시한다.
+
+Application request는 선택적으로 모든 planned Stage에 적용할 `stage_timeout_sec`, 최초 실행을
+포함한 `max_stage_attempts`와 `retry_backoff_sec`를 전달한다. timeout은 safe cancellation boundary
+도달 후 `STAGE_TIMEOUT`, run token 취소는 `ENGINE_CANCELLED`로 manifest에 남는다. 상세 결정은
+[`ADR-0021`](./adr/0021-engine-timeout-cancellation-retry-policy.md)에 기록한다.
 
 ## 9. Skip과 Fallback
 

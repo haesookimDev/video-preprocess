@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 from collections.abc import Collection, Mapping, Sequence
@@ -21,7 +22,12 @@ from video_preprocess.domain import (
     StageStatus,
     StageTask,
 )
-from video_preprocess.executors.contracts import ExecutionHandle, Executor
+from video_preprocess.executors.contracts import (
+    CancellationToken,
+    ExecutionControl,
+    ExecutionHandle,
+    Executor,
+)
 
 from .cache import (
     CacheDecision,
@@ -36,6 +42,7 @@ from .errors import (
 )
 from .persistence import Clock, RunJournal, utc_now
 from .planner import ExecutionPlan
+from .policies import RetryPolicy
 
 if TYPE_CHECKING:
     from video_preprocess.storage.runs import RunStore
@@ -391,6 +398,9 @@ class PipelineEngine:
         model_bindings: Mapping[str, Mapping[str, str]] | None = None,
         attempts: Mapping[str, int] | None = None,
         force_stages: Collection[str] | None = None,
+        stage_timeouts: Mapping[str, float] | None = None,
+        retry_policy: RetryPolicy | None = None,
+        cancellation: CancellationToken | None = None,
     ) -> PipelineRunResult:
         if not isinstance(plan, ExecutionPlan):
             raise TypeError("plan must be an ExecutionPlan")
@@ -407,6 +417,15 @@ class PipelineEngine:
         )
         normalized_attempts = {} if attempts is None else dict(attempts)
         forced = self._normalize_force_stages(force_stages)
+        timeouts = self._normalize_stage_timeouts(plan, stage_timeouts)
+        if retry_policy is None:
+            retry_policy = RetryPolicy()
+        elif not isinstance(retry_policy, RetryPolicy):
+            raise TypeError("retry_policy must be a RetryPolicy or None")
+        if cancellation is None:
+            cancellation = CancellationToken()
+        elif not isinstance(cancellation, CancellationToken):
+            raise TypeError("cancellation must be a CancellationToken or None")
         if forced and self.cache_evaluator is None:
             raise EngineInputError(
                 "force_stages requires a configured cache evaluator"
@@ -526,67 +545,131 @@ class PipelineEngine:
                 run_state.transition(RunStatus.FAILED)
                 break
 
-            try:
-                handle = await self.executor.submit(task)
-            except Exception as exc:
-                result = self._failed_result(
-                    task,
-                    "EXECUTOR_SUBMIT_FAILED",
-                    "Executor could not submit the StageTask",
-                    warning=f"error_type={type(exc).__name__}",
+            attempts_used = 0
+            while True:
+                if attempts_used:
+                    task = self._build_task(
+                        spec,
+                        run_id=run_id,
+                        trace_id=trace_id,
+                        available=available,
+                        config=configs.get(spec.name, {}),
+                        model_bindings=bindings.get(spec.name, {}),
+                        attempt=(
+                            normalized_attempts.get(spec.name, 1)
+                            + attempts_used
+                        ),
+                    )
+                    stage_state = StageStateMachine()
+                    stage_started_at = (
+                        journal.now() if journal is not None else None
+                    )
+                attempt_cache_decision = (
+                    cache_decision if attempts_used == 0 else None
                 )
-                stage_state.transition(StageLifecycle.FAILED)
+                if cancellation.cancelled:
+                    result = self._cancelled_result(
+                        task,
+                        "ENGINE_CANCELLED",
+                        "pipeline cancellation was requested",
+                    )
+                    stage_state.transition(StageLifecycle.CANCELLED)
+                    self._persist_stage(
+                        journal,
+                        task,
+                        result,
+                        started_at=stage_started_at,
+                        cache_key=self._cache_key(
+                            task,
+                            attempt_cache_decision,
+                        ),
+                    )
+                    records.append(
+                        StageExecutionRecord(
+                            stage=spec.name,
+                            task=task,
+                            handle=None,
+                            result=result,
+                            transitions=stage_state.history,
+                            cache_decision=attempt_cache_decision,
+                        )
+                    )
+                    break
+
+                control = ExecutionControl(
+                    timeout_sec=timeouts.get(spec.name),
+                )
+                try:
+                    handle = await self.executor.submit(
+                        task,
+                        control=control,
+                    )
+                except Exception as exc:
+                    handle = None
+                    result = self._failed_result(
+                        task,
+                        "EXECUTOR_SUBMIT_FAILED",
+                        "Executor could not submit the StageTask",
+                        warning=f"error_type={type(exc).__name__}",
+                    )
+                    stage_state.transition(StageLifecycle.FAILED)
+                else:
+                    stage_state.transition(StageLifecycle.QUEUED)
+                    stage_state.transition(StageLifecycle.RUNNING)
+                    result = await self._await_executor_result(
+                        handle,
+                        task,
+                        control=control,
+                        cancellation=cancellation,
+                    )
+                    result = self._validate_result_outputs(
+                        spec,
+                        task,
+                        result,
+                    )
+                    stage_state.transition(
+                        self._lifecycle_from_result(result.status)
+                    )
+
                 self._persist_stage(
                     journal,
                     task,
                     result,
                     started_at=stage_started_at,
-                    cache_key=self._cache_key(task, cache_decision),
+                    cache_key=self._cache_key(
+                        task,
+                        attempt_cache_decision,
+                    ),
                 )
                 records.append(
                     StageExecutionRecord(
                         stage=spec.name,
                         task=task,
-                        handle=None,
+                        handle=handle,
                         result=result,
                         transitions=stage_state.history,
-                        cache_decision=cache_decision,
+                        cache_decision=attempt_cache_decision,
                     )
                 )
-                run_state.transition(RunStatus.FAILED)
-                break
+                attempts_used += 1
+                if result.status in {
+                    StageStatus.SUCCEEDED,
+                    StageStatus.SKIPPED,
+                    StageStatus.CANCELLED,
+                }:
+                    break
+                if not retry_policy.should_retry(
+                    result,
+                    attempts_used=attempts_used,
+                ):
+                    break
+                await self._retry_backoff(
+                    retry_policy.backoff_sec(
+                        attempts_used=attempts_used,
+                    ),
+                    cancellation,
+                )
 
-            stage_state.transition(StageLifecycle.QUEUED)
-            stage_state.transition(StageLifecycle.RUNNING)
-            try:
-                result = await self.executor.result(handle)
-            except Exception as exc:
-                result = self._failed_result(
-                    task,
-                    "EXECUTOR_RESULT_FAILED",
-                    "Executor could not return the StageResult",
-                    warning=f"error_type={type(exc).__name__}",
-                )
-            result = self._validate_result_outputs(spec, task, result)
-            terminal_state = self._lifecycle_from_result(result.status)
-            stage_state.transition(terminal_state)
-            self._persist_stage(
-                journal,
-                task,
-                result,
-                started_at=stage_started_at,
-                cache_key=self._cache_key(task, cache_decision),
-            )
-            records.append(
-                StageExecutionRecord(
-                    stage=spec.name,
-                    task=task,
-                    handle=handle,
-                    result=result,
-                    transitions=stage_state.history,
-                    cache_decision=cache_decision,
-                )
-            )
             if result.status in {StageStatus.SUCCEEDED, StageStatus.SKIPPED}:
                 available.update(result.outputs)
                 continue
@@ -612,6 +695,80 @@ class PipelineEngine:
             transitions=run_state.history,
             manifest=run_manifest,
         )
+
+    async def _await_executor_result(
+        self,
+        handle: ExecutionHandle,
+        task: StageTask,
+        *,
+        control: ExecutionControl,
+        cancellation: CancellationToken,
+    ) -> StageResult:
+        result_task = asyncio.create_task(self.executor.result(handle))
+        cancellation_task = asyncio.create_task(cancellation.wait())
+        try:
+            done, _ = await asyncio.wait(
+                {result_task, cancellation_task},
+                timeout=control.timeout_sec,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if result_task in done:
+                try:
+                    return result_task.result()
+                except Exception as exc:
+                    return self._failed_result(
+                        task,
+                        "EXECUTOR_RESULT_FAILED",
+                        "Executor could not return the StageResult",
+                        warning=f"error_type={type(exc).__name__}",
+                    )
+
+            timed_out = not cancellation.cancelled
+            control.cancellation.cancel()
+            cancel_warning = None
+            try:
+                await self.executor.cancel(handle)
+            except Exception as exc:
+                cancel_warning = f"cancel_error_type={type(exc).__name__}"
+            try:
+                await result_task
+            except Exception:
+                pass
+            if timed_out:
+                return self._failed_result(
+                    task,
+                    "STAGE_TIMEOUT",
+                    "Stage exceeded its timeout and reached cancellation",
+                    warning=cancel_warning,
+                )
+            return self._cancelled_result(
+                task,
+                "ENGINE_CANCELLED",
+                "pipeline cancellation was requested",
+                warning=cancel_warning,
+            )
+        finally:
+            if not cancellation_task.done():
+                cancellation_task.cancel()
+            try:
+                await cancellation_task
+            except asyncio.CancelledError:
+                pass
+
+    @staticmethod
+    async def _retry_backoff(
+        delay_sec: float,
+        cancellation: CancellationToken,
+    ) -> None:
+        if cancellation.cancelled or delay_sec <= 0:
+            return
+        try:
+            await asyncio.wait_for(
+                cancellation.wait(),
+                timeout=delay_sec,
+            )
+        except asyncio.TimeoutError:
+            return
 
     def _create_journal(
         self,
@@ -1002,6 +1159,33 @@ class PipelineEngine:
         return frozenset(normalized)
 
     @staticmethod
+    def _normalize_stage_timeouts(
+        plan: ExecutionPlan,
+        value: Mapping[str, float] | None,
+    ) -> dict[str, float]:
+        if value is None:
+            return {}
+        if not isinstance(value, Mapping):
+            raise TypeError("stage_timeouts must be a mapping")
+        unknown = sorted(set(value) - set(plan.stage_names))
+        if unknown:
+            raise EngineInputError(
+                f"stage_timeouts contains unplanned stage: {unknown[0]}"
+            )
+        normalized = {}
+        for stage_name, timeout_sec in value.items():
+            if (
+                isinstance(timeout_sec, bool)
+                or not isinstance(timeout_sec, (int, float))
+                or timeout_sec <= 0
+            ):
+                raise EngineInputError(
+                    f"stage_timeouts.{stage_name} must be positive"
+                )
+            normalized[stage_name] = float(timeout_sec)
+        return normalized
+
+    @staticmethod
     def _required_string(value: object, field_name: str) -> str:
         if not isinstance(value, str) or not value.strip():
             raise EngineInputError(
@@ -1031,6 +1215,24 @@ class PipelineEngine:
             stage_run_id=task.stage_run_id,
             attempt=task.attempt,
             status=StageStatus.FAILED,
+            reason_code=reason_code,
+            reason=reason,
+            warnings=() if warning is None else (warning,),
+        )
+
+    @staticmethod
+    def _cancelled_result(
+        task: StageTask,
+        reason_code: str,
+        reason: str,
+        *,
+        warning: str | None = None,
+    ) -> StageResult:
+        return StageResult(
+            run_id=task.run_id,
+            stage_run_id=task.stage_run_id,
+            attempt=task.attempt,
+            status=StageStatus.CANCELLED,
             reason_code=reason_code,
             reason=reason,
             warnings=() if warning is None else (warning,),

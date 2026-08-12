@@ -25,6 +25,7 @@ from video_preprocess.engine import (
     EnginePersistenceError,
     ManifestCacheEvaluator,
     PipelineEngine,
+    RetryPolicy,
     StagePreviewStatus,
     StageLifecycle,
     StageRegistry,
@@ -92,7 +93,7 @@ class FakeExecutor:
         self.tasks = []
         self.tasks_by_execution = {}
 
-    async def submit(self, task):
+    async def submit(self, task, *, control=None):
         self.tasks.append(task)
         handle = ExecutionHandle(
             execution_id=f"execution-{len(self.tasks)}",
@@ -210,6 +211,7 @@ def run_engine(
     force_stages=None,
     stage_configs=None,
     run_id="run-123",
+    retry_policy=None,
 ):
     engine = PipelineEngine(
         executor,
@@ -233,6 +235,7 @@ def run_engine(
                 "02_process": {"worker": "worker.default"}
             },
             force_stages=force_stages,
+            retry_policy=retry_policy,
         )
     )
 
@@ -517,6 +520,38 @@ def test_failed_and_cancelled_attempts_are_persisted_for_diagnostics(
     saved_stage = next(iter(runs.stages.values()))
     assert saved_stage.result.status is stage_status
     assert saved_stage.result.reason_code == "TEST_TERMINAL"
+
+
+def test_retry_attempts_are_each_persisted_before_success() -> None:
+    def transient_then_success(task):
+        if task.stage == "01_prepare" and task.attempt == 1:
+            return StageResult(
+                run_id=task.run_id,
+                stage_run_id=task.stage_run_id,
+                attempt=task.attempt,
+                status=StageStatus.FAILED,
+                reason_code="EXECUTOR_RESULT_FAILED",
+                reason="transient failure",
+            )
+        return success(task)
+
+    runs = FakeRunStore()
+    result = run_engine(
+        FakeExecutor(transient_then_success),
+        runs,
+        retry_policy=RetryPolicy(max_attempts=2),
+    )
+
+    assert result.status is RunStatus.SUCCEEDED
+    assert [record.task.attempt for record in result.stages] == [1, 2, 1]
+    assert len(result.manifest.stages) == 3
+    assert runs.events[:5] == [
+        ("run", "running", 0),
+        ("stage", "01_prepare"),
+        ("run", "running", 1),
+        ("stage", "01_prepare"),
+        ("run", "running", 2),
+    ]
 
 
 def test_force_stage_requires_cache_configuration_and_planned_name() -> None:

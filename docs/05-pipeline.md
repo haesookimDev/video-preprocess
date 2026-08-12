@@ -110,6 +110,10 @@ PipelineEngine→LocalExecutor에서 실행한다. 입력 영상은 cache integr
 # 강제 실행과 실행 없는 plan 확인
 .venv/bin/python src/run_pipeline.py samples/sample.mp4 --force-stage 07_diarize
 .venv/bin/python src/run_pipeline.py samples/sample.mp4 --dry-run
+
+# Stage timeout과 transient failure 최대 시도 수
+.venv/bin/python src/run_pipeline.py samples/sample.mp4 \
+  --stage-timeout-sec 900 --max-stage-attempts 2 --retry-backoff-sec 1
 ```
 
 `--force`는 선택된 plan 전체를 강제하고 `--force-stage`는 지정 단계만 강제한다. dry-run은
@@ -119,3 +123,7 @@ Artifact/Run Store를 read-only로 열고 실제 task/cache identity로 `hit`, `
 
 같은 output Store의 다른 run도 content cache key index에서 후보를 찾는다. 실제 hit은 현재
 effective model fingerprint와 모든 input/output artifact checksum을 다시 검증한 뒤에만 허용한다.
+
+timeout과 run cancellation은 attempt별 `ExecutionControl`을 통해 Executor와 control-aware runner에
+전달된다. timeout은 안전한 반환 경계 뒤 `STAGE_TIMEOUT`으로 기록하고 Executor submit/result 실패와
+함께 설정된 최대 attempt까지 bounded retry한다. 영구 Stage 실패와 cancellation은 retry하지 않는다.
