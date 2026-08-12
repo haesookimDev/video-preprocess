@@ -21,6 +21,9 @@ def test_cli_composes_server_without_printing_token(monkeypatch, capsys) -> None
         def __init__(self, *args, **options):
             seen["run_service"] = options
 
+        def get(self, run_id):
+            raise AssertionError("CLI composition must not query a run")
+
     monkeypatch.setattr(serve_pipeline, "PipelineHTTPServer", Server)
     monkeypatch.setattr(serve_pipeline, "PipelineRunService", RunService)
     monkeypatch.setattr(

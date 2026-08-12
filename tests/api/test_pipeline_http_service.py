@@ -8,6 +8,8 @@ from video_preprocess.services import (
     PipelineRunNotFoundError,
     PipelineRunSnapshot,
     PipelineRunSubmission,
+    PipelineQueryRequest,
+    PipelineQueryResult,
     PublicRunStatus,
 )
 
@@ -54,6 +56,16 @@ class RunService:
 
     async def shutdown(self):
         self.closed = True
+
+
+class QueryService:
+    async def query(self, request):
+        return PipelineQueryResult(
+            run_id=request.run_id,
+            query=request.query,
+            context="assembled context",
+            matches=(),
+        )
 
 
 def test_http_service_maps_create_and_matching_idempotency() -> None:
@@ -124,3 +136,25 @@ def test_submission_parser_rejects_unknown_fields_and_invalid_settings() -> None
             pass
         else:
             raise AssertionError("invalid public request was accepted")
+
+
+def test_http_service_maps_query_result() -> None:
+    service = PipelineHTTPService(
+        RunService(),
+        query_service=QueryService(),
+    )
+    try:
+        status, body, _ = service.query(
+            PipelineQueryRequest("run_test", "질의", top_k=2)
+        )
+    finally:
+        service.close()
+
+    assert status == 200
+    assert body == {
+        "schema_version": "1",
+        "run_id": "run_test",
+        "query": "질의",
+        "context": "assembled context",
+        "matches": [],
+    }

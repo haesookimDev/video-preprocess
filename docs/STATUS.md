@@ -2,7 +2,7 @@
 
 - 마지막 갱신: **2026-08-12**
 - 현재 단계: **Phase 5 진행 중 — 외부 서비스 연동**
-- 다음 작업: **QueryService 구현과 기존 query CLI/API route 통합**
+- 다음 작업: **Phase 5 통합 회귀, 보존 정책 구현과 README/운영 문서 완료**
 
 이 문서는 개발 진행 상황의 단일 진입점이다. 새로운 세션은 이 문서를 먼저 읽고, 실제 코드와
 Git 상태를 확인한 뒤 작업을 시작한다.
@@ -215,6 +215,8 @@ Phase 5 첫 slice:
 - process restart 후 남은 queued/running snapshot은 `RUN_INTERRUPTED` terminal failure로 조정한다.
 - `PipelineHTTPServer`가 전용 async service loop, Bearer auth, JSON byte limit와 분류된 HTTP 오류를
   제공하며 `serve_pipeline.py`가 local media/state/workspace와 Engine runtime을 조합한다.
+- `QueryService`가 FTS5·embedding·RRF·context 조립을 소유하고 typed match/score를 반환한다.
+- 기존 `query.py`와 REST query route가 각각 resolver만 달리해 같은 QueryService를 호출한다.
 
 ## 6. 알려진 중요 문제
 
@@ -322,6 +324,19 @@ Phase 5 첫 slice:
 
 최신 기록을 위에 추가한다. 긴 구현 설명은 PR이나 ADR에 두고 여기에는 다음 세션이 재개하는 데
 필요한 정보만 적는다.
+
+### 2026-08-12 — Phase 5 QueryService와 CLI/API 통합
+
+- 목표: 검색 로직을 CLI에서 분리해 local command와 외부 API가 같은 use case를 호출
+- 완료: typed query request/result/match, target resolver, async embedding query, FTS5+RRF score,
+  context assembly, 기존 query CLI adapter와 `/queries` REST route/server composition
+- 주요 결정: CLI는 explicit output resolver, API는 succeeded run만 private workspace로 해석;
+  scene match는 rank, time range, RRF score와 card text를 공개하고 로컬 DB/timeline 경로는 숨김
+- 검증: 기본 suite 340 passed, 15 deselected; query 포함 loopback integration 2 passed;
+  compileall과 diff check 성공
+- 호환성: 기존 query positional 명령과 context stdout 형식, local/HTTP embedding option을 유지;
+  API query는 pipeline succeeded 후에만 허용
+- 다음 작업: retention 구현, 실제 sample pipeline/API/query 회귀, README와 Phase 5 종료 문서 갱신
 
 ### 2026-08-12 — Phase 5 Pipeline REST adapter와 server composition
 

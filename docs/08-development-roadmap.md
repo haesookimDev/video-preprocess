@@ -302,11 +302,11 @@ SentenceTransformer HTTP E2E 1개가 통과했다.
   - [x] 실행 취소
   - [x] 상태·진행률 조회
   - [x] 결과 artifact 조회
-- [ ] `QueryService` 구현
-- [ ] 기존 CLI를 Service adapter로 변경
-- [ ] REST API adapter 추가
+- [x] `QueryService` 구현
+- [x] 기존 CLI를 Service adapter로 변경
+- [x] REST API adapter 추가
   - [x] pipeline create/status/cancel/artifact route와 server composition
-  - [ ] query route 연결
+  - [x] query route 연결
 - [ ] 필요 시 queue consumer adapter 추가
 - [x] 입력 요청과 결과의 공개 schema 문서화
 - [x] 사용자 제공 idempotency key 계약 정의

@@ -17,6 +17,7 @@ from video_preprocess.engine import PipelineRunResult
 from video_preprocess.services import (
     LocalMediaCatalog,
     LocalPipelineRunRepository,
+    PipelineQueryResult,
     PipelineRunService,
 )
 
@@ -46,6 +47,16 @@ class Application:
             stages=(),
             artifacts={},
             transitions=(),
+        )
+
+
+class QueryApplication:
+    async def query(self, request):
+        return PipelineQueryResult(
+            run_id=request.run_id,
+            query=request.query,
+            context="loopback context",
+            matches=(),
         )
 
 
@@ -92,6 +103,7 @@ def make_server(tmp_path: Path, application: Application):
     )
     return PipelineHTTPServer(
         run_service=service,
+        query_service=QueryApplication(),
         host="127.0.0.1",
         port=0,
         auth_token="secret-token",
@@ -141,6 +153,11 @@ def test_loopback_create_idempotency_status_artifacts_and_auth(
         artifact_status, artifacts, _ = request_json(
             f"{server.base_url}/v1/pipeline-runs/run_http_test/artifacts"
         )
+        query_status, query_result, _ = request_json(
+            f"{server.base_url}/v1/pipeline-runs/run_http_test/queries",
+            method="POST",
+            body={"schema_version": "1", "query": "질의", "top_k": 2},
+        )
 
     assert unauthorized == 401
     assert error["error"]["code"] == "UNAUTHORIZED"
@@ -152,6 +169,8 @@ def test_loopback_create_idempotency_status_artifacts_and_auth(
     assert pending_error["error"]["code"] == "RUN_NOT_READY"
     assert artifact_status == 200
     assert artifacts["artifacts"] == {}
+    assert query_status == 200
+    assert query_result["context"] == "loopback context"
 
 
 def test_loopback_rejects_mismatched_key_and_oversized_body(

@@ -348,7 +348,7 @@ components:
       required: [rank, scene_id, start_sec, end_sec, score, text]
       properties:
         rank: {type: integer, minimum: 1}
-        scene_id: {type: string}
+        scene_id: {type: integer, minimum: 1}
         start_sec: {type: number, minimum: 0}
         end_sec: {type: number, minimum: 0}
         score: {type: number}

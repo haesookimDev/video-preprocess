@@ -20,6 +20,11 @@ from video_preprocess.services import (
     PipelineRunNotReadyError,
     PipelineRunService,
     PipelineRunSubmission,
+    PipelineQueryRequest,
+    QueryIndexNotFoundError,
+    QueryRunNotReadyError,
+    QueryService,
+    QueryServiceInputError,
 )
 
 
@@ -81,6 +86,7 @@ class PipelineHTTPService:
         self,
         run_service: PipelineRunService,
         *,
+        query_service: QueryService | None = None,
         call_timeout_sec: float = 10.0,
         shutdown_timeout_sec: float = 5.0,
     ) -> None:
@@ -103,6 +109,11 @@ class PipelineHTTPService:
             ):
                 raise ValueError(f"{field_name} must be positive")
         self.run_service = run_service
+        if query_service is not None and not callable(
+            getattr(query_service, "query", None)
+        ):
+            raise TypeError("query_service must implement query or be None")
+        self.query_service = query_service
         self.call_timeout_sec = float(call_timeout_sec)
         self.shutdown_timeout_sec = float(shutdown_timeout_sec)
         self._runtime = _AsyncServiceRuntime()
@@ -247,6 +258,41 @@ class PipelineHTTPService:
             return self._unavailable()
         return self._response(HTTPStatus.OK, body)
 
+    def query(
+        self,
+        request: PipelineQueryRequest,
+    ) -> tuple[int, dict[str, object], dict[str, str]]:
+        if self.query_service is None:
+            return self._unavailable()
+        try:
+            result = self._runtime.call(
+                self.query_service.query(request),
+                timeout_sec=self.call_timeout_sec,
+            )
+        except PipelineRunNotFoundError:
+            return self._not_found()
+        except (QueryRunNotReadyError, QueryIndexNotFoundError):
+            return self._response(
+                HTTPStatus.CONFLICT,
+                self.error(
+                    "RUN_NOT_READY",
+                    "pipeline run does not have a queryable index",
+                    retryable=False,
+                ),
+            )
+        except (QueryServiceInputError, TypeError, ValueError):
+            return self._response(
+                HTTPStatus.BAD_REQUEST,
+                self.error(
+                    "INVALID_REQUEST",
+                    "query request or index is invalid",
+                    retryable=False,
+                ),
+            )
+        except Exception:
+            return self._unavailable()
+        return self._response(HTTPStatus.OK, result.to_dict())
+
     async def _get(self, run_id: str):
         return self.run_service.get(run_id)
 
@@ -323,6 +369,7 @@ class PipelineHTTPServer:
         self,
         *,
         run_service: PipelineRunService,
+        query_service: QueryService | None = None,
         host: str = "127.0.0.1",
         port: int = 8090,
         auth_token: str | None = None,
@@ -340,7 +387,10 @@ class PipelineHTTPServer:
             raise ValueError("max_request_bytes must be a positive integer")
         self.auth_token = None if auth_token is None else auth_token.strip()
         self.max_request_bytes = max_request_bytes
-        self.service = PipelineHTTPService(run_service)
+        self.service = PipelineHTTPService(
+            run_service,
+            query_service=query_service,
+        )
         try:
             self._server = ThreadingHTTPServer(
                 (host, port),
@@ -418,13 +468,20 @@ class PipelineHTTPServer:
                 if not self._authorized():
                     return
                 path = urlparse(self.path).path
-                if path != "/v1/pipeline-runs":
+                route = self._run_route(path)
+                is_create = path == "/v1/pipeline-runs"
+                is_query = route is not None and route[1] == "queries"
+                if not is_create and not is_query:
                     self._not_found()
                     return
                 try:
-                    submission = PipelineRunSubmission.from_dict(
-                        self._request_json()
-                    )
+                    payload = self._request_json()
+                    if is_create:
+                        request = PipelineRunSubmission.from_dict(payload)
+                    else:
+                        request = PipelineQueryRequest.from_dict(
+                            route[0], payload
+                        )
                 except _RequestBodyTooLarge:
                     self._send(
                         HTTPStatus.REQUEST_ENTITY_TOO_LARGE,
@@ -447,12 +504,17 @@ class PipelineHTTPServer:
                         {},
                     )
                     return
-                self._send(
-                    *adapter.service.create(
-                        submission,
-                        idempotency_key=self.headers.get("Idempotency-Key"),
+                if is_create:
+                    self._send(
+                        *adapter.service.create(
+                            request,
+                            idempotency_key=self.headers.get(
+                                "Idempotency-Key"
+                            ),
+                        )
                     )
-                )
+                    return
+                self._send(*adapter.service.query(request))
 
             def do_DELETE(self) -> None:
                 if not self._authorized():

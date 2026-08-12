@@ -12,10 +12,12 @@ from video_preprocess.api import PipelineHTTPServer
 from video_preprocess.engine import DAGPlanner, create_default_registry
 from video_preprocess.services import (
     LocalMediaCatalog,
+    LocalPipelineRunQueryResolver,
     LocalPipelineRuntimeFactory,
     LocalPipelineRunRepository,
     PipelineApplicationService,
     PipelineRunService,
+    QueryService,
 )
 
 
@@ -73,8 +75,16 @@ def main() -> int:
             deployments=deployments,
             max_active_runs=args.max_active_runs,
         )
+        query_service = QueryService(
+            LocalPipelineRunQueryResolver(
+                run_service,
+                args.workspace_root,
+            ),
+            deployments=deployments,
+        )
         server = PipelineHTTPServer(
             run_service=run_service,
+            query_service=query_service,
             host=args.host,
             port=args.port,
             auth_token=token,

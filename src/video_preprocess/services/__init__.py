@@ -31,6 +31,18 @@ from .pipeline_runs import (
     PipelineRunSubmission,
     PublicRunStatus,
 )
+from .query import (
+    FixedQueryTargetResolver,
+    LocalPipelineRunQueryResolver,
+    PipelineQueryRequest,
+    PipelineQueryResult,
+    QueryIndexNotFoundError,
+    QueryMatch,
+    QueryRunNotReadyError,
+    QueryService,
+    QueryServiceError,
+    QueryServiceInputError,
+)
 
 __all__ = [
     "LocalPipelineRuntimeFactory",
@@ -58,4 +70,14 @@ __all__ = [
     "PipelineRunSnapshot",
     "PipelineRunSubmission",
     "PublicRunStatus",
+    "FixedQueryTargetResolver",
+    "LocalPipelineRunQueryResolver",
+    "PipelineQueryRequest",
+    "PipelineQueryResult",
+    "QueryIndexNotFoundError",
+    "QueryMatch",
+    "QueryRunNotReadyError",
+    "QueryService",
+    "QueryServiceError",
+    "QueryServiceInputError",
 ]

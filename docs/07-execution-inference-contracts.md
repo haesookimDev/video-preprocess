@@ -61,6 +61,12 @@ process restart 조정, body/capacity/retention 정책은
 adapter는 `application/json`, 설정된 body byte limit와 optional Bearer token을 검사하고, token과
 내부 경로를 오류 본문에 포함하지 않는다. 서버 진입점은 `src/serve_pipeline.py`다.
 
+검색은 `PipelineQueryRequest(run_id, query, top_k)`와 `PipelineQueryResult`를 사용하는 동일
+`QueryService`에서 수행한다. CLI는 명시한 output tree를 내부 resolver로 주입하고 API는 succeeded
+run ID를 private workspace에 매핑한다. 두 adapter 모두 같은 FTS5 + embedding + RRF와 context 조립
+경로를 사용한다. API 결과는 rank, scene ID, 구간, RRF score와 card text를 포함하되 DB나 timeline의
+물리 경로는 포함하지 않는다.
+
 ## 2. 공통 식별자
 
 | 필드 | 의미 | 생성 주체 |

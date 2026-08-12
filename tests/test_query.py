@@ -5,6 +5,7 @@ import logging
 import sqlite3
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import query as query_module
@@ -133,13 +134,15 @@ def test_main_creates_log_directory_for_external_index(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    index_dir = tmp_path / "10_index"
-    index_dir.mkdir()
-    sqlite3.connect(index_dir / "index.db").close()
+    class Service:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def query(self, request):
+            return SimpleNamespace(context="context")
+
     monkeypatch.setattr(query_module, "setup_logging", lambda _: LOG)
-    monkeypatch.setattr(query_module, "fts_search", lambda *_: [])
-    monkeypatch.setattr(query_module, "embed_search", lambda *_: [])
-    monkeypatch.setattr(query_module, "assemble_context", lambda *_: "context")
+    monkeypatch.setattr(query_module, "QueryService", Service)
     monkeypatch.setattr(
         sys,
         "argv",
@@ -154,24 +157,17 @@ def test_main_composes_remote_embedding_service_from_cli(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
-    index_dir = tmp_path / "10_index"
-    index_dir.mkdir()
-    db = sqlite3.connect(index_dir / "index.db")
-    db.execute("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT)")
-    db.execute("INSERT INTO meta VALUES ('embed_model', 'example/model')")
-    db.execute("INSERT INTO meta VALUES ('embed_revision', 'commit-123')")
-    db.commit()
-    db.close()
     seen = []
 
-    def capture_service(db, query, log, embedding_service=None):
-        seen.append(embedding_service)
-        return []
+    class Service:
+        def __init__(self, resolver, *, deployments, logger):
+            seen.append(deployments)
+
+        async def query(self, request):
+            return SimpleNamespace(context="context")
 
     monkeypatch.setattr(query_module, "setup_logging", lambda _: LOG)
-    monkeypatch.setattr(query_module, "fts_search", lambda *_: [])
-    monkeypatch.setattr(query_module, "embed_search", capture_service)
-    monkeypatch.setattr(query_module, "assemble_context", lambda *_: "context")
+    monkeypatch.setattr(query_module, "QueryService", Service)
     monkeypatch.setenv("MODEL_SERVER_TOKEN", "private-token")
     monkeypatch.setattr(
         sys,
@@ -188,5 +184,6 @@ def test_main_composes_remote_embedding_service_from_cli(
     )
 
     assert query_module.main() == 0
-    provider = seen[0].gateway._bindings["embedding.default"]
-    assert provider.__class__.__name__ == "HTTPInferenceProvider"
+    remote = seen[0].http_provider("embedding.default")
+    assert remote.endpoint == "https://models.example.test"
+    assert remote.auth_token == "private-token"
