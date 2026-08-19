@@ -45,6 +45,8 @@ def main() -> int:
     )
     parser.add_argument("--max-active-runs", type=int, default=1)
     parser.add_argument("--executor-max-concurrency", type=int, default=1)
+    parser.add_argument("--caption-device", default="auto")
+    parser.add_argument("--caption-batch-size", type=int, default=4)
     parser.add_argument("--retain-terminal-runs", type=int, default=1000)
     parser.add_argument("--max-request-bytes", type=int, default=1024 * 1024)
     parser.add_argument("--embedding-endpoint", default=None)
@@ -75,6 +77,8 @@ def main() -> int:
             LocalPipelineRuntimeFactory(
                 project_root=project_root,
                 executor_max_concurrency=args.executor_max_concurrency,
+                caption_device=args.caption_device,
+                caption_batch_size=args.caption_batch_size,
             ),
         )
         run_service = PipelineRunService(

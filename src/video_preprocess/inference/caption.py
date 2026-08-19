@@ -17,6 +17,7 @@ from video_preprocess.domain import (
     InferenceRequest,
     InferenceStatus,
     InferenceTask,
+    ProviderCapabilities,
     RequestedModel,
 )
 
@@ -45,12 +46,26 @@ class CaptionService:
         model_name: str,
         revision: str,
         timeout_sec: float = 300.0,
+        batch_size: int | None = None,
     ) -> None:
+        if (
+            isinstance(timeout_sec, bool)
+            or not isinstance(timeout_sec, (int, float))
+            or timeout_sec <= 0
+        ):
+            raise ValueError("timeout_sec must be positive")
+        if batch_size is not None and (
+            isinstance(batch_size, bool)
+            or not isinstance(batch_size, int)
+            or batch_size < 1
+        ):
+            raise ValueError("batch_size must be at least 1 or None")
         self.gateway = gateway
         self.alias = alias
         self.model_name = model_name
         self.revision = revision
-        self.timeout_sec = timeout_sec
+        self.timeout_sec = float(timeout_sec)
+        self.batch_size = batch_size
 
     def caption(
         self,
@@ -89,15 +104,124 @@ class CaptionService:
     ) -> CaptionBatch:
         normalized_images = self._normalize_images(images)
         max_new_tokens = self._normalize_max_new_tokens(max_new_tokens)
-        request_id = f"infer_{uuid.uuid4().hex}"
         trace_id = trace_id or f"trace_{uuid.uuid4().hex}"
+        loop = asyncio.get_running_loop()
+        started = loop.time()
+        deadline = started + self.timeout_sec
+        capabilities = await self._capabilities(
+            deadline,
+            request_id=f"infer_{uuid.uuid4().hex}",
+        )
+        batch_size = min(
+            capabilities.max_batch_size,
+            self.batch_size or capabilities.max_batch_size,
+        )
+
+        captions: list[str] = []
+        batch_sizes: list[int] = []
+        batch_usage: list[dict[str, object]] = []
+        batch_timing: list[dict[str, object]] = []
+        effective_model: EffectiveModel | None = None
+        for start in range(0, len(normalized_images), batch_size):
+            image_batch = normalized_images[start:start + batch_size]
+            request_id = f"infer_{uuid.uuid4().hex}"
+            request = self._request(
+                image_batch,
+                request_id=request_id,
+                max_new_tokens=max_new_tokens,
+                run_id=run_id,
+                stage_run_id=stage_run_id,
+                trace_id=trace_id,
+                timeout_sec=self._remaining_timeout(
+                    deadline,
+                    request_id=request_id,
+                ),
+            )
+            response = await self.gateway.infer(request)
+            if response.status is not InferenceStatus.SUCCEEDED:
+                failure = response.error or InferenceFailure(
+                    code=InferenceErrorCode.INFERENCE_FAILED,
+                    message="provider failed without an error object",
+                    retryable=False,
+                    request_id=request.request_id,
+                )
+                raise InferenceCallError(failure)
+            if response.model is None:
+                raise self._invalid_response(
+                    request.request_id,
+                    "successful caption response has no model",
+                )
+            if effective_model is None:
+                effective_model = response.model
+            elif response.model != effective_model:
+                raise self._invalid_response(
+                    request.request_id,
+                    "caption batch model metadata changed between chunks",
+                )
+            captions.extend(
+                self._normalize_captions(
+                    response.outputs.get("captions"),
+                    expected_count=len(image_batch),
+                    request_id=request.request_id,
+                )
+            )
+            batch_sizes.append(len(image_batch))
+            batch_usage.append(dict(response.usage))
+            batch_timing.append(dict(response.timing))
+
+        assert effective_model is not None
+        usage = {
+            "input_count": len(normalized_images),
+            "batch_size": max(batch_sizes),
+            "batch_count": len(batch_sizes),
+            "batch_sizes": batch_sizes,
+            "configured_batch_size": self.batch_size,
+            "provider_max_batch_size": capabilities.max_batch_size,
+        }
+        devices = {
+            item["device"]
+            for item in batch_usage
+            if isinstance(item.get("device"), str)
+        }
+        if len(devices) == 1:
+            usage["device"] = devices.pop()
+        timing = {
+            "total_sec": round(loop.time() - started, 6),
+            "model_load_sec": self._sum_timing(
+                batch_timing,
+                "model_load_sec",
+            ),
+            "inference_sec": self._sum_timing(
+                batch_timing,
+                "inference_sec",
+            ),
+            "batches": batch_timing,
+        }
+        return CaptionBatch(
+            captions=tuple(captions),
+            model=effective_model,
+            usage=usage,
+            timing=timing,
+        )
+
+    def _request(
+        self,
+        images: list[ArtifactRef],
+        *,
+        request_id: str,
+        max_new_tokens: int,
+        run_id: str,
+        stage_run_id: str,
+        trace_id: str,
+        timeout_sec: float,
+    ) -> InferenceRequest:
         fingerprint = hashlib.sha256(
             json.dumps(
                 {
                     "alias": self.alias,
                     "model": self.model_name,
                     "revision": self.revision,
-                    "images": [image.to_dict() for image in normalized_images],
+                    "images": [image.to_dict() for image in images],
                     "max_new_tokens": max_new_tokens,
                 },
                 ensure_ascii=False,
@@ -105,7 +229,7 @@ class CaptionService:
                 separators=(",", ":"),
             ).encode("utf-8")
         ).hexdigest()
-        request = InferenceRequest(
+        return InferenceRequest(
             request_id=request_id,
             idempotency_key=f"caption_{fingerprint}",
             run_id=run_id,
@@ -116,35 +240,85 @@ class CaptionService:
                 name=self.model_name,
                 revision=self.revision,
             ),
-            inputs={"images": normalized_images},
+            inputs={"images": images},
             parameters={"max_new_tokens": max_new_tokens},
-            timeout_sec=self.timeout_sec,
+            timeout_sec=timeout_sec,
             trace_id=trace_id,
         )
-        response = await self.gateway.infer(request)
-        if response.status is not InferenceStatus.SUCCEEDED:
-            failure = response.error or InferenceFailure(
-                code=InferenceErrorCode.INFERENCE_FAILED,
-                message="provider failed without an error object",
-                retryable=False,
-                request_id=request_id,
-            )
-            raise InferenceCallError(failure)
-        if response.model is None:
-            raise self._invalid_response(
-                request_id,
-                "successful caption response has no model",
-            )
-        captions = self._normalize_captions(
-            response.outputs.get("captions"),
-            expected_count=len(normalized_images),
+
+    async def _capabilities(
+        self,
+        deadline: float,
+        *,
+        request_id: str,
+    ) -> ProviderCapabilities:
+        timeout_sec = self._remaining_timeout(
+            deadline,
             request_id=request_id,
         )
-        return CaptionBatch(
-            captions=captions,
-            model=response.model,
-            usage=dict(response.usage),
-            timing=dict(response.timing),
+        try:
+            capabilities = await asyncio.wait_for(
+                self.gateway.capabilities(self.alias),
+                timeout=timeout_sec,
+            )
+        except asyncio.TimeoutError as exc:
+            raise self._call_error(
+                request_id,
+                InferenceErrorCode.PROVIDER_TIMEOUT,
+                "provider capability check timed out",
+                retryable=True,
+            ) from exc
+        except InferenceCallError:
+            raise
+        except Exception as exc:
+            raise self._call_error(
+                request_id,
+                InferenceErrorCode.PROVIDER_UNAVAILABLE,
+                "provider capability check failed",
+                details={"error_type": type(exc).__name__},
+            ) from exc
+        if not isinstance(capabilities, ProviderCapabilities):
+            raise self._call_error(
+                request_id,
+                InferenceErrorCode.PROVIDER_UNAVAILABLE,
+                "provider returned invalid capabilities",
+            )
+        if (
+            self.alias not in capabilities.model_aliases
+            or InferenceTask.IMAGE_CAPTIONING not in capabilities.tasks
+        ):
+            raise self._call_error(
+                request_id,
+                InferenceErrorCode.UNSUPPORTED_CAPABILITY,
+                "provider does not support the requested caption model",
+            )
+        return capabilities
+
+    @staticmethod
+    def _remaining_timeout(deadline: float, *, request_id: str) -> float:
+        remaining = deadline - asyncio.get_running_loop().time()
+        if remaining <= 0:
+            raise CaptionService._call_error(
+                request_id,
+                InferenceErrorCode.PROVIDER_TIMEOUT,
+                "caption inference deadline elapsed between batches",
+                retryable=True,
+            )
+        return remaining
+
+    @staticmethod
+    def _sum_timing(
+        batch_timing: list[dict[str, object]],
+        field_name: str,
+    ) -> float:
+        return round(
+            sum(
+                float(item[field_name])
+                for item in batch_timing
+                if isinstance(item.get(field_name), (int, float))
+                and not isinstance(item[field_name], bool)
+            ),
+            6,
         )
 
     @staticmethod
@@ -202,6 +376,25 @@ class CaptionService:
                 code=InferenceErrorCode.INFERENCE_FAILED,
                 message=message,
                 retryable=False,
+                request_id=request_id,
+            )
+        )
+
+    @staticmethod
+    def _call_error(
+        request_id: str,
+        code: InferenceErrorCode,
+        message: str,
+        *,
+        retryable: bool = False,
+        details: dict[str, object] | None = None,
+    ) -> InferenceCallError:
+        return InferenceCallError(
+            InferenceFailure(
+                code=code,
+                message=message,
+                retryable=retryable,
+                details={} if details is None else details,
                 request_id=request_id,
             )
         )

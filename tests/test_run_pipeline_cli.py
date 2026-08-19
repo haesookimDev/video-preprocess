@@ -165,6 +165,62 @@ def test_invalid_executor_concurrency_is_a_cli_input_error(
     assert "executor_max_concurrency" in capsys.readouterr().err
 
 
+def test_caption_tuning_is_reported_by_dry_run(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    ready_preflight(monkeypatch)
+    video = tmp_path / "video.mp4"
+    video.write_bytes(b"video")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_pipeline.py",
+            str(video),
+            "--stage",
+            "10_index",
+            "--dry-run",
+            "--caption-device",
+            "cpu",
+            "--caption-batch-size",
+            "2",
+        ],
+    )
+
+    assert run_pipeline.main() == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["local_inference"] == {
+        "caption_device": "cpu",
+        "caption_batch_size": 2,
+    }
+
+
+def test_invalid_caption_batch_size_is_a_cli_input_error(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    ready_preflight(monkeypatch)
+    video = tmp_path / "video.mp4"
+    video.write_bytes(b"video")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_pipeline.py",
+            str(video),
+            "--caption-batch-size",
+            "0",
+            "--dry-run",
+        ],
+    )
+
+    assert run_pipeline.main() == 2
+    assert "caption_batch_size" in capsys.readouterr().err
+
+
 def test_invalid_keyframe_maximum_is_a_cli_input_error(
     tmp_path: Path,
     monkeypatch,

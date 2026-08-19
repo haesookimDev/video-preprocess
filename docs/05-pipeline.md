@@ -15,7 +15,7 @@ flowchart TD
     subgraph VIDEO ["비주얼 경로"]
         S02["<b>02_scenes</b><br/>인접 프레임 색상 변화량(content_val)이<br/>임계값(27.0)을 넘는 지점을 씬 경계로 검출<br/><i>도구: PySceneDetect ContentDetector</i>"]
         S03["<b>03_keyframes</b><br/>씬 길이별 내부 균등 후보를 추출하고<br/>장면 내부 pHash 중복 제거<br/><i>도구: ffmpeg seek + Pillow DCT</i>"]
-        S08["<b>08_captions</b><br/>모든 키프레임을 VLM에 넣어<br/>프레임 캡션 + 씬별 그룹 생성<br/><i>모델: BLIP image-captioning-base</i>"]
+        S08["<b>08_captions</b><br/>키프레임을 capability 기반 ordered chunk로 처리해<br/>프레임 캡션 + 씬별 그룹 생성<br/><i>모델: BLIP image-captioning-base</i>"]
         S02 --> S03 --> S08
     end
 
@@ -66,7 +66,7 @@ flowchart TD
 | 05_vad | WAV ArtifactRef와 silence/padding option을 VAD Provider에 전달. 음성 구간만 추출해 Whisper 무음 환각 방지 | Local Silero VAD Provider (faster-whisper 내장 ONNX) | 0.1s (+ 첫 session load) |
 | 06_stt | 인접 VAD 구간 병합(gap ≤ 0.5s) 후 WAV ArtifactRef와 구간을 STT Provider에 전달. Provider가 원본 시간축으로 보정 | Local faster-whisper Provider `base`(기본)/`small` (CTranslate2 int8) | 5.6s / 13.9s |
 | 07_diarize | WAV ArtifactRef를 Diarization Provider에 전달. Provider가 화자 임베딩·클러스터링 후 발화 턴별 라벨 반환 | Local pyannote Provider `speaker-diarization-community-1` (HF 게이트) | 27.9s |
-| 08_captions | ordered keyframe ArtifactRef batch를 VLM Provider에 입력하고 flat frame caption과 씬별 group을 함께 생성 | Local BLIP Provider `image-captioning-base` | sample 6장 4.3s |
+| 08_captions | ordered keyframe ArtifactRef 집합을 Provider capability·설정 batch로 순차 처리하고 flat frame caption과 씬별 group을 함께 생성 | Local BLIP Provider `image-captioning-base`, auto device | sample 4장 CPU batch 4 inference 2.45s |
 | 09_timeline | `[start,end)` 씬에 전사·화자를 단일 배정하고 모든 visual caption을 보존. 기존 scalar caption은 ordered unique join | 규칙 기반 | 0.0s |
 | 10_index | 씬 카드 텍스트(캡션+전사)를 ① NFKC 정규화 단어·문자 2~3-gram FTS5 역색인 ② 정규화 벡터로 이중 저장 | 주입된 `embedding.default` Local/HTTP Provider, SQLite FTS5 | local 기준 0.2s |
 | 11_context | 포맷 규칙·메타데이터·씬 카드를 조립하고 설정 시 target tokenizer 실제 token budget에 맞춰 축약·제외 | 규칙 기반 + tokenizer | 0.0s (+ 첫 tokenizer load) |
@@ -92,6 +92,12 @@ flowchart TD
 `08_captions/captions.json`은 기존 `model`, flat `captions`와 실제 실행 정보를 나타내는
 `provider`, `revision`, `runtime`을 유지한다. `caption_policy`, `scene_count`와
 `scene_captions[{scene_id,caption_count,captions}]`를 추가해 같은 씬의 여러 frame caption을 잃지 않는다.
+`usage`는 실제 chunk 수·크기, 설정/provider 최대 batch와 device를, `timing`은 전체 시간과 chunk별
+model load·inference 시간을 기록한다. local `auto`는 CUDA→MPS→CPU 순서로 resolve하고 runtime에
+실제 device를 포함한다. Caption Service는 입력 순서와 하나의 deadline을 유지하며 중간 실패 시
+부분 aggregate를 publish하지 않는다. 실제 CPU sample 4장의 cold process 측정에서 batch 1
+`[1,1,1,1]`은 inference 3.141초, batch 4 `[4]`는 2.450초였다. 상세 결정은
+[`ADR-0032`](./adr/0032-caption-device-selection-and-ordered-chunking.md)를 따른다.
 
 `06_stt/transcript.json`은 기존 segment 구조를 유지하며 실제 `provider`, model `revision`,
 `runtime`, 감지 언어 확률인 `language_probability`를 추가로 기록한다.

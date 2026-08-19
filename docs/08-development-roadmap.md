@@ -1,6 +1,6 @@
 # 엔진·실행기 분리 개발 로드맵
 
-상태: **Phase 7 진행 중 — perceptual keyframe dedup 완료, 다음 caption tuning**
+상태: **Phase 7 진행 중 — caption device·batch tuning 완료, 다음 OCR provider**
 기준일: 2026-08-19
 대상 설계: [`06-target-architecture.md`](./06-target-architecture.md)  
 공개 계약: [`07-execution-inference-contracts.md`](./07-execution-inference-contracts.md)
@@ -392,7 +392,7 @@ static/API query context가 지정한 256 token 예산을 넘지 않음을 확�
 1. [x] Executor의 비주얼·오디오 분기 병렬 실행
 2. [x] 씬 길이에 따른 키프레임 1~3장 추출
 3. [x] perceptual hash 중복 제거
-4. [ ] caption device 자동 선택과 batch 크기 tuning
+4. [x] caption device 자동 선택과 batch 크기 tuning
 5. [ ] OCR provider
 6. [ ] 내장 자막·챕터 활용
 7. [ ] 오디오 이벤트 provider
@@ -420,11 +420,20 @@ Stage 03 version은 `1.3.0`이고 제거 frame은 deterministic ZIP과 caption b
 고정 fixture와 실제 sample 후보 6장→4장 E2E로 검증했으며 결정은
 [`ADR-0031`](./adr/0031-within-scene-perceptual-keyframe-deduplication.md)에 기록한다.
 
-다음 slice는 caption device 자동 선택과 batch tuning이다. 먼저 device 선택 우선순위와 fallback,
-provider `max_batch_size`보다 큰 ordered 입력의 chunking 위치, batch 실패/메모리 부족 처리,
-effective model/runtime 및 cache 의미를 계약화한다. fake provider로 chunk 경계·순서·실패를 고정한 뒤
-`LocalCaptionProvider`와 composition 설정을 구현하고 CPU/MPS 가능 환경에서 실제 sample latency와
-메모리를 비교한다.
+네 번째 slice도 완료했다. local 기본 `auto`는 CUDA→MPS→CPU 순서로 resolve하고 실제 device를
+effective runtime에 포함한다. Caption Service는 Provider capability와 기본 batch 4를 기준으로 긴
+ordered 입력을 순차 chunking하며 하나의 deadline, stable chunk idempotency, model metadata 일치와
+all-or-nothing aggregate를 적용한다. `captions.json`은 batch usage/timing을 보존하고 Stage 08은
+version `1.3.0`이다. fake Provider로 `[2,2,1]` 경계·순서와 두 번째 chunk OOM 중단을 검증했고,
+실제 CPU sample 4장은 batch 1의 inference 3.141초에서 batch 4의 2.450초로 약 22% 줄었다. 개발
+장비에서 MPS/CUDA는 unavailable이었다. 결정은
+[`ADR-0032`](./adr/0032-caption-device-selection-and-ordered-chunking.md)에 기록한다.
+
+다음 slice는 OCR Provider다. 먼저 OCR inference task의 입력 keyframe ArtifactRef, ordered text/box와
+confidence 출력, 언어·회전 option, capability/error 계약을 fake Provider로 고정한다. 이어 OCR 실행
+trigger와 새 Stage/DAG 위치, artifact schema, timeline/index/context 병합 및 cache version을 ADR로
+결정한 뒤 local Provider와 sample fixture를 구현한다. Stage가 OCR 엔진이나 배포 위치를 선택하지 않고
+기존 caption·timeline 소비자가 additive 필드 없이도 계속 동작하는 것을 exit 기준으로 삼는다.
 
 ## 12. 테스트 전략
 

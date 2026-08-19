@@ -46,6 +46,7 @@ flowchart LR
 - 실제 target tokenizer 기반 static/query context 예산·인접 scene·제외 통계
 - 씬 길이 기반 adaptive keyframe과 장면 내부 pHash 중복 제거
 - 씬별 다중 caption과 호환 timeline 요약
+- local caption의 CUDA→MPS→CPU 자동 선택과 capability 기반 ordered batch 처리
 - 기존 JSON·Markdown·SQLite 출력 구조와 공통 QueryService 기반 query CLI
 
 아직 구현되지 않은 범위:
@@ -172,6 +173,8 @@ curl -sS -X DELETE \
 | `--max-request-bytes N` | JSON request body 상한. 기본값 1 MiB |
 | `--retain-terminal-runs N` | 유지할 최신 terminal API 상태 수. 기본값 1000 |
 | `--executor-max-concurrency N` | run 내부에서 동시에 실행할 local Stage 수. 기본값 1 |
+| `--caption-device DEVICE` | local caption 장치. 기본값 `auto`(CUDA→MPS→CPU) |
+| `--caption-batch-size N` | local caption ordered chunk 크기. 기본값 4 |
 | `--auth-token-env NAME` | Bearer token 값을 읽을 환경변수 이름 |
 | `--context-tokenizer-model MODEL` | query context를 계산할 server-side target tokenizer |
 
@@ -206,6 +209,12 @@ bind할 때는 Bearer 인증과 reverse proxy/service mesh의 TLS 종료를 사�
 # 씬 길이에 따라 최대 3개 후보를 추출하고 장면 내부 pHash 중복 제거
 .venv/bin/python src/run_pipeline.py samples/sample.mp4 \
   --keyframes-per-scene 3
+
+# local caption 장치와 ordered chunk 크기 조정
+.venv/bin/python src/run_pipeline.py samples/sample.mp4 \
+  --caption-device auto \
+  --caption-batch-size 4 \
+  --force-stage 08_captions
 ```
 
 | 옵션 | 의미 |
@@ -222,6 +231,8 @@ bind할 때는 Bearer 인증과 reverse proxy/service mesh의 TLS 종료를 사�
 | `--max-stage-attempts N` | 일시적 실패의 Stage별 최대 시도 수. 기본값은 1 |
 | `--retry-backoff-sec N` | 첫 재시도 전 대기 시간. 기본값은 0초 |
 | `--executor-max-concurrency N` | 동시에 실행할 local Stage 상한. 기본값은 1 |
+| `--caption-device DEVICE` | local caption 장치. `auto`는 CUDA→MPS→CPU 순서, 기본값은 `auto` |
+| `--caption-batch-size N` | Provider 최대값 이하로 나눌 ordered chunk 크기. 기본값은 4 |
 | `--embedding-endpoint URL` | `embedding.default`를 HTTP Inference v1 endpoint에 연결 |
 | `--embedding-token-env NAME` | bearer token 값을 읽을 환경변수 이름 |
 | `--embedding-artifact-namespace NAME` | endpoint가 읽을 수 있는 Artifact namespace. 반복 가능 |
@@ -306,7 +317,7 @@ timeout은 attempt의 cooperative cancellation을 요청하고 Stage가 안전�
 | `05_vad` | Silero VAD 음성 구간 검출 | `vad_segments.json` |
 | `06_stt` | VAD 구간만 faster-whisper 전사 | `transcript.json` |
 | `07_diarize` | pyannote 화자 분리 | `diarization.json` |
-| `08_captions` | BLIP 키프레임 캡셔닝과 씬별 그룹화 | `captions.json` |
+| `08_captions` | BLIP 키프레임 ordered chunk 캡셔닝과 씬별 그룹화 | `captions.json` |
 | `09_timeline` | 씬·전사·화자·다중 시각 캡션을 공통 시간축으로 병합 | `timeline.json`, `timeline.md` |
 | `10_index` | SQLite FTS5 + embedding 검색 인덱스 | `index.db`, `index_summary.json` |
 | `11_context` | LLM 입력 컨텍스트 최종본 조립 | `context.md`, `context.json` |
@@ -315,12 +326,17 @@ timeout은 attempt의 cooperative cancellation을 요청하고 Stage가 안전�
 
 `keyframes.json`은 `duration-adaptive-v1` 선택 정책과 `phash-64-dct-v1` 중복 제거 정책,
 각 frame의 `keyframe_index`, `keyframe_count`, `perceptual_hash`, 제거 통계·근거를 기록한다.
-`captions.json`은 기존 flat `captions`에 더해 씬별
-`scene_captions`를 제공한다. timeline scene card의 기존 `keyframe`·`caption`은 대표 경로와
+`captions.json`은 기존 flat `captions`에 더해 씬별 `scene_captions`, aggregate `usage`와 `timing`을
+제공한다. local `auto`는 CUDA→MPS→CPU 순서로 장치를 선택하고 실제 장치를 runtime과 Engine cache
+fingerprint에 기록한다. Caption Service는 Provider 최대 batch와 설정값 중 작은 크기로 입력 순서를
+보존해 나누며 한 chunk라도 실패하면 부분 aggregate를 publish하지 않는다. batch 크기는 결과 의미가
+아닌 배포 tuning 값이므로 benchmark에는 `--force-stage 08_captions`를 함께 사용한다. timeline scene
+card의 기존 `keyframe`·`caption`은 대표 경로와
 중복 제거된 ordered summary로 유지하고, 전체 정보는 additive `keyframes`·`visual_captions`에
 보존한다. 정확한 버전·호환 계약은
 [ADR-0030](docs/adr/0030-duration-adaptive-keyframes-and-scene-caption-summary.md)과
-[ADR-0031](docs/adr/0031-within-scene-perceptual-keyframe-deduplication.md)에 있다.
+[ADR-0031](docs/adr/0031-within-scene-perceptual-keyframe-deduplication.md),
+[ADR-0032](docs/adr/0032-caption-device-selection-and-ordered-chunking.md)에 있다.
 
 ## Cache와 재개
 
@@ -480,7 +496,6 @@ ffmpeg -v error \
 
 ## 아직 없는 것 (다음 단계 후보)
 
-- caption device 자동 선택과 provider batch tuning
 - OCR·내장 자막·챕터 활용
 - 오디오 이벤트 태깅 (박수·음악 등)
 - 한국어 캡셔닝 VLM 교체 (현재 BLIP은 영어 캡션)

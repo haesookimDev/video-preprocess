@@ -125,7 +125,9 @@ scalar summary를 함께 제공해 단계적으로 migration한다.
 - 시간 기반 선택만으로는 화면 내용 중복을 제거하지 않는다. 후속
   [`ADR-0031`](./0031-within-scene-perceptual-keyframe-deduplication.md)이 scene 내부 perceptual
   hash 중복 제거를 추가한다.
-- 현재 caption Stage는 전체 이미지 배열을 한 batch로 요청한다. Provider batch tuning은 후속 항목이다.
+- 이 결정 당시 caption Stage는 전체 이미지 배열을 한 batch로 요청했다. 후속
+  [`ADR-0032`](./0032-caption-device-selection-and-ordered-chunking.md)가 ordered 논리 집합은 유지하면서
+  Provider capability 기반 chunking과 device/batch tuning을 추가했다.
 
 ## 구현 위치
 

@@ -293,6 +293,28 @@ def test_local_runtime_rejects_invalid_executor_concurrency(
         )
 
 
+@pytest.mark.parametrize("batch_size", [True, 0, -1, 1.5])
+def test_local_runtime_rejects_invalid_caption_batch_size(batch_size) -> None:
+    with pytest.raises(ValueError, match="caption_batch_size"):
+        LocalPipelineRuntimeFactory(caption_batch_size=batch_size)
+
+
+@pytest.mark.parametrize("device", ["", "   ", None, 1])
+def test_local_runtime_rejects_invalid_caption_device(device) -> None:
+    with pytest.raises(ValueError, match="caption_device"):
+        LocalPipelineRuntimeFactory(caption_device=device)
+
+
+def test_local_runtime_keeps_caption_tuning_in_composition() -> None:
+    factory = LocalPipelineRuntimeFactory(
+        caption_device="MPS",
+        caption_batch_size=2,
+    )
+
+    assert factory.caption_device == "mps"
+    assert factory.caption_batch_size == 2
+
+
 def test_local_runtime_requires_manifest_for_partial_execution(
     tmp_path: Path,
 ) -> None:

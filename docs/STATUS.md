@@ -1,8 +1,8 @@
 # 개발 상태와 세션 인수인계
 
 - 마지막 갱신: **2026-08-19**
-- 현재 단계: **Phase 7 진행 중 — perceptual keyframe dedup 완료**
-- 다음 작업: **caption device 자동 선택과 provider batch tuning**
+- 현재 단계: **Phase 7 진행 중 — caption device·batch tuning 완료**
+- 다음 작업: **OCR Provider 계약과 pipeline 통합 설계**
 
 이 문서는 개발 진행 상황의 단일 진입점이다. 새로운 세션은 이 문서를 먼저 읽고, 실제 코드와
 Git 상태를 확인한 뒤 작업을 시작한다.
@@ -37,6 +37,7 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - 기본 1·설정 가능 bounded LocalExecutor와 legacy Stage 실제 병렬 실행 구현 완료
 - 씬 길이 기반 adaptive keyframe과 장면 내부 pHash 중복 제거 구현 완료
 - 씬별 다중 caption과 호환 timeline 요약 구현 완료
+- local caption CUDA→MPS→CPU 자동 선택과 capability 기반 ordered chunking 구현 완료
 - queue consumer, direct upload와 RemoteExecutor는 아직 미구현
 - Local Store가 input copy, 단계 산출물과 run/stage manifest를 관리
 
@@ -115,6 +116,8 @@ Git 상태를 확인한 뒤 작업을 시작한다.
   [`ADR-0030`](./adr/0030-duration-adaptive-keyframes-and-scene-caption-summary.md)
 - 장면 내부 perceptual keyframe 중복 제거 결정:
   [`ADR-0031`](./adr/0031-within-scene-perceptual-keyframe-deduplication.md)
+- caption 장치 선택·ordered chunking 결정:
+  [`ADR-0032`](./adr/0032-caption-device-selection-and-ordered-chunking.md)
 
 ## 3. 완료된 작업
 
@@ -166,6 +169,7 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - [x] dependency-ready Engine·bounded LocalExecutor와 branch fail/cancel 전파
 - [x] duration-adaptive keyframe·다중 caption·timeline 호환 summary
 - [x] 장면 내부 perceptual hash keyframe 중복 제거
+- [x] caption device 자동 선택과 capability 기반 ordered batch tuning
 
 ## 4. 아직 구현되지 않은 작업
 
@@ -199,6 +203,8 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - [x] visual/audio·index/context 분기 병렬 실행
 - [x] 씬 길이 기반 adaptive keyframe 1~3장과 다중 caption
 - [x] perceptual hash keyframe 중복 제거
+- [x] caption device 자동 선택과 provider batch tuning
+- [ ] OCR Provider와 pipeline/timeline 통합
 
 문서가 존재한다고 구현된 것으로 간주하지 않는다. 완료 여부는 코드와 자동 테스트를 기준으로
 이 체크리스트에서 갱신한다.
@@ -293,18 +299,24 @@ scene의 시간순 후보를 보존 후보 전체와 비교한다. 첫 후보를
 deterministic ZIP과 caption batch에 포함되지 않는다. Stage 03 version은 `1.3.0`이고 08/09는 기존
 가변 입력 계약 `1.2.0`을 유지한다.
 
-다음 slice는 caption device 자동 선택과 provider batch tuning이다. `LocalCaptionProvider`의 현재
-`device=None`, `max_batch_size=16` 계약과 Stage 08의 전체 배열 단일 요청을 기준으로 device 우선순위,
-fallback, provider limit보다 큰 ordered 입력의 chunking 소유권, OOM/부분 실패, metrics와 cache 의미를
-먼저 고정한다. fake provider로 chunk 경계·순서·실패를 검증한 뒤 local composition 설정과 실제
-CPU/MPS sample 성능을 비교한다.
+Phase 7 네 번째 slice는 local caption 기본값을 `device=auto`, batch 4로 바꾸고 장치를
+CUDA→MPS→CPU 순서로 선택한다. resolved device는 effective runtime과 Engine cache fingerprint에
+포함된다. Caption Service는 Provider capability와 설정 batch 중 작은 크기로 ordered 입력을 순차
+chunking하며 capability 조회와 모든 chunk에 하나의 deadline을 적용한다. chunk별 deterministic
+idempotency, model metadata 일치와 all-or-nothing aggregate를 적용하고 OOM은 stable reason
+`DEVICE_OUT_OF_MEMORY`를 남긴다. Stage 08 version은 `1.3.0`이며 `captions.json`에 aggregate
+usage/timing을 기록한다.
+
+다음 slice는 OCR Provider다. 먼저 image ArtifactRef 입력, ordered text/box/confidence 출력,
+언어·회전 option, capability/error와 effective model 계약을 fake Provider로 고정한다. 그 뒤 OCR trigger,
+Stage/DAG 위치, artifact schema와 timeline/index/context additive 병합을 ADR로 결정하고 local Provider,
+fixture와 실제 sample을 구현한다.
 
 ## 6. 알려진 중요 문제
 
 | 우선순위 | 문제 | 영향 |
 |---|---|---|
 | P1 | 별도 query CLI 프로세스는 embedding 모델을 매번 로드 | 프로세스 간 cold query 지연 |
-| P1 | caption 전체 배열이 provider 최대 16장을 넘으면 요청 거부 | 긴 영상의 다중 frame caption 실패 |
 | P1 | cached Hugging Face 모델도 metadata HEAD 요청 | offline 환경에서 모델 로드 실패 가능 |
 | P2 | macOS에서 OpenCV·PyAV FFmpeg dylib 중복 경고 | 환경에 따라 충돌 또는 불안정 가능 |
 
@@ -401,6 +413,29 @@ CPU/MPS sample 성능을 비교한다.
 
 최신 기록을 위에 추가한다. 긴 구현 설명은 PR이나 ADR에 두고 여기에는 다음 세션이 재개하는 데
 필요한 정보만 적는다.
+
+### 2026-08-19 — Phase 7 caption device·ordered batch tuning
+
+- 목표: Stage의 배포 독립성을 유지하면서 local caption 장치 선택을 재현 가능하게 만들고 Provider
+  최대 batch보다 긴 입력을 순서·실패 경계가 명확한 방식으로 처리
+- 완료: local 기본 `auto`의 CUDA→MPS→CPU 선택, resolved device runtime/cache fingerprint,
+  composition/CLI/server의 `--caption-device`·`--caption-batch-size`, capability 기반 sequential
+  chunking, 하나의 total deadline, chunk idempotency, model metadata 일치, all-or-nothing aggregate,
+  OOM stable details, captions usage/timing과 Stage 08 version `1.3.0`, ADR-0032
+- 계약 검증: fake local Provider에서 설정 2/provider 최대 3/입력 5의 `[2,2,1]` 경계·순서·model 1회
+  load와 두 번째 chunk OOM 즉시 중단, auto CUDA/MPS/CPU 우선순위, model load 없는 device-aware
+  effective runtime, CLI/server composition과 Stage 산출물/metric 회귀
+- 실제 검증: pHash 후 4장에 offline CPU batch 1 `[1,1,1,1]` inference 3.141초, batch 4 `[4]`
+  2.450초로 약 22% 감소; `auto`가 CPU로 resolve되어 동일 caption 확인. 전체 11단계 `ok`, query
+  `음성 구간 검출 --topk 2` 성공
+- 회귀: targeted 66 passed; default 401 passed/16 deselected; `git diff --check` 성공
+- 호환성: flat/scene caption과 입력 순서 유지. usage/timing은 additive. batch 크기는 운영 tuning이라
+  Stage cache key에서 제외하고 benchmark에는 force를 사용하며, resolved device는 effective runtime으로
+  cache를 분리. version 상승으로 기존 08 cache를 한 번 무효화
+- 관찰: 개발 장비 torch probe에서 CUDA/MPS 모두 unavailable이라 실제 MPS benchmark는 수행하지 못함.
+  macOS OpenCV/PyAV FFmpeg dylib warning은 기존과 같고 실패로 이어지지 않음
+- 다음 작업: OCR InferenceTask/ArtifactRef/box·confidence schema와 trigger/DAG/timeline 병합 책임을
+  fake contract와 ADR로 먼저 고정한 뒤 local Provider slice 구현
 
 ### 2026-08-19 — Phase 7 perceptual keyframe dedup
 

@@ -93,7 +93,7 @@ def test_caption_stage_keeps_legacy_output_with_provider_metadata(
             encoding="utf-8"
         )
     )
-    assert result == {"caption_count": 2}
+    assert result == {"caption_count": 2, "caption_batch_count": 1}
     assert len(service.images) == 2
     assert all(
         image.uri.startswith("artifact://sample/")
@@ -107,6 +107,8 @@ def test_caption_stage_keeps_legacy_output_with_provider_metadata(
     assert output["provider"] == "fake.caption"
     assert output["revision"] == "rev-1"
     assert output["runtime"] == "fake/1.0"
+    assert output["usage"] == {"input_count": 2}
+    assert output["timing"] == {"inference_sec": 0.01}
 
 
 def test_caption_stage_groups_multiple_keyframes_per_scene(
@@ -164,7 +166,7 @@ def test_caption_stage_groups_multiple_keyframes_per_scene(
     output = context.load_json(
         context.out_root / "08_captions" / "captions.json"
     )
-    assert result == {"caption_count": 3}
+    assert result == {"caption_count": 3, "caption_batch_count": 1}
     assert [image.artifact_id for image in service.images] == [
         "keyframe_scene_001_01",
         "keyframe_scene_001_02",

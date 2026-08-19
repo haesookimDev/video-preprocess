@@ -71,6 +71,17 @@ def main() -> int:
         default=1,
         help="동시에 실행할 local Stage 수 (기본: 1)",
     )
+    parser.add_argument(
+        "--caption-device",
+        default="auto",
+        help="local caption device: auto, cpu, cuda, mps 등 (기본: auto)",
+    )
+    parser.add_argument(
+        "--caption-batch-size",
+        type=int,
+        default=4,
+        help="local caption ordered chunk 크기 (기본: 4)",
+    )
     parser.add_argument("--embedding-endpoint", default=None,
                         help="embedding.default HTTP Inference v1 endpoint")
     parser.add_argument("--embedding-token-env", default=None,
@@ -152,6 +163,8 @@ def main() -> int:
             LocalPipelineRuntimeFactory(
                 project_root=project_root,
                 executor_max_concurrency=args.executor_max_concurrency,
+                caption_device=args.caption_device,
+                caption_batch_size=args.caption_batch_size,
             ),
         )
         plan = service.plan(request)
@@ -177,6 +190,10 @@ def main() -> int:
                     "inference_deployments": (
                         request.deployments.public_dict()
                     ),
+                    "local_inference": {
+                        "caption_device": args.caption_device,
+                        "caption_batch_size": args.caption_batch_size,
+                    },
                     "cache_decisions": [
                         _preview_stage_payload(record)
                         for record in preview.stages

@@ -51,7 +51,7 @@ def test_default_registry_has_stable_eleven_stage_plan() -> None:
         "keyframes",
         "keyframe_images",
     )
-    assert registry.get("08_captions").stage_version == "1.2.0"
+    assert registry.get("08_captions").stage_version == "1.3.0"
     assert registry.get("09_timeline").stage_version == "1.2.0"
 
 

@@ -61,6 +61,19 @@ index/count와 single/multi filename을 다시 부여하며, 후보·보존·제
   후속 분석에 필요한 요소를 고정 스키마로 뽑도록 지시
 - **씬 캡션 통합**: 같은 씬의 프레임 캡션들을 병합해 씬당 1개의 요약 캡션 생성
 
+### 현재 구현: device-aware ordered caption batch
+
+08단계는 Stage에서 local 장치나 Provider 제한을 선택하지 않고 모든 keyframe ArtifactRef를 하나의
+ordered 논리 집합으로 Caption Service에 전달한다. Service는 Provider capability와 설정 batch 크기
+중 작은 값으로 순차 chunking하고, 응답 순서를 유지해 flat caption과 scene group을 만든다. 모든
+chunk는 하나의 deadline을 공유하며 중간 실패 시 부분 결과를 publish하지 않는다.
+
+local 기본값은 batch 4와 `auto` 장치다. `auto`는 CUDA→MPS→CPU 순서로 선택하며 resolved device를
+model runtime과 Engine cache fingerprint에 기록한다. 명시 장치의 실패나 memory 부족에는 자동 CPU
+fallback을 하지 않으므로 더 작은 `--caption-batch-size` 또는 `--caption-device cpu`로 운영자가
+조정한다. 실행 batch/device와 chunk별 timing은 `captions.json`에 보존한다. 상세 계약은
+[`ADR-0032`](./adr/0032-caption-device-selection-and-ordered-chunking.md)를 따른다.
+
 ## 4. 선택적 심화 분석 (Lazy / 2-Pass)
 
 비싼 연산은 전 구간이 아니라 **필요한 씬에만** 적용한다.

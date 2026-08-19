@@ -453,7 +453,7 @@ def _model_definitions(
         ),
         LegacyStageDefinition(
             name="08_captions",
-            stage_version="1.2.0",
+            stage_version="1.3.0",
             module=modules["08_captions"],
             inputs=(keyframes, keyframe_images),
             config_fields=("caption_model",),

@@ -23,6 +23,10 @@ HTTP Provider가 같은 요청을 사용하려면 artifact 배열을 표현하�
 - `outputs.captions`는 입력 이미지와 같은 개수·순서의 비어 있지 않은 문자열 배열이다.
 - Gateway는 중첩 artifact에도 개별 크기 제한을 적용하고 `images` 배열을 batch 크기로 해석한다.
 
+후속 [`ADR-0032`](./0032-caption-device-selection-and-ordered-chunking.md)는 이 요청 하나의
+capability 제한을 유지하면서, 더 긴 ordered 논리 입력을 Caption Service가 여러 wire request로
+나누고 all-or-nothing aggregate로 결합하도록 확장한다.
+
 ### 로컬 Provider
 
 - `LocalCaptionProvider`는 `ArtifactStore`를 주입받아 각 입력의 존재 여부, 크기와 SHA-256을
@@ -78,6 +82,8 @@ HTTP Provider가 같은 요청을 사용하려면 artifact 배열을 표현하�
   provider를 composition root에서 재사용해야 한다.
 - `asyncio.to_thread`로 시작된 로컬 모델 호출은 timeout 후 강제 중단할 수 없어 cancellation을
   지원하지 않는다.
+- 장치 자동 선택과 Provider 최대값을 넘는 ordered 입력은 후속
+  [`ADR-0032`](./0032-caption-device-selection-and-ordered-chunking.md)에서 구현했다.
 
 ## 구현 위치
 

@@ -377,8 +377,15 @@ code로 반환한다.
 `keyframe_index`, `keyframe_count`를 추가한다. `scene_captions`는 처음 나타난 scene 순서로
 `{scene_id, caption_count, captions}`를 제공하고 top-level `caption_policy`는
 `per-keyframe-scene-group-v1`이다. 다중 frame ArtifactRef ID는 `keyframe_scene_NNN_II`, 단일 frame은
-기존 `keyframe_scene_NNN`이다. 전체 frame 배열을 기존 caption inference batch 한 번으로 전달하며
-응답 순서는 입력 순서와 같아야 한다.
+기존 `keyframe_scene_NNN`이다.
+
+현재 08 version `1.3.0`은 Stage가 전체 frame을 하나의 ordered 논리 집합으로 Caption Service에
+전달하는 의미를 유지하되 Service가 Provider capability와 배포 batch 설정에 맞춰 순차 chunking한다.
+Stage는 장치, chunk 크기나 배포 위치를 알지 못한다. 모든 chunk가 성공하고 effective model이
+동일할 때만 순서를 보존한 aggregate를 반환하며 실패한 호출의 부분 caption은 Stage 산출물로
+publish하지 않는다. `captions.json`은 aggregate `usage`와 `timing`을 추가하고
+`caption_batch_count` metric을 기록한다. resolved local device는 runtime에 포함되며 상세 결정은
+[`ADR-0032`](./adr/0032-caption-device-selection-and-ordered-chunking.md)에 기록한다.
 
 09~11은 다음 companion output을 marker와 함께 등록한다.
 
@@ -691,7 +698,25 @@ Gateway는 response의 model 정보를 StageResult와 manifest로 전달한다.
 - 지원 media type: `image/jpeg`, `image/png`, `image/webp`
 - `max_new_tokens`: 1~512 정수
 - `outputs.captions`: 입력과 같은 개수·순서의 비어 있지 않은 문자열 배열
-- `usage.input_count`, `usage.batch_size`, effective provider·revision·runtime 기록
+- wire 요청 하나의 이미지 수는 Provider capability의 `max_batch_size` 이하여야 함
+- Caption Service는 전체 ordered 입력을
+  `min(configured_batch_size, provider.max_batch_size)` 크기의 순차 요청으로 나누며 capability 조회와
+  모든 요청은 하나의 total deadline을 공유
+- 각 chunk는 입력 artifact 집합 기반 deterministic idempotency key를 사용하고 중간 실패 시
+  aggregate 응답을 반환하지 않음
+- 성공 aggregate의 `usage`: `input_count`, 가장 큰 실제 `batch_size`, `batch_count`,
+  `batch_sizes`, `configured_batch_size`, `provider_max_batch_size`, 가능한 경우 `device`
+- 성공 aggregate의 `timing`: service `total_sec`, chunk 합계 `model_load_sec`·`inference_sec`,
+  chunk별 `batches`
+- 모든 chunk의 effective provider·model·revision·runtime은 같아야 함
+
+LocalCaptionProvider의 기본 장치는 `auto`, 기본 batch 크기는 4다. `auto`는 torch 가용성에 따라
+`CUDA → MPS → CPU` 순서로 한 번 선택한다. 명시한 장치의 load·연산 실패나 memory 부족에는 CPU
+fallback을 하지 않는다. resolved device는
+`transformers/<version>;device=<device>` runtime에 포함되어 Engine cache fingerprint를 분리한다.
+memory 부족은 `INFERENCE_FAILED`와 details의 stable reason `DEVICE_OUT_OF_MEMORY`로 보고한다.
+배포 옵션, cache 의미와 실패 원칙은
+[`ADR-0032`](./adr/0032-caption-device-selection-and-ordered-chunking.md)를 따른다.
 
 ## 7. Provider 계약
 

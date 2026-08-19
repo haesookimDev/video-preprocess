@@ -253,9 +253,11 @@ models:
     timeout_sec: 900
 
   caption:
-    provider: http
-    endpoint: http://caption-service:8080
-    model: caption-ko-v1
+    provider: local
+    model: Salesforce/blip-image-captioning-base
+    options:
+      device: auto
+      batch_size: 4
 
   embedding:
     provider: local
@@ -286,6 +288,13 @@ ArtifactRef batch로 전달한다. 중첩 ArtifactRef 계약과 로컬 provider 
 선택하지 않는다. 08은 ordered inference 결과를 씬별로 그룹화하고 09가 호환 scalar summary와 전체
 visual 배열을 만든다. 이 Stage 간 의미와 version은
 [`ADR-0030`](./adr/0030-duration-adaptive-keyframes-and-scene-caption-summary.md)에 기록한다.
+
+local caption의 device와 batch 크기는 pipeline 알고리즘 설정이 아니라 composition root가 소유하는
+배포 설정이다. Provider가 `auto`의 `CUDA → MPS → CPU` 선택과 한 chunk의 모델 실행을 맡고,
+Caption Service가 Provider capability를 기준으로 전체 ordered 입력을 순차 chunking·집계한다. Stage는
+장치나 Provider 최대 batch를 보지 않는다. resolved device만 effective runtime을 통해 Engine cache에
+반영하고 batch 크기는 관측 가능한 운영 tuning으로 남긴다. 책임과 실패 경계는
+[`ADR-0032`](./adr/0032-caption-device-selection-and-ordered-chunking.md)에 기록한다.
 
 `stt.default`는 `LocalSTTProvider`에 연결되어 있다. `s06_stt`는 16kHz WAV ArtifactRef와
 병합된 VAD chunk를 전달하며 faster-whisper model lifecycle과 audio decode는 Provider가 맡는다.

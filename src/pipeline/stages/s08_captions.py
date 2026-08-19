@@ -126,7 +126,7 @@ def run(ctx: PipelineContext) -> dict:
                 "scene_captions": [],
             },
         )
-        return {"caption_count": 0}
+        return {"caption_count": 0, "caption_batch_count": 0}
 
     log.info(
         "캡션 provider 호출: caption.default → %s (%d장)",
@@ -155,10 +155,13 @@ def run(ctx: PipelineContext) -> dict:
 
     elapsed = time.monotonic() - t_start
     log.info(
-        "캡션 %d개 생성 완료 (%.1fs, 장당 평균 %.1fs)",
+        "캡션 %d개 생성 완료 (%.1fs, 장당 평균 %.1fs, "
+        "batch=%s, device=%s)",
         len(captions),
         elapsed,
         elapsed / len(captions),
+        batch.usage.get("batch_sizes", [len(captions)]),
+        batch.usage.get("device", "provider_default"),
     )
     log.debug(
         "실제 캡션 모델: provider=%s model=%s revision=%s runtime=%s",
@@ -173,9 +176,14 @@ def run(ctx: PipelineContext) -> dict:
         "provider": batch.model.provider,
         "revision": batch.model.revision,
         "runtime": batch.model.runtime,
+        "usage": batch.usage,
+        "timing": batch.timing,
         "caption_policy": CAPTION_POLICY,
         "scene_count": len({caption["scene_id"] for caption in captions}),
         "captions": captions,
         "scene_captions": _scene_caption_groups(captions),
     })
-    return {"caption_count": len(captions)}
+    return {
+        "caption_count": len(captions),
+        "caption_batch_count": batch.usage.get("batch_count", 1),
+    }

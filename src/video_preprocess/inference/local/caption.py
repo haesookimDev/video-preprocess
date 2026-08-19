@@ -68,6 +68,33 @@ ModelLoader = Callable[
     tuple[CaptionProcessor, CaptionModel],
 ]
 ImageLoader = Callable[[BinaryIO], object]
+DeviceResolver = Callable[[str | None], str | None]
+
+DEFAULT_CAPTION_DEVICE = "auto"
+DEFAULT_CAPTION_BATCH_SIZE = 4
+
+
+def _select_auto_device(torch_runtime: object) -> str:
+    """Select the fastest available torch backend in stable priority order."""
+
+    cuda = getattr(torch_runtime, "cuda", None)
+    cuda_available = getattr(cuda, "is_available", None)
+    if callable(cuda_available) and cuda_available():
+        return "cuda"
+    backends = getattr(torch_runtime, "backends", None)
+    mps = getattr(backends, "mps", None)
+    mps_available = getattr(mps, "is_available", None)
+    if callable(mps_available) and mps_available():
+        return "mps"
+    return "cpu"
+
+
+def _default_device_resolver(device: str | None) -> str | None:
+    if device != "auto":
+        return device
+    import torch
+
+    return _select_auto_device(torch)
 
 
 def _default_loader(
@@ -95,12 +122,13 @@ def _default_image_loader(stream: BinaryIO) -> object:
         return image.convert("RGB")
 
 
-def _runtime_name() -> str:
+def _runtime_name(device: str | None) -> str:
     try:
         package_version = version("transformers")
     except PackageNotFoundError:
         package_version = "unknown"
-    return f"transformers/{package_version}"
+    device_name = "model_default" if device is None else device
+    return f"transformers/{package_version};device={device_name}"
 
 
 class LocalCaptionProvider:
@@ -116,11 +144,12 @@ class LocalCaptionProvider:
         model_name: str,
         artifact_store: ArtifactStore,
         revision: str | None = None,
-        device: str | None = None,
-        max_batch_size: int = 16,
+        device: str | None = DEFAULT_CAPTION_DEVICE,
+        max_batch_size: int = DEFAULT_CAPTION_BATCH_SIZE,
         max_artifact_bytes: int = 25 * 1024 * 1024,
         loader: ModelLoader = _default_loader,
         image_loader: ImageLoader = _default_image_loader,
+        device_resolver: DeviceResolver = _default_device_resolver,
     ) -> None:
         if (
             not isinstance(alias, str)
@@ -155,11 +184,23 @@ class LocalCaptionProvider:
         self.revision = revision
         self.requested_revision = revision or "default"
         self.effective_revision = self.requested_revision
-        self.device = device
+        normalized_device = None if device is None else device.strip()
+        self.device = (
+            "auto"
+            if normalized_device is not None
+            and normalized_device.lower() == "auto"
+            else normalized_device
+        )
         self.max_batch_size = max_batch_size
         self.max_artifact_bytes = max_artifact_bytes
         self._loader = loader
         self._image_loader = image_loader
+        if not callable(device_resolver):
+            raise TypeError("device_resolver must be callable")
+        self._device_resolver = device_resolver
+        self._resolved_device: str | None = None
+        self._device_is_resolved = False
+        self._device_lock = threading.Lock()
         self._processor: CaptionProcessor | None = None
         self._model: CaptionModel | None = None
         self._model_lock = threading.Lock()
@@ -177,7 +218,11 @@ class LocalCaptionProvider:
             tasks=[InferenceTask.IMAGE_CAPTIONING],
             model_aliases=[self.alias],
             input_media_types=self.INPUT_MEDIA_TYPES,
-            features=["artifact_batch", "ordered_captions"],
+            features=[
+                "artifact_batch",
+                "ordered_captions",
+                "automatic_device_selection",
+            ],
             max_batch_size=self.max_batch_size,
             max_artifact_bytes=self.max_artifact_bytes,
             supports_cancellation=False,
@@ -194,7 +239,15 @@ class LocalCaptionProvider:
         return ProviderHealth(
             provider=self.PROVIDER_NAME,
             status=HealthState.AVAILABLE,
-            details={"model_loaded": self.is_loaded},
+            details={
+                "model_loaded": self.is_loaded,
+                "requested_device": self.device or "model_default",
+                "resolved_device": (
+                    self._device_name(self._resolved_device)
+                    if self._device_is_resolved
+                    else None
+                ),
+            },
         )
 
     async def effective_model(self) -> EffectiveModel | None:
@@ -210,11 +263,12 @@ class LocalCaptionProvider:
         )
         if revision is None:
             return None
+        resolved_device = await asyncio.to_thread(self._get_device)
         return EffectiveModel(
             provider=self.PROVIDER_NAME,
             name=self.model_name,
             revision=revision,
-            runtime=_runtime_name(),
+            runtime=_runtime_name(resolved_device),
         )
 
     async def warmup(self) -> None:
@@ -271,14 +325,18 @@ class LocalCaptionProvider:
 
             inference_start = time.monotonic()
             try:
+                resolved_device = self._get_device()
                 max_new_tokens = request.parameters.get("max_new_tokens", 40)
                 model_inputs = processor(
                     images=loaded_images,
                     return_tensors="pt",
                     padding=True,
                 )
-                if self.device is not None and hasattr(model_inputs, "to"):
-                    model_inputs = model_inputs.to(self.device)
+                if (
+                    resolved_device is not None
+                    and hasattr(model_inputs, "to")
+                ):
+                    model_inputs = model_inputs.to(resolved_device)
                 if not isinstance(model_inputs, Mapping):
                     raise TypeError("processor output must be a mapping")
                 output_ids = model.generate(
@@ -298,7 +356,7 @@ class LocalCaptionProvider:
                     request,
                     InferenceErrorCode.INFERENCE_FAILED,
                     "caption model execution failed",
-                    details={"error_type": type(exc).__name__},
+                    details=self._execution_error_details(exc),
                 )
             inference_elapsed = time.monotonic() - inference_start
             response = InferenceResponse(
@@ -309,11 +367,12 @@ class LocalCaptionProvider:
                     provider=self.PROVIDER_NAME,
                     name=self.model_name,
                     revision=self.effective_revision,
-                    runtime=_runtime_name(),
+                    runtime=_runtime_name(resolved_device),
                 ),
                 usage={
                     "input_count": len(images),
                     "batch_size": len(images),
+                    "device": self._device_name(resolved_device),
                 },
                 timing={
                     "model_load_sec": round(load_elapsed, 6),
@@ -374,10 +433,11 @@ class LocalCaptionProvider:
             if self._processor is not None and self._model is not None:
                 return self._processor, self._model, 0.0
             started = time.monotonic()
+            resolved_device = self._get_device()
             processor, model = self._loader(
                 self.model_name,
                 self.revision,
-                self.device,
+                resolved_device,
             )
             self._processor = processor
             self._model = model
@@ -388,6 +448,45 @@ class LocalCaptionProvider:
             )
             self._load_error = None
             return processor, model, time.monotonic() - started
+
+    def _get_device(self) -> str | None:
+        if self._device_is_resolved:
+            return self._resolved_device
+        with self._device_lock:
+            if self._device_is_resolved:
+                return self._resolved_device
+            resolved = self._device_resolver(self.device)
+            if resolved is not None and (
+                not isinstance(resolved, str) or not resolved.strip()
+            ):
+                raise ValueError(
+                    "device_resolver must return a non-empty string or None"
+                )
+            self._resolved_device = (
+                None if resolved is None else resolved.strip()
+            )
+            self._device_is_resolved = True
+            return self._resolved_device
+
+    def _execution_error_details(self, exc: Exception) -> dict[str, object]:
+        details = {
+            "error_type": type(exc).__name__,
+            "device": self._device_name(self._resolved_device),
+        }
+        message = str(exc).lower()
+        if (
+            "outofmemory" in type(exc).__name__.lower()
+            or "out of memory" in message
+        ):
+            details.update({
+                "reason": "DEVICE_OUT_OF_MEMORY",
+                "max_batch_size": self.max_batch_size,
+            })
+        return details
+
+    @staticmethod
+    def _device_name(device: str | None) -> str:
+        return "model_default" if device is None else device
 
     def _validate_request(
         self,
@@ -550,7 +649,8 @@ def create_local_caption_service(
     *,
     alias: str = "caption.default",
     revision: str | None = None,
-    device: str | None = None,
+    device: str | None = DEFAULT_CAPTION_DEVICE,
+    max_batch_size: int = DEFAULT_CAPTION_BATCH_SIZE,
 ) -> CaptionService:
     """Create one local service whose provider reuses its loaded model."""
 
@@ -560,6 +660,7 @@ def create_local_caption_service(
         artifact_store=artifact_store,
         revision=revision,
         device=device,
+        max_batch_size=max_batch_size,
     )
     gateway = InferenceGateway({alias: provider})
     return CaptionService(
@@ -567,4 +668,5 @@ def create_local_caption_service(
         alias=alias,
         model_name=model_name,
         revision=provider.requested_revision,
+        batch_size=max_batch_size,
     )

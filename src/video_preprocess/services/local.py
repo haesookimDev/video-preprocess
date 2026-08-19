@@ -74,6 +74,8 @@ class LocalPipelineRuntimeFactory:
         context_configurer: ContextConfigurer | None = None,
         project_root: Path | None = None,
         executor_max_concurrency: int = 1,
+        caption_device: str = "auto",
+        caption_batch_size: int = 4,
     ) -> None:
         self.stage_modules = (
             None if stage_modules is None else dict(stage_modules)
@@ -94,6 +96,16 @@ class LocalPipelineRuntimeFactory:
                 "executor_max_concurrency must be a positive integer"
             )
         self.executor_max_concurrency = executor_max_concurrency
+        if not isinstance(caption_device, str) or not caption_device.strip():
+            raise ValueError("caption_device must be a non-empty string")
+        if (
+            isinstance(caption_batch_size, bool)
+            or not isinstance(caption_batch_size, int)
+            or caption_batch_size < 1
+        ):
+            raise ValueError("caption_batch_size must be a positive integer")
+        self.caption_device = caption_device.strip().lower()
+        self.caption_batch_size = caption_batch_size
         if self.context_configurer is not None and not callable(
             self.context_configurer
         ):
@@ -216,6 +228,8 @@ class LocalPipelineRuntimeFactory:
                 create_local_caption_service(
                     settings.caption_model,
                     artifact_store,
+                    device=self.caption_device,
+                    max_batch_size=self.caption_batch_size,
                 ),
                 create_local_stt_service(
                     settings.whisper_model,
@@ -249,6 +263,8 @@ class LocalPipelineRuntimeFactory:
         context.caption_service = create_local_caption_service(
             context.caption_model,
             artifact_store,
+            device=self.caption_device,
+            max_batch_size=self.caption_batch_size,
         )
         context.stt_service = create_local_stt_service(
             context.whisper_model,

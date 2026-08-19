@@ -63,6 +63,10 @@ def test_cli_composes_server_without_printing_token(monkeypatch, capsys) -> None
             "3",
             "--executor-max-concurrency",
             "2",
+            "--caption-device",
+            "cpu",
+            "--caption-batch-size",
+            "3",
             "--retain-terminal-runs",
             "25",
         ],
@@ -73,6 +77,8 @@ def test_cli_composes_server_without_printing_token(monkeypatch, capsys) -> None
     assert seen["server"]["auth_token"] == "private-token"
     assert seen["run_service"]["max_active_runs"] == 3
     assert seen["runtime_factory"]["executor_max_concurrency"] == 2
+    assert seen["runtime_factory"]["caption_device"] == "cpu"
+    assert seen["runtime_factory"]["caption_batch_size"] == 3
     assert "private-token" not in output
     assert "PIPELINE_TOKEN" not in output
 
