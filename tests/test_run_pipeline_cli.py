@@ -84,7 +84,7 @@ def test_force_dry_run_marks_every_planned_stage(
     assert run_pipeline.main() == 0
     payload = json.loads(capsys.readouterr().out)
 
-    assert len(payload["stages"]) == 12
+    assert len(payload["stages"]) == 13
     assert payload["force_stages"] == payload["stages"]
     assert payload["cache_decisions"][0]["status"] == "forced"
     assert payload["cache_decisions"][0]["will_execute"] is True
