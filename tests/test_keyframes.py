@@ -115,6 +115,10 @@ def test_single_keyframe_keeps_legacy_midpoint_filename(
         out_root=tmp_path / "output" / "sample",
     )
     context.video_path.write_bytes(b"video")
+    frames_dir = context.stage_dir("03_keyframes") / "frames"
+    frames_dir.mkdir()
+    (frames_dir / "scene_007_01.jpg").write_bytes(b"stale")
+    (frames_dir / "scene_999.jpg").write_bytes(b"stale")
     context.save_json(
         context.stage_dir("02_scenes") / "scenes.json",
         {
@@ -147,3 +151,4 @@ def test_single_keyframe_keeps_legacy_midpoint_filename(
         "path": "03_keyframes/frames/scene_007.jpg",
         "size_bytes": 5,
     }
+    assert [path.name for path in frames_dir.iterdir()] == ["scene_007.jpg"]

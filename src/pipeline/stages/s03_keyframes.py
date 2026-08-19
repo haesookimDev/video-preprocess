@@ -76,6 +76,7 @@ def run(ctx: PipelineContext) -> dict:
     )
 
     keyframes = []
+    selected_frame_paths = set()
     for scene in scenes:
         scene_id = int(scene["scene_id"])
         start_sec = float(scene["start_sec"])
@@ -114,6 +115,7 @@ def run(ctx: PipelineContext) -> dict:
                 frame_path.name,
             )
             subprocess.run(cmd, capture_output=True, check=True)
+            selected_frame_paths.add(frame_path)
             keyframes.append({
                 "scene_id": scene_id,
                 "keyframe_index": keyframe_index,
@@ -122,6 +124,10 @@ def run(ctx: PipelineContext) -> dict:
                 "path": str(frame_path.relative_to(ctx.out_root)),
                 "size_bytes": frame_path.stat().st_size,
             })
+
+    for stale_path in frames_dir.glob("scene_*.jpg"):
+        if stale_path not in selected_frame_paths:
+            stale_path.unlink()
 
     total_kb = sum(k["size_bytes"] for k in keyframes) / 1024
     log.info("키프레임 %d장 추출 완료 (총 %.1fKB)", len(keyframes), total_kb)
