@@ -11,13 +11,37 @@ from datetime import datetime
 from .context import PipelineContext
 from .inference_setup import configure_local_inference
 from .logging_setup import setup_logging
-from .stages import s01_probe, s02_scenes, s03_keyframes, s04_audio, s05_vad, \
-    s06_stt, s07_diarize, s08_captions, s08_ocr, s09_timeline, s10_index, \
-    s11_context
+from .stages import (
+    s01_probe,
+    s02_scenes,
+    s03_keyframes,
+    s04_audio,
+    s04_embedded_text,
+    s05_vad,
+    s06_stt,
+    s07_diarize,
+    s08_captions,
+    s08_ocr,
+    s09_timeline,
+    s10_index,
+    s11_context,
+)
 
-STAGES = [s01_probe, s02_scenes, s03_keyframes, s04_audio, s05_vad, s06_stt,
-          s07_diarize, s08_captions, s08_ocr, s09_timeline, s10_index,
-          s11_context]
+STAGES = [
+    s01_probe,
+    s02_scenes,
+    s03_keyframes,
+    s04_audio,
+    s04_embedded_text,
+    s05_vad,
+    s06_stt,
+    s07_diarize,
+    s08_captions,
+    s08_ocr,
+    s09_timeline,
+    s10_index,
+    s11_context,
+]
 
 
 def run_pipeline(ctx: PipelineContext) -> dict:
