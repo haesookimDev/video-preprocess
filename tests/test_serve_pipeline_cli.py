@@ -67,6 +67,14 @@ def test_cli_composes_server_without_printing_token(monkeypatch, capsys) -> None
             "cpu",
             "--caption-batch-size",
             "3",
+            "--ocr-command",
+            "custom-tesseract",
+            "--ocr-batch-size",
+            "2",
+            "--ocr-endpoint",
+            "https://ocr.example.test",
+            "--ocr-artifact-namespace",
+            "shared",
             "--retain-terminal-runs",
             "25",
         ],
@@ -79,6 +87,12 @@ def test_cli_composes_server_without_printing_token(monkeypatch, capsys) -> None
     assert seen["runtime_factory"]["executor_max_concurrency"] == 2
     assert seen["runtime_factory"]["caption_device"] == "cpu"
     assert seen["runtime_factory"]["caption_batch_size"] == 3
+    assert seen["runtime_factory"]["ocr_command"] == "custom-tesseract"
+    assert seen["runtime_factory"]["ocr_batch_size"] == 2
+    deployments = seen["run_service"]["deployments"]
+    assert deployments.http_provider("ocr.default").endpoint == (
+        "https://ocr.example.test"
+    )
     assert "private-token" not in output
     assert "PIPELINE_TOKEN" not in output
 

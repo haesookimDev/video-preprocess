@@ -111,6 +111,21 @@ def test_transformers_and_pillow_imports_are_lazy_in_caption_provider() -> None:
     assert "PIL" in _imported_roots(provider_path)
 
 
+def test_ocr_stage_does_not_select_tesseract_or_concrete_provider() -> None:
+    stage_path = (
+        PROJECT_ROOT
+        / "src"
+        / "pipeline"
+        / "stages"
+        / "s08_ocr.py"
+    )
+    source = stage_path.read_text(encoding="utf-8")
+
+    assert "subprocess" not in _imported_roots(stage_path)
+    assert "video_preprocess.inference.local" not in source
+    assert "tesseract" not in source.lower()
+
+
 def test_stt_stage_does_not_import_faster_whisper() -> None:
     stage_path = (
         PROJECT_ROOT

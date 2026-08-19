@@ -25,10 +25,12 @@ OUTPUT = "10_index/index_summary.json"
 
 
 def _card_text(card: dict) -> str:
-    """검색 대상 텍스트: 캡션 + 전사문을 하나로 합친다."""
+    """검색 대상 텍스트: 캡션 + OCR + 전사문을 하나로 합친다."""
     parts = []
     if card["caption"]:
         parts.append(card["caption"])
+    if card.get("ocr_text"):
+        parts.append(card["ocr_text"])
     parts.extend(line["text"] for line in card["transcript"])
     return "\n".join(parts)
 

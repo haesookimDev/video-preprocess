@@ -106,29 +106,38 @@ class FakeInferenceService:
         auth_token: str | None = None,
         alias: str = "embedding.remote",
         responder: Responder = _default_responder,
+        task: InferenceTask = InferenceTask.TEXT_EMBEDDING,
+        effective_model: EffectiveModel | None = None,
+        input_media_types: tuple[str, ...] = ("text/plain",),
+        features: tuple[str, ...] = (
+            "normalized_vectors",
+            "inline_batch",
+        ),
     ) -> None:
         self.auth_token = auth_token
         self.responder = responder
+        model = effective_model or EffectiveModel(
+            provider="http.embedding",
+            name="example/embedding",
+            revision="fake-commit-1",
+            runtime="fake-inference/1.0",
+        )
+        provider_name = f"fake.{model.provider}"
         self.capability = ProviderCapabilities(
-            provider="fake.http.embedding",
-            tasks=(InferenceTask.TEXT_EMBEDDING,),
+            provider=provider_name,
+            tasks=(task,),
             model_aliases=(alias,),
-            input_media_types=("text/plain",),
-            features=("normalized_vectors", "inline_batch"),
+            input_media_types=input_media_types,
+            features=features,
             max_batch_size=128,
             supports_cancellation=True,
             supports_async_jobs=True,
             effective_models={
-                alias: EffectiveModel(
-                    provider="http.embedding",
-                    name="example/embedding",
-                    revision="fake-commit-1",
-                    runtime="fake-inference/1.0",
-                )
+                alias: model
             },
         )
         self.health = ProviderHealth(
-            provider="fake.http.embedding",
+            provider=provider_name,
             status=HealthState.AVAILABLE,
             details={"ready": True},
         )
@@ -271,11 +280,22 @@ class FakeInferenceServer:
         auth_token: str | None = None,
         alias: str = "embedding.remote",
         responder: Responder = _default_responder,
+        task: InferenceTask = InferenceTask.TEXT_EMBEDDING,
+        effective_model: EffectiveModel | None = None,
+        input_media_types: tuple[str, ...] = ("text/plain",),
+        features: tuple[str, ...] = (
+            "normalized_vectors",
+            "inline_batch",
+        ),
     ) -> None:
         self.service = FakeInferenceService(
             auth_token=auth_token,
             alias=alias,
             responder=responder,
+            task=task,
+            effective_model=effective_model,
+            input_media_types=input_media_types,
+            features=features,
         )
         handler = self._handler_type(self.service)
         self._server = ThreadingHTTPServer(("127.0.0.1", 0), handler)

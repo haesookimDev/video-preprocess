@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import math
+import re
 import uuid
-from collections.abc import Callable, Collection, Mapping
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -26,6 +28,9 @@ class PipelineServiceInputError(ValueError):
     """A run request cannot be satisfied at the application boundary."""
 
 
+_OCR_LANGUAGE_PATTERN = re.compile(r"^[a-z0-9_]+$")
+
+
 @dataclass(frozen=True, slots=True)
 class PipelineSettings:
     """User-controlled settings mapped to exact legacy Stage contracts."""
@@ -39,12 +44,62 @@ class PipelineSettings:
     whisper_model: str = "base"
     language: str | None = None
     caption_model: str = "Salesforce/blip-image-captioning-base"
+    ocr_mode: str = "disabled"
+    ocr_model: str = "tesseract"
+    ocr_languages: tuple[str, ...] = ("eng",)
+    ocr_detect_orientation: bool = True
+    ocr_min_confidence: float = 0.5
     embed_model: str = "paraphrase-multilingual-MiniLM-L12-v2"
     diarize_model: str = "pyannote/speaker-diarization-community-1"
     max_context_tokens: int | None = None
     context_tokenizer_model: str | None = None
 
     def __post_init__(self) -> None:
+        if (
+            not isinstance(self.ocr_mode, str)
+            or self.ocr_mode not in {"disabled", "all", "caption-hints"}
+        ):
+            raise ValueError(
+                "ocr_mode must be disabled, all, or caption-hints"
+            )
+        if not isinstance(self.ocr_model, str) or not self.ocr_model.strip():
+            raise ValueError("ocr_model must be a non-empty string")
+        if isinstance(self.ocr_languages, (str, bytes)) or not isinstance(
+            self.ocr_languages,
+            Sequence,
+        ):
+            raise ValueError("ocr_languages must be a sequence")
+        normalized_languages = []
+        for language in self.ocr_languages:
+            if not isinstance(language, str) or not language.strip():
+                raise ValueError(
+                    "ocr_languages must contain non-empty strings"
+                )
+            normalized = language.strip().lower()
+            if not _OCR_LANGUAGE_PATTERN.fullmatch(normalized):
+                raise ValueError(
+                    "ocr_languages must use lowercase letters, digits, "
+                    "or underscore"
+                )
+            if normalized not in normalized_languages:
+                normalized_languages.append(normalized)
+        if not normalized_languages:
+            raise ValueError("ocr_languages must not be empty")
+        object.__setattr__(self, "ocr_languages", tuple(normalized_languages))
+        if not isinstance(self.ocr_detect_orientation, bool):
+            raise ValueError("ocr_detect_orientation must be a boolean")
+        if (
+            isinstance(self.ocr_min_confidence, bool)
+            or not isinstance(self.ocr_min_confidence, (int, float))
+            or not math.isfinite(float(self.ocr_min_confidence))
+            or not 0 <= float(self.ocr_min_confidence) <= 1
+        ):
+            raise ValueError("ocr_min_confidence must be between 0 and 1")
+        object.__setattr__(
+            self,
+            "ocr_min_confidence",
+            float(self.ocr_min_confidence),
+        )
         if (
             isinstance(self.keyframes_per_scene, bool)
             or not isinstance(self.keyframes_per_scene, int)
@@ -85,6 +140,13 @@ class PipelineSettings:
             },
             "07_diarize": {"diarize_model": self.diarize_model},
             "08_captions": {"caption_model": self.caption_model},
+            "08_ocr": {
+                "ocr_mode": self.ocr_mode,
+                "ocr_model": self.ocr_model,
+                "ocr_languages": list(self.ocr_languages),
+                "ocr_detect_orientation": self.ocr_detect_orientation,
+                "ocr_min_confidence": self.ocr_min_confidence,
+            },
             "10_index": {"embed_model": self.embed_model},
             "11_context": {
                 "max_context_tokens": self.max_context_tokens,
@@ -102,6 +164,7 @@ class PipelineSettings:
             "06_stt": {"stt": "stt.default"},
             "07_diarize": {"diarization": "diarization.default"},
             "08_captions": {"caption": "caption.default"},
+            "08_ocr": {"ocr": "ocr.default"},
             "10_index": {"embedding": "embedding.default"},
         }
 

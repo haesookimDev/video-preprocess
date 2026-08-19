@@ -816,7 +816,7 @@ def _render_legacy_context(
         )
     lines = ["## 영상 개요 (전체 씬 목차)"]
     for card in timeline:
-        head = card["caption"] or (
+        head = card["caption"] or card.get("ocr_text") or (
             card["transcript"][0]["text"][:30]
             if card["transcript"]
             else "(내용 없음)"
@@ -866,6 +866,8 @@ def _render_scene_card(card: Mapping[str, object]) -> str:
     ]
     if card.get("caption"):
         lines.append(f"시각: {card['caption']}")
+    if card.get("ocr_text"):
+        lines.append(f"화면 텍스트: {card['ocr_text']}")
     for transcript in card["transcript"]:
         speaker = (
             f" ({transcript['speaker']})"
@@ -883,7 +885,7 @@ def _render_scene_card(card: Mapping[str, object]) -> str:
 
 def _compact_scene_card(card: Mapping[str, object]) -> str:
     heading = _render_scene_card({**card, "caption": None, "transcript": []}).splitlines()[0]
-    body = card.get("caption") or (
+    body = card.get("caption") or card.get("ocr_text") or (
         card["transcript"][0]["text"] if card["transcript"] else "(내용 없음)"
     )
     return f"{heading}\n{body}"

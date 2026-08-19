@@ -18,6 +18,7 @@ from video_preprocess.inference import (
     GatewayEffectiveModelResolver,
     InferenceDeploymentSettings,
     create_configured_embedding_service,
+    create_configured_ocr_service,
 )
 from video_preprocess.inference.local import (
     create_local_caption_service,
@@ -76,6 +77,8 @@ class LocalPipelineRuntimeFactory:
         executor_max_concurrency: int = 1,
         caption_device: str = "auto",
         caption_batch_size: int = 4,
+        ocr_command: str = "tesseract",
+        ocr_batch_size: int = 4,
     ) -> None:
         self.stage_modules = (
             None if stage_modules is None else dict(stage_modules)
@@ -106,6 +109,16 @@ class LocalPipelineRuntimeFactory:
             raise ValueError("caption_batch_size must be a positive integer")
         self.caption_device = caption_device.strip().lower()
         self.caption_batch_size = caption_batch_size
+        if not isinstance(ocr_command, str) or not ocr_command.strip():
+            raise ValueError("ocr_command must be a non-empty string")
+        if (
+            isinstance(ocr_batch_size, bool)
+            or not isinstance(ocr_batch_size, int)
+            or ocr_batch_size < 1
+        ):
+            raise ValueError("ocr_batch_size must be a positive integer")
+        self.ocr_command = ocr_command.strip()
+        self.ocr_batch_size = ocr_batch_size
         if self.context_configurer is not None and not callable(
             self.context_configurer
         ):
@@ -147,6 +160,11 @@ class LocalPipelineRuntimeFactory:
             whisper_model=settings.whisper_model,
             language=settings.language,
             caption_model=settings.caption_model,
+            ocr_mode=settings.ocr_mode,
+            ocr_model=settings.ocr_model,
+            ocr_languages=settings.ocr_languages,
+            ocr_detect_orientation=settings.ocr_detect_orientation,
+            ocr_min_confidence=settings.ocr_min_confidence,
             embed_model=settings.embed_model,
             diarize_model=settings.diarize_model,
             max_context_tokens=settings.max_context_tokens,
@@ -171,6 +189,7 @@ class LocalPipelineRuntimeFactory:
             self.context_configurer(context, artifact_store)
         model_resolver = self._model_resolver(
             context.caption_service,
+            context.ocr_service,
             context.stt_service,
             context.diarization_service,
             context.vad_service,
@@ -231,6 +250,13 @@ class LocalPipelineRuntimeFactory:
                     device=self.caption_device,
                     max_batch_size=self.caption_batch_size,
                 ),
+                create_configured_ocr_service(
+                    settings.ocr_model,
+                    artifact_store,
+                    deployments=request.deployments,
+                    command=self.ocr_command,
+                    max_batch_size=self.ocr_batch_size,
+                ),
                 create_local_stt_service(
                     settings.whisper_model,
                     artifact_store,
@@ -265,6 +291,13 @@ class LocalPipelineRuntimeFactory:
             artifact_store,
             device=self.caption_device,
             max_batch_size=self.caption_batch_size,
+        )
+        context.ocr_service = create_configured_ocr_service(
+            context.ocr_model,
+            artifact_store,
+            deployments=deployments,
+            command=self.ocr_command,
+            max_batch_size=self.ocr_batch_size,
         )
         context.stt_service = create_local_stt_service(
             context.whisper_model,

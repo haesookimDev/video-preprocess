@@ -7,7 +7,7 @@ import os
 import sys
 from pathlib import Path
 
-from pipeline.deployment import embedding_deployments_from_environment
+from pipeline.deployment import inference_deployments_from_environment
 from video_preprocess.api import PipelineHTTPServer
 from video_preprocess.engine import DAGPlanner, create_default_registry
 from video_preprocess.services import (
@@ -47,6 +47,15 @@ def main() -> int:
     parser.add_argument("--executor-max-concurrency", type=int, default=1)
     parser.add_argument("--caption-device", default="auto")
     parser.add_argument("--caption-batch-size", type=int, default=4)
+    parser.add_argument("--ocr-command", default="tesseract")
+    parser.add_argument("--ocr-batch-size", type=int, default=4)
+    parser.add_argument("--ocr-endpoint", default=None)
+    parser.add_argument("--ocr-token-env", default=None)
+    parser.add_argument(
+        "--ocr-artifact-namespace",
+        action="append",
+        default=[],
+    )
     parser.add_argument("--retain-terminal-runs", type=int, default=1000)
     parser.add_argument("--max-request-bytes", type=int, default=1024 * 1024)
     parser.add_argument("--embedding-endpoint", default=None)
@@ -66,10 +75,19 @@ def main() -> int:
     project_root = Path(__file__).resolve().parents[1]
     try:
         token = _token_from_environment(args.auth_token_env, os.environ)
-        deployments = embedding_deployments_from_environment(
-            endpoint=args.embedding_endpoint,
-            token_env=args.embedding_token_env,
-            artifact_namespaces=args.embedding_artifact_namespace,
+        deployments = inference_deployments_from_environment(
+            endpoints={
+                "embedding.default": args.embedding_endpoint,
+                "ocr.default": args.ocr_endpoint,
+            },
+            token_envs={
+                "embedding.default": args.embedding_token_env,
+                "ocr.default": args.ocr_token_env,
+            },
+            artifact_namespaces={
+                "embedding.default": args.embedding_artifact_namespace,
+                "ocr.default": args.ocr_artifact_namespace,
+            },
             environ=os.environ,
         )
         application = PipelineApplicationService(
@@ -79,6 +97,8 @@ def main() -> int:
                 executor_max_concurrency=args.executor_max_concurrency,
                 caption_device=args.caption_device,
                 caption_batch_size=args.caption_batch_size,
+                ocr_command=args.ocr_command,
+                ocr_batch_size=args.ocr_batch_size,
             ),
         )
         run_service = PipelineRunService(

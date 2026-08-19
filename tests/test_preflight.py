@@ -32,6 +32,18 @@ def test_command_check_reports_missing_binary() -> None:
     assert "PATH" in result.detail
 
 
+def test_optional_ocr_command_reports_warning() -> None:
+    result = check_command(
+        "tesseract",
+        which=lambda _: None,
+        required=False,
+        remediation="install language data",
+    )
+
+    assert result.status == "warning"
+    assert result.remediation == "install language data"
+
+
 def test_module_check_distinguishes_required_and_optional() -> None:
     missing = lambda _: None
 
@@ -103,4 +115,3 @@ def test_preflight_only_does_not_require_video(
 
     assert exit_code == 0
     assert "[OK] python: ready" in capsys.readouterr().out
-

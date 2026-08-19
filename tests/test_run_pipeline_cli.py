@@ -84,7 +84,7 @@ def test_force_dry_run_marks_every_planned_stage(
     assert run_pipeline.main() == 0
     payload = json.loads(capsys.readouterr().out)
 
-    assert len(payload["stages"]) == 11
+    assert len(payload["stages"]) == 12
     assert payload["force_stages"] == payload["stages"]
     assert payload["cache_decisions"][0]["status"] == "forced"
     assert payload["cache_decisions"][0]["will_execute"] is True
@@ -194,6 +194,8 @@ def test_caption_tuning_is_reported_by_dry_run(
     assert payload["local_inference"] == {
         "caption_device": "cpu",
         "caption_batch_size": 2,
+        "ocr_command": "tesseract",
+        "ocr_batch_size": 4,
     }
 
 
@@ -219,6 +221,94 @@ def test_invalid_caption_batch_size_is_a_cli_input_error(
 
     assert run_pipeline.main() == 2
     assert "caption_batch_size" in capsys.readouterr().err
+
+
+def test_enabled_local_ocr_requires_command(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    ready_preflight(monkeypatch)
+    video = tmp_path / "video.mp4"
+    video.write_bytes(b"video")
+    monkeypatch.setattr(run_pipeline.shutil, "which", lambda _: None)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_pipeline.py",
+            str(video),
+            "--ocr-mode",
+            "all",
+            "--dry-run",
+        ],
+    )
+
+    assert run_pipeline.main() == 1
+    assert "OCR command" in capsys.readouterr().err
+
+
+def test_remote_ocr_does_not_require_local_command(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    ready_preflight(monkeypatch)
+    video = tmp_path / "video.mp4"
+    video.write_bytes(b"video")
+    monkeypatch.setattr(run_pipeline.shutil, "which", lambda _: None)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_pipeline.py",
+            str(video),
+            "--stage",
+            "01_probe",
+            "--ocr-mode",
+            "all",
+            "--ocr-model",
+            "example/ocr",
+            "--ocr-endpoint",
+            "https://ocr.example.test",
+            "--ocr-artifact-namespace",
+            "shared",
+            "--dry-run",
+        ],
+    )
+
+    assert run_pipeline.main() == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["inference_deployments"]["ocr.default"] == {
+        "provider": "http",
+        "endpoint": "https://ocr.example.test",
+        "allowed_artifact_namespaces": ["shared"],
+        "request_timeout_sec": 300.0,
+    }
+
+
+def test_invalid_ocr_settings_are_cli_input_errors(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    ready_preflight(monkeypatch)
+    video = tmp_path / "video.mp4"
+    video.write_bytes(b"video")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_pipeline.py",
+            str(video),
+            "--ocr-min-confidence",
+            "2",
+            "--dry-run",
+        ],
+    )
+
+    assert run_pipeline.main() == 2
+    assert "ocr_min_confidence" in capsys.readouterr().err
 
 
 def test_invalid_keyframe_maximum_is_a_cli_input_error(

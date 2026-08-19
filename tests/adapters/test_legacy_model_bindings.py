@@ -33,6 +33,7 @@ MODEL_DATA = {
         "caption/model",
         "caption-rev",
     ),
+    "08_ocr": ("ocr", "local.ocr", "tesseract", "5.5.0"),
 }
 
 
@@ -101,11 +102,27 @@ def fake_modules(restored: list[bool]):
         )
         return {"caption_count": 1}
 
+    def ocr(ctx):
+        first = ctx.out_root / "03_keyframes" / "frames" / "scene_001.jpg"
+        second = ctx.out_root / "03_keyframes" / "frames" / "scene_002.jpg"
+        restored.append(
+            first.read_bytes() == b"first" and second.read_bytes() == b"second"
+        )
+        write_model_json(
+            ctx,
+            "08_ocr/ocr.json",
+            "08_ocr",
+            executed=True,
+            results=[],
+        )
+        return {"ocr_image_count": 2}
+
     return {
         "05_vad": SimpleNamespace(NAME="05_vad", run=vad),
         "06_stt": SimpleNamespace(NAME="06_stt", run=stt),
         "07_diarize": SimpleNamespace(NAME="07_diarize", run=diarize),
         "08_captions": SimpleNamespace(NAME="08_captions", run=captions),
+        "08_ocr": SimpleNamespace(NAME="08_ocr", run=ocr),
     }
 
 
@@ -273,7 +290,25 @@ def test_model_bindings_publish_effective_models_and_restore_keyframes(
             {"caption": "caption.default"},
         )
         captions = await executor.result(await executor.submit(caption_task))
-        return vad, stt, diarization, captions
+        ocr_task = task(
+            "08_ocr",
+            "1.0.0",
+            {
+                "keyframes": keyframes,
+                "keyframe_images": keyframe_images,
+                "captions": captions.outputs["captions"],
+            },
+            {
+                "ocr_mode": "all",
+                "ocr_model": "tesseract",
+                "ocr_languages": ["eng"],
+                "ocr_detect_orientation": True,
+                "ocr_min_confidence": 0.5,
+            },
+            {"ocr": "ocr.default"},
+        )
+        ocr = await executor.result(await executor.submit(ocr_task))
+        return vad, stt, diarization, captions, ocr
 
     results = asyncio.run(scenario())
 
@@ -282,6 +317,7 @@ def test_model_bindings_publish_effective_models_and_restore_keyframes(
         "06_stt",
         "07_diarize",
         "08_captions",
+        "08_ocr",
     )
     assert all(result.status is StageStatus.SUCCEEDED for result in results)
     for result, stage in zip(results, MODEL_DATA):
@@ -296,7 +332,7 @@ def test_model_bindings_publish_effective_models_and_restore_keyframes(
             ),
         )
         assert all(store.verify(ref).ok for ref in result.outputs.values())
-    assert restored == [True]
+    assert restored == [True, True]
     assert context.vad_min_silence_ms == 500
     assert context.language is None
     assert context.caption_model == "Salesforce/blip-image-captioning-base"
@@ -365,7 +401,27 @@ def test_pipeline_engine_exact_plans_run_model_bindings(tmp_path: Path) -> None:
                 "08_captions": {"caption": "caption.default"}
             },
         )
-        return vad, stt, diarization, captions
+        ocr = await engine.run(
+            planner.plan(stage="08_ocr"),
+            run_id="run-123",
+            trace_id="trace-ocr",
+            artifacts={
+                "keyframes": keyframes,
+                "keyframe_images": images,
+                "captions": captions.artifacts["captions"],
+            },
+            stage_configs={
+                "08_ocr": {
+                    "ocr_mode": "all",
+                    "ocr_model": "tesseract",
+                    "ocr_languages": ["eng"],
+                    "ocr_detect_orientation": True,
+                    "ocr_min_confidence": 0.5,
+                }
+            },
+            model_bindings={"08_ocr": {"ocr": "ocr.default"}},
+        )
+        return vad, stt, diarization, captions, ocr
 
     results = asyncio.run(scenario())
 
@@ -375,6 +431,7 @@ def test_pipeline_engine_exact_plans_run_model_bindings(tmp_path: Path) -> None:
         "stt",
         "diarization",
         "caption",
+        "ocr",
     ]
 
 

@@ -22,6 +22,7 @@ PREAMBLE = """\
 아래는 영상을 전처리하여 만든 타임라인 컨텍스트다. 형식 규칙:
 - 시간은 [분:초] 형식이며 영상 시작 기준이다.
 - `시각:`은 씬 키프레임을 캡셔닝한 것으로 영어일 수 있다.
+- `화면 텍스트:`는 키프레임 OCR 결과로 오인식이 있을 수 있다.
 - 발화 줄의 (SPEAKER_NN)은 화자 분리 라벨이다. 라벨이 없으면 화자 미상이다.
 - 발화 텍스트는 음성 인식 결과로 일부 오인식이 있을 수 있다."""
 
@@ -38,6 +39,8 @@ def _card_lines(card: dict) -> list[str]:
     ]
     if card["caption"]:
         lines.append(f"시각: {card['caption']}")
+    if card.get("ocr_text"):
+        lines.append(f"화면 텍스트: {card['ocr_text']}")
     if card["transcript"]:
         for transcript in card["transcript"]:
             who = (
@@ -55,7 +58,7 @@ def _card_lines(card: dict) -> list[str]:
 
 
 def _toc_line(card: dict) -> str:
-    head = card["caption"] or (
+    head = card["caption"] or card.get("ocr_text") or (
         card["transcript"][0]["text"][:40]
         if card["transcript"]
         else "(내용 없음)"
@@ -118,7 +121,7 @@ def _budget_context(
             blocks.append(full)
             continue
         heading = _card_lines(card)[0]
-        summary = card["caption"] or (
+        summary = card["caption"] or card.get("ocr_text") or (
             card["transcript"][0]["text"]
             if card["transcript"]
             else "(내용 없음)"

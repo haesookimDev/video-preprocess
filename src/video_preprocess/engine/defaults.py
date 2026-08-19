@@ -1,4 +1,4 @@
-"""Stable StageSpec registry for the current eleven-stage pipeline."""
+"""Stable StageSpec registry for the current twelve-stage pipeline."""
 
 from video_preprocess.domain import ResourceHints, StageSpec
 
@@ -90,14 +90,28 @@ DEFAULT_STAGE_SPECS = (
         ),
     ),
     StageSpec(
+        name="08_ocr",
+        stage_version="1.0.0",
+        dependencies=("03_keyframes", "08_captions"),
+        required_inputs=("keyframes", "keyframe_images", "captions"),
+        outputs=("ocr",),
+        model_slots=("ocr",),
+        resource_hints=ResourceHints(
+            cpu=2.0,
+            memory_mb=1024,
+            gpu_optional=False,
+        ),
+    ),
+    StageSpec(
         name="09_timeline",
-        stage_version="1.2.0",
+        stage_version="1.3.0",
         dependencies=(
             "02_scenes",
             "03_keyframes",
             "06_stt",
             "07_diarize",
             "08_captions",
+            "08_ocr",
         ),
         required_inputs=(
             "scenes",
@@ -105,13 +119,14 @@ DEFAULT_STAGE_SPECS = (
             "transcript",
             "diarization",
             "captions",
+            "ocr",
         ),
         outputs=("timeline", "timeline_markdown"),
         resource_hints=ResourceHints(cpu=0.5, memory_mb=256),
     ),
     StageSpec(
         name="10_index",
-        stage_version="1.1.0",
+        stage_version="1.2.0",
         dependencies=("09_timeline",),
         required_inputs=("timeline",),
         outputs=("search_index", "index_summary"),
@@ -124,7 +139,7 @@ DEFAULT_STAGE_SPECS = (
     ),
     StageSpec(
         name="11_context",
-        stage_version="1.1.0",
+        stage_version="1.2.0",
         dependencies=("01_probe", "07_diarize", "09_timeline"),
         required_inputs=("metadata", "diarization", "timeline"),
         outputs=("context", "context_json"),

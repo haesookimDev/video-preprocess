@@ -83,6 +83,45 @@ class RecordingRuntimeFactory:
         return PipelineRuntime(self.engine, self.artifacts)
 
 
+def test_pipeline_settings_normalizes_ocr_contract() -> None:
+    settings = PipelineSettings(
+        ocr_mode="caption-hints",
+        ocr_model="custom/ocr",
+        ocr_languages=(" ENG ", "kor", "eng"),
+        ocr_detect_orientation=False,
+        ocr_min_confidence=0.75,
+    )
+
+    assert settings.ocr_languages == ("eng", "kor")
+    assert settings.stage_configs()["08_ocr"] == {
+        "ocr_mode": "caption-hints",
+        "ocr_model": "custom/ocr",
+        "ocr_languages": ["eng", "kor"],
+        "ocr_detect_orientation": False,
+        "ocr_min_confidence": 0.75,
+    }
+    assert settings.model_bindings()["08_ocr"] == {"ocr": "ocr.default"}
+
+
+@pytest.mark.parametrize(
+    ("options", "message"),
+    [
+        ({"ocr_mode": "sometimes"}, "ocr_mode"),
+        ({"ocr_mode": []}, "ocr_mode"),
+        ({"ocr_languages": ()}, "ocr_languages"),
+        ({"ocr_languages": ("eng-US",)}, "ocr_languages"),
+        ({"ocr_detect_orientation": 1}, "ocr_detect_orientation"),
+        ({"ocr_min_confidence": 1.1}, "ocr_min_confidence"),
+    ],
+)
+def test_pipeline_settings_rejects_invalid_ocr_contract(
+    options,
+    message,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        PipelineSettings(**options)
+
+
 def test_service_plans_selected_stage_and_forwards_exact_settings(
     tmp_path: Path,
 ) -> None:
@@ -249,6 +288,7 @@ def test_local_runtime_ingests_video_and_composes_all_bindings(
         "06_stt",
         "07_diarize",
         "08_captions",
+        "08_ocr",
         "09_timeline",
         "10_index",
         "11_context",
@@ -299,6 +339,18 @@ def test_local_runtime_rejects_invalid_caption_batch_size(batch_size) -> None:
         LocalPipelineRuntimeFactory(caption_batch_size=batch_size)
 
 
+@pytest.mark.parametrize("batch_size", [True, 0, -1, 1.5])
+def test_local_runtime_rejects_invalid_ocr_batch_size(batch_size) -> None:
+    with pytest.raises(ValueError, match="ocr_batch_size"):
+        LocalPipelineRuntimeFactory(ocr_batch_size=batch_size)
+
+
+@pytest.mark.parametrize("command", ["", "   ", None, 1])
+def test_local_runtime_rejects_invalid_ocr_command(command) -> None:
+    with pytest.raises(ValueError, match="ocr_command"):
+        LocalPipelineRuntimeFactory(ocr_command=command)
+
+
 @pytest.mark.parametrize("device", ["", "   ", None, 1])
 def test_local_runtime_rejects_invalid_caption_device(device) -> None:
     with pytest.raises(ValueError, match="caption_device"):
@@ -313,6 +365,16 @@ def test_local_runtime_keeps_caption_tuning_in_composition() -> None:
 
     assert factory.caption_device == "mps"
     assert factory.caption_batch_size == 2
+
+
+def test_local_runtime_keeps_ocr_tuning_in_composition() -> None:
+    factory = LocalPipelineRuntimeFactory(
+        ocr_command="custom-tesseract",
+        ocr_batch_size=2,
+    )
+
+    assert factory.ocr_command == "custom-tesseract"
+    assert factory.ocr_batch_size == 2
 
 
 def test_local_runtime_requires_manifest_for_partial_execution(
@@ -333,6 +395,7 @@ def test_local_runtime_requires_manifest_for_partial_execution(
         "06_stt",
         "07_diarize",
         "08_captions",
+        "08_ocr",
         "09_timeline",
         "10_index",
         "11_context",
@@ -409,5 +472,38 @@ def test_local_runtime_composes_remote_embedding_alias_without_loading_model(
     assert resolver is not None
     gateway = resolver.gateways["embedding.default"]
     provider = gateway._bindings["embedding.default"]
+    assert provider.__class__.__name__ == "HTTPInferenceProvider"
+    assert not (tmp_path / "output").exists()
+
+
+def test_local_runtime_composes_remote_ocr_alias_without_local_command(
+    tmp_path: Path,
+) -> None:
+    video = tmp_path / "source.mp4"
+    video.write_bytes(b"video")
+    deployments = InferenceDeploymentSettings(
+        http_providers={
+            "ocr.default": HTTPProviderSettings(
+                endpoint="https://ocr.example.test"
+            )
+        }
+    )
+
+    runtime = LocalPipelineRuntimeFactory(
+        ocr_command="missing-local-command",
+    ).create_preview(
+        PipelineRunRequest(
+            video_path=video,
+            output_root=tmp_path / "output",
+            deployments=deployments,
+        ),
+        run_id="run-123",
+        boundary_inputs=("video",),
+    )
+
+    resolver = runtime.engine.model_resolver
+    assert resolver is not None
+    gateway = resolver.gateways["ocr.default"]
+    provider = gateway._bindings["ocr.default"]
     assert provider.__class__.__name__ == "HTTPInferenceProvider"
     assert not (tmp_path / "output").exists()

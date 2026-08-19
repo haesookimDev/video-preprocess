@@ -22,19 +22,20 @@ EXPECTED_ORDER = (
     "06_stt",
     "07_diarize",
     "08_captions",
+    "08_ocr",
     "09_timeline",
     "10_index",
     "11_context",
 )
 
 
-def test_default_registry_has_stable_eleven_stage_plan() -> None:
+def test_default_registry_has_stable_twelve_stage_plan() -> None:
     registry = create_default_registry()
     planner = DAGPlanner(registry)
 
     plan = planner.plan()
 
-    assert len(registry) == 11
+    assert len(registry) == 12
     assert planner.ordered_stage_names == EXPECTED_ORDER
     assert plan.stage_names == EXPECTED_ORDER
     assert plan.boundary_inputs == ("video",)
@@ -52,7 +53,14 @@ def test_default_registry_has_stable_eleven_stage_plan() -> None:
         "keyframe_images",
     )
     assert registry.get("08_captions").stage_version == "1.3.0"
-    assert registry.get("09_timeline").stage_version == "1.2.0"
+    assert registry.get("08_ocr").dependencies == (
+        "03_keyframes",
+        "08_captions",
+    )
+    assert registry.get("08_ocr").model_slots == ("ocr",)
+    assert registry.get("09_timeline").stage_version == "1.3.0"
+    assert registry.get("10_index").stage_version == "1.2.0"
+    assert registry.get("11_context").stage_version == "1.2.0"
 
 
 def test_topological_order_is_independent_of_registration_order() -> None:
@@ -168,6 +176,7 @@ def test_from_stage_selects_all_descendants_in_topological_order() -> None:
         "diarization",
         "keyframes",
         "metadata",
+        "ocr",
         "scenes",
         "vad_segments",
     )
@@ -178,7 +187,7 @@ def test_to_stage_selects_all_ancestors() -> None:
 
     plan = planner.plan(to_stage="09_timeline")
 
-    assert plan.stage_names == EXPECTED_ORDER[:9]
+    assert plan.stage_names == EXPECTED_ORDER[:10]
     assert plan.boundary_inputs == ("video",)
 
 
@@ -198,6 +207,7 @@ def test_from_and_to_stage_select_dependency_path_intersection() -> None:
         "captions",
         "keyframes",
         "metadata",
+        "ocr",
         "scenes",
         "video",
     )

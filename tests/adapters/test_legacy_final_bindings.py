@@ -32,6 +32,7 @@ MODEL_METADATA = {
         "diarization-rev",
     ),
     "08_captions": ("local.caption", "caption/model", "caption-rev"),
+    "08_ocr": ("local.ocr", "tesseract", "ocr-rev"),
 }
 
 
@@ -157,6 +158,18 @@ def full_fake_modules():
         )
         return {"caption_count": 1}
 
+    def ocr(ctx):
+        restored = ctx.out_root / "03_keyframes" / "frames" / "scene_001.jpg"
+        assert restored.read_bytes() == b"image"
+        write_model_output(
+            ctx,
+            "08_ocr",
+            "ocr.json",
+            executed=True,
+            results=[{"scene_id": 1, "text": "screen text", "regions": []}],
+        )
+        return {"ocr_image_count": 1}
+
     def timeline(ctx):
         ctx.save_json(
             ctx.stage_dir("09_timeline") / "timeline.json",
@@ -213,6 +226,7 @@ def full_fake_modules():
         stt,
         diarize,
         captions,
+        ocr,
         timeline,
         index,
         context,
@@ -226,6 +240,7 @@ def full_fake_modules():
         "06_stt",
         "07_diarize",
         "08_captions",
+        "08_ocr",
         "09_timeline",
         "10_index",
         "11_context",
@@ -255,6 +270,13 @@ def pipeline_options():
             },
             "07_diarize": {"diarize_model": "pyannote/model"},
             "08_captions": {"caption_model": "caption/model"},
+            "08_ocr": {
+                "ocr_mode": "all",
+                "ocr_model": "tesseract",
+                "ocr_languages": ["eng"],
+                "ocr_detect_orientation": True,
+                "ocr_min_confidence": 0.5,
+            },
             "10_index": {"embed_model": "embedding/model"},
             "11_context": {
                 "max_context_tokens": None,
@@ -269,6 +291,7 @@ def pipeline_options():
             "06_stt": {"stt": "stt.default"},
             "07_diarize": {"diarization": "diarization.default"},
             "08_captions": {"caption": "caption.default"},
+            "08_ocr": {"ocr": "ocr.default"},
             "10_index": {"embedding": "embedding.default"},
         },
     }
@@ -318,8 +341,8 @@ def test_full_default_dag_runs_through_one_legacy_binding_registry(
         ref for name, ref in result.artifacts.items() if name != "video"
     )
     assert all(store.verify(ref).ok for ref in generated)
-    assert result.stages[9].result.models[0].slot == "embedding"
-    assert result.stages[9].result.models[0].model == "embedding/model"
+    assert result.stages[10].result.models[0].slot == "embedding"
+    assert result.stages[10].result.models[0].model == "embedding/model"
     assert context.embed_model == "paraphrase-multilingual-MiniLM-L12-v2"
 
 
@@ -395,6 +418,7 @@ def test_timeline_requires_json_and_markdown_outputs(tmp_path: Path) -> None:
         "transcript": "06_stt/transcript.json",
         "diarization": "07_diarize/diarization.json",
         "captions": "08_captions/captions.json",
+        "ocr": "08_ocr/ocr.json",
     }
     inputs = {}
     for name, relative in relative_inputs.items():

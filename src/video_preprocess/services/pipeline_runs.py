@@ -199,6 +199,7 @@ class PipelineRunSubmission:
             name: getattr(self.settings, name)
             for name in self.settings.__dataclass_fields__
         }
+        settings["ocr_languages"] = list(self.settings.ocr_languages)
         return {
             "schema_version": SCHEMA_VERSION,
             "idempotency_key": self.idempotency_key,
@@ -1128,12 +1129,26 @@ def _validate_pipeline_settings(settings: PipelineSettings) -> None:
     for field_name in (
         "whisper_model",
         "caption_model",
+        "ocr_model",
         "embed_model",
         "diarize_model",
     ):
         _required_text(getattr(settings, field_name), field_name)
     _optional_text(settings.language, "language")
     _optional_text(settings.context_tokenizer_model, "context_tokenizer_model")
+    if settings.ocr_mode not in {"disabled", "all", "caption-hints"}:
+        raise ValueError("ocr_mode is invalid")
+    if not settings.ocr_languages:
+        raise ValueError("ocr_languages must not be empty")
+    for language in settings.ocr_languages:
+        _required_text(language, "ocr_languages")
+    _required_bool(settings.ocr_detect_orientation, "ocr_detect_orientation")
+    confidence = _non_negative_number(
+        settings.ocr_min_confidence,
+        "ocr_min_confidence",
+    )
+    if confidence > 1:
+        raise ValueError("ocr_min_confidence must be at most 1")
 
 
 def _required_mapping(

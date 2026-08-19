@@ -82,6 +82,9 @@ def check_python(version: tuple[int, ...] | None = None) -> CheckResult:
 def check_command(
     command: str,
     which: Callable[[str], str | None] = shutil.which,
+    *,
+    required: bool = True,
+    remediation: str | None = None,
 ) -> CheckResult:
     """필수 네이티브 명령이 PATH에 있는지 확인한다."""
     path = which(command)
@@ -89,9 +92,9 @@ def check_command(
         return CheckResult(command, "ok", path)
     return CheckResult(
         command,
-        "error",
+        "error" if required else "warning",
         f"{command} 명령을 PATH에서 찾을 수 없음",
-        "FFmpeg를 설치하고 PATH 설정을 확인하세요.",
+        remediation or "필요한 native command를 설치하고 PATH를 확인하세요.",
     )
 
 
@@ -177,6 +180,13 @@ def run_preflight(project_root: Path) -> PreflightReport:
         check_python(),
         check_command("ffmpeg"),
         check_command("ffprobe"),
+        check_command(
+            "tesseract",
+            required=False,
+            remediation=(
+                "OCR 사용 시 Tesseract와 필요한 language data를 설치하세요."
+            ),
+        ),
         check_sqlite_fts5(),
     ]
     for display_name, module, install_file in REQUIRED_MODULES:
@@ -222,4 +232,3 @@ def format_report(report: PreflightReport, *, include_ok: bool = True) -> str:
     if not lines:
         return "환경 사전 검사 통과"
     return "\n".join(lines)
-

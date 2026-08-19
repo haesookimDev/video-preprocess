@@ -13,6 +13,7 @@ if TYPE_CHECKING:
         CaptionService,
         DiarizationService,
         EmbeddingService,
+        OCRService,
         STTService,
         VADService,
     )
@@ -35,12 +36,21 @@ class PipelineContext:
     whisper_model: str = "base"
     language: str | None = None  # None이면 자동 감지
     caption_model: str = "Salesforce/blip-image-captioning-base"
+    ocr_mode: str = "disabled"
+    ocr_model: str = "tesseract"
+    ocr_languages: tuple[str, ...] = ("eng",)
+    ocr_detect_orientation: bool = True
+    ocr_min_confidence: float = 0.5
     embed_model: str = "paraphrase-multilingual-MiniLM-L12-v2"
     diarize_model: str = "pyannote/speaker-diarization-community-1"
     max_context_tokens: int | None = None
     context_tokenizer_model: str | None = None
 
     caption_service: CaptionService | None = field(
+        default=None,
+        repr=False,
+    )
+    ocr_service: OCRService | None = field(
         default=None,
         repr=False,
     )

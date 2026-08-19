@@ -111,6 +111,37 @@ def test_timeline_preserves_multi_visuals_and_legacy_scene_summary(
         context.stage_dir("08_captions") / "captions.json",
         {"captions": fixture["captions"]},
     )
+    context.save_json(
+        context.stage_dir("08_ocr") / "ocr.json",
+        {
+            "results": [
+                {
+                    "scene_id": 1,
+                    "keyframe_index": 1,
+                    "keyframe_count": 2,
+                    "timestamp_sec": fixture["keyframes"][0]["timestamp_sec"],
+                    "keyframe": fixture["keyframes"][0]["path"],
+                    "text": "OPENAI",
+                    "image_width": 640,
+                    "image_height": 360,
+                    "regions": [
+                        {
+                            "region_id": 1,
+                            "text": "OPENAI",
+                            "confidence": 0.98,
+                            "bbox": {
+                                "x": 10,
+                                "y": 20,
+                                "width": 100,
+                                "height": 30,
+                            },
+                        }
+                    ],
+                    "trigger_hint": "title",
+                }
+            ]
+        },
+    )
 
     metrics = s09_timeline.run(context)
 
@@ -143,9 +174,15 @@ def test_timeline_preserves_multi_visuals_and_legacy_scene_summary(
     ]
     assert second["keyframe"] == fixture["keyframes"][2]["path"]
     assert second["caption"] == "a closing frame"
+    assert first["ocr_text"] == "OPENAI"
+    assert first["visual_ocr"][0]["regions"][0]["confidence"] == 0.98
+    assert first["visual_ocr"][0]["trigger_hint"] == "title"
+    assert second["ocr_text"] is None
+    assert metrics["scenes_with_ocr"] == 1
     markdown = (
         context.out_root / "09_timeline" / "timeline.md"
     ).read_text(encoding="utf-8")
     assert "시각 1/2 [00:03]: a title card" in markdown
     assert "시각 2/2 [00:06]: a presenter" in markdown
+    assert "- 화면 텍스트: OPENAI" in markdown
     assert "- 시각: a closing frame" in markdown

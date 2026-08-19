@@ -84,6 +84,7 @@ def write_query_fixture(root: Path) -> None:
             "start_sec": 10.0,
             "end_sec": 20.0,
             "caption": "second scene",
+            "ocr_text": "OPENAI dashboard",
             "transcript": [
                 {
                     "start_sec": 11.0,
@@ -173,6 +174,7 @@ def test_query_service_returns_ranked_matches_and_context(tmp_path: Path) -> Non
     assert result.no_answer is False
     assert result.context_stats["token_count"] <= 4096
     assert "### 씬 02" in result.context
+    assert "화면 텍스트: OPENAI dashboard" in result.context
     assert result.to_dict()["matches"][0]["scene_id"] == 2
     assert str(tmp_path) not in str(result.to_dict())
 

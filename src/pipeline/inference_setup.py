@@ -6,6 +6,7 @@ from pathlib import Path
 from video_preprocess.inference.local import (
     create_local_caption_service,
     create_local_diarization_service,
+    create_local_ocr_service,
     create_local_stt_service,
     create_local_vad_service,
 )
@@ -21,6 +22,7 @@ def configure_local_inference(ctx: PipelineContext) -> None:
     dependencies = (
         ctx.caption_service,
         ctx.stt_service,
+        ctx.ocr_service,
         ctx.diarization_service,
         ctx.vad_service,
         ctx.artifact_registrar,
@@ -29,7 +31,8 @@ def configure_local_inference(ctx: PipelineContext) -> None:
         return
     if any(dependency is not None for dependency in dependencies):
         raise ValueError(
-            "caption_service, stt_service, diarization_service, vad_service, "
+            "caption_service, ocr_service, stt_service, "
+            "diarization_service, vad_service, "
             "and artifact_registrar "
             "must be configured together"
         )
@@ -45,6 +48,10 @@ def configure_local_inference(ctx: PipelineContext) -> None:
     ctx.caption_service = create_local_caption_service(
         ctx.caption_model,
         artifact_store,
+    )
+    ctx.ocr_service = create_local_ocr_service(
+        artifact_store,
+        model_name=ctx.ocr_model,
     )
     ctx.stt_service = create_local_stt_service(
         ctx.whisper_model,

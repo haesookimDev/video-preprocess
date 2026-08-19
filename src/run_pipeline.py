@@ -10,6 +10,7 @@ import asyncio
 import hashlib
 import json
 import os
+import shutil
 import sys
 from dataclasses import replace
 from pathlib import Path
@@ -82,6 +83,56 @@ def main() -> int:
         default=4,
         help="local caption ordered chunk 크기 (기본: 4)",
     )
+    parser.add_argument(
+        "--ocr-mode",
+        choices=("disabled", "all", "caption-hints"),
+        default="disabled",
+        help="OCR trigger: disabled, all, caption-hints (기본: disabled)",
+    )
+    parser.add_argument(
+        "--ocr-model",
+        default="tesseract",
+        help="OCR provider model 이름 (기본: tesseract)",
+    )
+    parser.add_argument(
+        "--ocr-language",
+        action="append",
+        default=[],
+        help="Tesseract language ID. 여러 번 지정 가능 (기본: eng)",
+    )
+    parser.add_argument(
+        "--ocr-min-confidence",
+        type=float,
+        default=0.5,
+        help="OCR word confidence 하한 0~1 (기본: 0.5)",
+    )
+    parser.add_argument(
+        "--ocr-detect-orientation",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="OCR orientation detection 사용 (기본: true)",
+    )
+    parser.add_argument(
+        "--ocr-command",
+        default="tesseract",
+        help="local OCR command (기본: tesseract)",
+    )
+    parser.add_argument(
+        "--ocr-batch-size",
+        type=int,
+        default=4,
+        help="local OCR ordered chunk 크기 (기본: 4)",
+    )
+    parser.add_argument("--ocr-endpoint", default=None,
+                        help="ocr.default HTTP Inference v1 endpoint")
+    parser.add_argument("--ocr-token-env", default=None,
+                        help="OCR HTTP bearer token 환경변수 이름")
+    parser.add_argument(
+        "--ocr-artifact-namespace",
+        action="append",
+        default=[],
+        help="원격 OCR이 접근할 Artifact Store namespace",
+    )
     parser.add_argument("--embedding-endpoint", default=None,
                         help="embedding.default HTTP Inference v1 endpoint")
     parser.add_argument("--embedding-token-env", default=None,
@@ -110,13 +161,24 @@ def main() -> int:
     if not report.ok:
         return 1
 
+    if (
+        args.ocr_mode != "disabled"
+        and args.ocr_endpoint is None
+        and shutil.which(args.ocr_command) is None
+    ):
+        print(
+            f"오류: OCR command를 찾을 수 없습니다: {args.ocr_command}",
+            file=sys.stderr,
+        )
+        return 1
+
     if not args.video.exists():
         print(f"오류: 영상 파일이 없습니다: {args.video}", file=sys.stderr)
         return 1
 
     # 무거운 단계 모듈은 runtime factory가 실제 실행 시점에만 로드한다.
     from video_preprocess.engine import DAGPlanner, create_default_registry
-    from pipeline.deployment import embedding_deployments_from_environment
+    from pipeline.deployment import inference_deployments_from_environment
     from video_preprocess.services import (
         LocalPipelineRuntimeFactory,
         PipelineApplicationService,
@@ -127,10 +189,19 @@ def main() -> int:
     output_root = (args.out / args.video.stem).resolve()
     run_id = args.run_id or _local_run_id(output_root)
     try:
-        deployments = embedding_deployments_from_environment(
-            endpoint=args.embedding_endpoint,
-            token_env=args.embedding_token_env,
-            artifact_namespaces=args.embedding_artifact_namespace,
+        deployments = inference_deployments_from_environment(
+            endpoints={
+                "embedding.default": args.embedding_endpoint,
+                "ocr.default": args.ocr_endpoint,
+            },
+            token_envs={
+                "embedding.default": args.embedding_token_env,
+                "ocr.default": args.ocr_token_env,
+            },
+            artifact_namespaces={
+                "embedding.default": args.embedding_artifact_namespace,
+                "ocr.default": args.ocr_artifact_namespace,
+            },
             environ=os.environ,
         )
         request = PipelineRunRequest(
@@ -150,6 +221,11 @@ def main() -> int:
                 language=args.language,
                 scene_threshold=args.scene_threshold,
                 keyframes_per_scene=args.keyframes_per_scene,
+                ocr_mode=args.ocr_mode,
+                ocr_model=args.ocr_model,
+                ocr_languages=tuple(args.ocr_language or ("eng",)),
+                ocr_detect_orientation=args.ocr_detect_orientation,
+                ocr_min_confidence=args.ocr_min_confidence,
                 max_context_tokens=args.max_context_tokens,
                 context_tokenizer_model=args.context_tokenizer_model,
             ),
@@ -165,6 +241,8 @@ def main() -> int:
                 executor_max_concurrency=args.executor_max_concurrency,
                 caption_device=args.caption_device,
                 caption_batch_size=args.caption_batch_size,
+                ocr_command=args.ocr_command,
+                ocr_batch_size=args.ocr_batch_size,
             ),
         )
         plan = service.plan(request)
@@ -193,6 +271,8 @@ def main() -> int:
                     "local_inference": {
                         "caption_device": args.caption_device,
                         "caption_batch_size": args.caption_batch_size,
+                        "ocr_command": args.ocr_command,
+                        "ocr_batch_size": args.ocr_batch_size,
                     },
                     "cache_decisions": [
                         _preview_stage_payload(record)

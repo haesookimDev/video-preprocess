@@ -223,14 +223,20 @@ def create_legacy_model_bindings(
     *,
     stage_modules: Mapping[str, LegacyStageModule] | None = None,
 ) -> StageBindingRegistry:
-    """Bind provider-backed legacy Stages 05-08."""
+    """Bind provider-backed legacy Stages 05-08, including OCR."""
 
     modules = (
         _load_model_modules()
         if stage_modules is None
         else dict(stage_modules)
     )
-    expected_names = {"05_vad", "06_stt", "07_diarize", "08_captions"}
+    expected_names = {
+        "05_vad",
+        "06_stt",
+        "07_diarize",
+        "08_captions",
+        "08_ocr",
+    }
     if set(modules) != expected_names:
         raise ValueError("stage_modules must define legacy Stages 05 through 08")
     _validate_modules(modules, expected_names)
@@ -293,12 +299,15 @@ def create_legacy_pipeline_bindings(
         "06_stt",
         "07_diarize",
         "08_captions",
+        "08_ocr",
         "09_timeline",
         "10_index",
         "11_context",
     }
     if set(modules) != expected_names:
-        raise ValueError("stage_modules must define legacy Stages 01 through 11")
+        raise ValueError(
+            "stage_modules must define the twelve legacy pipeline Stages"
+        )
     _validate_modules(modules, expected_names)
     definitions = (
         *_media_definitions(modules),
@@ -462,6 +471,32 @@ def _model_definitions(
             before_run=_restore_keyframe_bundle,
             outcome_resolver=_caption_outcome,
         ),
+        LegacyStageDefinition(
+            name="08_ocr",
+            stage_version="1.0.0",
+            module=modules["08_ocr"],
+            inputs=(
+                keyframes,
+                keyframe_images,
+                LegacyInputBinding(
+                    "captions",
+                    lambda ctx, task: (
+                        ctx.out_root / "08_captions" / "captions.json"
+                    ),
+                ),
+            ),
+            config_fields=(
+                "ocr_mode",
+                "ocr_model",
+                "ocr_languages",
+                "ocr_detect_orientation",
+                "ocr_min_confidence",
+            ),
+            model_bindings={"ocr": "ocr.default"},
+            output_resolver=_ocr_outputs,
+            before_run=_restore_keyframe_bundle,
+            outcome_resolver=_ocr_outcome,
+        ),
     )
 
 
@@ -492,6 +527,10 @@ def _final_definitions(
         "captions",
         lambda ctx, task: ctx.out_root / "08_captions" / "captions.json",
     )
+    ocr = LegacyInputBinding(
+        "ocr",
+        lambda ctx, task: ctx.out_root / "08_ocr" / "ocr.json",
+    )
     timeline = LegacyInputBinding(
         "timeline",
         lambda ctx, task: ctx.out_root / "09_timeline" / "timeline.json",
@@ -499,16 +538,23 @@ def _final_definitions(
     return (
         LegacyStageDefinition(
             name="09_timeline",
-            stage_version="1.2.0",
+            stage_version="1.3.0",
             module=modules["09_timeline"],
-            inputs=(scenes, keyframes, transcript, diarization, captions),
+            inputs=(
+                scenes,
+                keyframes,
+                transcript,
+                diarization,
+                captions,
+                ocr,
+            ),
             config_fields=(),
             model_bindings={},
             output_resolver=_timeline_outputs,
         ),
         LegacyStageDefinition(
             name="10_index",
-            stage_version="1.1.0",
+            stage_version="1.2.0",
             module=modules["10_index"],
             inputs=(timeline,),
             config_fields=("embed_model",),
@@ -518,7 +564,7 @@ def _final_definitions(
         ),
         LegacyStageDefinition(
             name="11_context",
-            stage_version="1.1.0",
+            stage_version="1.2.0",
             module=modules["11_context"],
             inputs=(metadata, diarization, timeline),
             config_fields=("max_context_tokens", "context_tokenizer_model"),
@@ -691,6 +737,23 @@ def _caption_outputs(
     }
 
 
+def _ocr_outputs(
+    ctx: PipelineContext,
+    registrar: LegacyArtifactRegistrar,
+    task: StageTask,
+) -> Mapping[str, ArtifactRef]:
+    return {
+        "ocr": _register(
+            registrar,
+            task,
+            "ocr",
+            "08_ocr/ocr.json",
+            kind="json",
+            media_type="application/json",
+        )
+    }
+
+
 def _timeline_outputs(
     ctx: PipelineContext,
     registrar: LegacyArtifactRegistrar,
@@ -831,6 +894,30 @@ def _caption_outcome(
             reason="keyframe input is empty",
         )
     return _model_outcome(payload, "caption")
+
+
+def _ocr_outcome(
+    ctx: PipelineContext,
+    metrics: Mapping[str, object],
+) -> LegacyStageOutcome:
+    payload = ctx.load_json(ctx.out_root / "08_ocr" / "ocr.json")
+    if not payload.get("executed"):
+        reason_code = payload.get("reason_code")
+        reason = payload.get("reason")
+        return LegacyStageOutcome(
+            status=StageStatus.SKIPPED,
+            reason_code=(
+                reason_code
+                if isinstance(reason_code, str) and reason_code.strip()
+                else "OCR_NOT_EXECUTED"
+            ),
+            reason=(
+                reason
+                if isinstance(reason, str) and reason.strip()
+                else "OCR was not executed"
+            ),
+        )
+    return _model_outcome(payload, "ocr")
 
 
 def _index_outcome(
@@ -1096,11 +1183,18 @@ def _load_model_modules() -> dict[str, LegacyStageModule]:
         s06_stt,
         s07_diarize,
         s08_captions,
+        s08_ocr,
     )
 
     return {
         module.NAME: module
-        for module in (s05_vad, s06_stt, s07_diarize, s08_captions)
+        for module in (
+            s05_vad,
+            s06_stt,
+            s07_diarize,
+            s08_captions,
+            s08_ocr,
+        )
     }
 
 

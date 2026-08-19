@@ -212,7 +212,7 @@ components:
     StageName:
       type: string
       enum: [01_probe, 02_scenes, 03_keyframes, 04_audio, 05_vad, 06_stt,
-             07_diarize, 08_captions, 09_timeline, 10_index, 11_context]
+             07_diarize, 08_captions, 08_ocr, 09_timeline, 10_index, 11_context]
     PipelineSettings:
       type: object
       additionalProperties: false
@@ -231,6 +231,23 @@ components:
         whisper_model: {type: string, minLength: 1, default: base}
         language: {type: [string, 'null'], minLength: 1}
         caption_model: {type: string, minLength: 1}
+        ocr_mode:
+          type: string
+          enum: [disabled, all, caption-hints]
+          default: disabled
+        ocr_model: {type: string, minLength: 1, default: tesseract}
+        ocr_languages:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items: {type: string, pattern: '^[a-z0-9_]+$'}
+          default: [eng]
+        ocr_detect_orientation: {type: boolean, default: true}
+        ocr_min_confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+          default: 0.5
         embed_model: {type: string, minLength: 1}
         diarize_model: {type: string, minLength: 1}
         max_context_tokens:

@@ -115,8 +115,8 @@ def test_sample_pipeline_and_query_cross_public_http_boundary(
     persisted = LocalPipelineRunRepository(state_root).load(run_id)
     assert current["status"] == "succeeded"
     assert current["progress"] == {
-        "planned_stages": 11,
-        "completed_stages": 11,
+        "planned_stages": 12,
+        "completed_stages": 12,
         "ratio": 1.0,
         "current_stage": None,
         "current_attempt": None,

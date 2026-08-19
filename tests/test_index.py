@@ -48,6 +48,7 @@ def test_index_stage_keeps_sqlite_schema_with_provider_metadata(
                 "start_sec": 0.0,
                 "end_sec": 5.0,
                 "caption": "첫 장면",
+                "ocr_text": "OPENAI 화면",
                 "transcript": [{"text": "첫 내용"}],
             },
             {
@@ -82,7 +83,10 @@ def test_index_stage_keeps_sqlite_schema_with_provider_metadata(
     finally:
         db.close()
     assert result == {"card_count": 2, "embed_dim": 2}
-    assert service.texts == ["첫 장면\n첫 내용", "둘째 장면\n둘째 내용"]
+    assert service.texts == [
+        "첫 장면\nOPENAI 화면\n첫 내용",
+        "둘째 장면\n둘째 내용",
+    ]
     assert meta["embed_model"] == "fake/model"
     assert meta["embed_provider"] == "fake.embedding"
     assert meta["embed_revision"] == "rev-1"

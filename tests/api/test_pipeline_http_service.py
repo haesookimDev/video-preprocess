@@ -135,10 +135,24 @@ def test_submission_parser_rejects_unknown_fields_and_invalid_settings() -> None
 
     assert parsed.to_stage == "02_scenes"
     assert parsed.settings.language == "ko"
+    ocr = PipelineRunSubmission.from_dict(
+        {
+            **valid,
+            "settings": {
+                "ocr_mode": "all",
+                "ocr_languages": ["eng", "kor"],
+                "ocr_min_confidence": 0.7,
+            },
+        }
+    )
+    assert ocr.settings.ocr_languages == ("eng", "kor")
     for changes in (
         {**valid, "output_root": "/tmp/output"},
         {**valid, "settings": {"keyframes_per_scene": 0}},
         {**valid, "settings": {"keyframes_per_scene": 4}},
+        {**valid, "settings": {"ocr_mode": "invalid"}},
+        {**valid, "settings": {"ocr_languages": []}},
+        {**valid, "settings": {"ocr_min_confidence": 2}},
         {**valid, "schema_version": "2"},
     ):
         try:
