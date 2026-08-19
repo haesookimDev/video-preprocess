@@ -115,6 +115,17 @@ def full_fake_modules():
         )
         return {"has_audio": True}
 
+    def embedded_text(ctx):
+        ctx.save_json(
+            ctx.stage_dir("04_embedded_text") / "embedded_text.json",
+            {
+                "executed": True,
+                "subtitles": [],
+                "chapters": [{"title": "Opening"}],
+            },
+        )
+        return {"subtitle_cue_count": 0, "chapter_count": 1}
+
     def vad(ctx):
         write_model_output(
             ctx,
@@ -222,6 +233,7 @@ def full_fake_modules():
         scenes,
         keyframes,
         audio,
+        embedded_text,
         vad,
         stt,
         diarize,
@@ -236,6 +248,7 @@ def full_fake_modules():
         "02_scenes",
         "03_keyframes",
         "04_audio",
+        "04_embedded_text",
         "05_vad",
         "06_stt",
         "07_diarize",
@@ -341,8 +354,8 @@ def test_full_default_dag_runs_through_one_legacy_binding_registry(
         ref for name, ref in result.artifacts.items() if name != "video"
     )
     assert all(store.verify(ref).ok for ref in generated)
-    assert result.stages[10].result.models[0].slot == "embedding"
-    assert result.stages[10].result.models[0].model == "embedding/model"
+    assert result.stages[11].result.models[0].slot == "embedding"
+    assert result.stages[11].result.models[0].model == "embedding/model"
     assert context.embed_model == "paraphrase-multilingual-MiniLM-L12-v2"
 
 

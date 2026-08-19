@@ -18,6 +18,7 @@ EXPECTED_ORDER = (
     "02_scenes",
     "03_keyframes",
     "04_audio",
+    "04_embedded_text",
     "05_vad",
     "06_stt",
     "07_diarize",
@@ -29,13 +30,13 @@ EXPECTED_ORDER = (
 )
 
 
-def test_default_registry_has_stable_twelve_stage_plan() -> None:
+def test_default_registry_has_stable_thirteen_stage_plan() -> None:
     registry = create_default_registry()
     planner = DAGPlanner(registry)
 
     plan = planner.plan()
 
-    assert len(registry) == 12
+    assert len(registry) == 13
     assert planner.ordered_stage_names == EXPECTED_ORDER
     assert plan.stage_names == EXPECTED_ORDER
     assert plan.boundary_inputs == ("video",)
@@ -53,6 +54,12 @@ def test_default_registry_has_stable_twelve_stage_plan() -> None:
         "keyframe_images",
     )
     assert registry.get("08_captions").stage_version == "1.3.0"
+    assert registry.get("04_embedded_text").dependencies == ("01_probe",)
+    assert registry.get("04_embedded_text").required_inputs == (
+        "video",
+        "metadata",
+    )
+    assert registry.get("04_embedded_text").outputs == ("embedded_text",)
     assert registry.get("08_ocr").dependencies == (
         "03_keyframes",
         "08_captions",
@@ -187,7 +194,9 @@ def test_to_stage_selects_all_ancestors() -> None:
 
     plan = planner.plan(to_stage="09_timeline")
 
-    assert plan.stage_names == EXPECTED_ORDER[:10]
+    assert plan.stage_names == tuple(
+        name for name in EXPECTED_ORDER if name != "04_embedded_text"
+    )[:10]
     assert plan.boundary_inputs == ("video",)
 
 

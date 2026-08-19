@@ -1,4 +1,4 @@
-"""Stable StageSpec registry for the current twelve-stage pipeline."""
+"""Stable StageSpec registry for the current thirteen-stage pipeline."""
 
 from video_preprocess.domain import ResourceHints, StageSpec
 
@@ -36,6 +36,14 @@ DEFAULT_STAGE_SPECS = (
         required_inputs=("video", "metadata"),
         outputs=("audio", "audio_metadata"),
         resource_hints=ResourceHints(cpu=1.0, memory_mb=256),
+    ),
+    StageSpec(
+        name="04_embedded_text",
+        stage_version="1.0.0",
+        dependencies=("01_probe",),
+        required_inputs=("video", "metadata"),
+        outputs=("embedded_text",),
+        resource_hints=ResourceHints(cpu=0.5, memory_mb=128),
     ),
     StageSpec(
         name="05_vad",

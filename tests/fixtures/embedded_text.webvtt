@@ -1,0 +1,13 @@
+WEBVTT
+
+cue-one
+00:00.500 --> 00:04.000 position:50%
+<i>Hello &amp; welcome</i>
+
+NOTE generated fixture
+this block is ignored
+
+00:04.000 --> 00:07.500
+두 번째 자막
+second line
+

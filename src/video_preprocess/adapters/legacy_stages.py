@@ -198,16 +198,24 @@ def create_legacy_media_bindings(
     *,
     stage_modules: Mapping[str, LegacyStageModule] | None = None,
 ) -> StageBindingRegistry:
-    """Bind legacy Stages 01-04 for the sequential LocalExecutor."""
+    """Bind legacy media Stages 01-04 for the LocalExecutor."""
 
     modules = (
         _load_default_modules()
         if stage_modules is None
         else dict(stage_modules)
     )
-    expected_names = {"01_probe", "02_scenes", "03_keyframes", "04_audio"}
+    expected_names = {
+        "01_probe",
+        "02_scenes",
+        "03_keyframes",
+        "04_audio",
+        "04_embedded_text",
+    }
     if set(modules) != expected_names:
-        raise ValueError("stage_modules must define legacy Stages 01 through 04")
+        raise ValueError(
+            "stage_modules must define all legacy media Stages 01 through 04"
+        )
     _validate_modules(modules, expected_names)
     context.artifact_registrar = registrar
     return _create_binding_registry(
@@ -295,6 +303,7 @@ def create_legacy_pipeline_bindings(
         "02_scenes",
         "03_keyframes",
         "04_audio",
+        "04_embedded_text",
         "05_vad",
         "06_stt",
         "07_diarize",
@@ -306,7 +315,7 @@ def create_legacy_pipeline_bindings(
     }
     if set(modules) != expected_names:
         raise ValueError(
-            "stage_modules must define the twelve legacy pipeline Stages"
+            "stage_modules must define the thirteen legacy pipeline Stages"
         )
     _validate_modules(modules, expected_names)
     definitions = (
@@ -399,6 +408,16 @@ def _media_definitions(
             config_fields=(),
             model_bindings={},
             output_resolver=_audio_outputs,
+        ),
+        LegacyStageDefinition(
+            name="04_embedded_text",
+            stage_version="1.0.0",
+            module=modules["04_embedded_text"],
+            inputs=(video, metadata),
+            config_fields=(),
+            model_bindings={},
+            output_resolver=_embedded_text_outputs,
+            outcome_resolver=_embedded_text_outcome,
         ),
     )
 
@@ -669,6 +688,23 @@ def _audio_outputs(
     return {"audio": audio, "audio_metadata": metadata}
 
 
+def _embedded_text_outputs(
+    ctx: PipelineContext,
+    registrar: LegacyArtifactRegistrar,
+    task: StageTask,
+) -> Mapping[str, ArtifactRef]:
+    return {
+        "embedded_text": _register(
+            registrar,
+            task,
+            "embedded_text",
+            "04_embedded_text/embedded_text.json",
+            kind="json",
+            media_type="application/json",
+        )
+    }
+
+
 def _vad_outputs(
     ctx: PipelineContext,
     registrar: LegacyArtifactRegistrar,
@@ -841,6 +877,27 @@ def _vad_outcome(
             reason="audio input has no audio stream",
         )
     return _model_outcome(payload, "vad")
+
+
+def _embedded_text_outcome(
+    ctx: PipelineContext,
+    metrics: Mapping[str, object],
+) -> LegacyStageOutcome:
+    payload = ctx.load_json(
+        ctx.out_root / "04_embedded_text" / "embedded_text.json"
+    )
+    if not payload.get("executed"):
+        reason_code = payload.get("reason_code")
+        return LegacyStageOutcome(
+            status=StageStatus.SKIPPED,
+            reason_code=(
+                reason_code
+                if isinstance(reason_code, str) and reason_code
+                else "NO_EMBEDDED_TEXT"
+            ),
+            reason="no extractable embedded subtitles or chapters",
+        )
+    return LegacyStageOutcome()
 
 
 def _stt_outcome(
@@ -1169,11 +1226,18 @@ def _load_default_modules() -> dict[str, LegacyStageModule]:
         s02_scenes,
         s03_keyframes,
         s04_audio,
+        s04_embedded_text,
     )
 
     return {
         module.NAME: module
-        for module in (s01_probe, s02_scenes, s03_keyframes, s04_audio)
+        for module in (
+            s01_probe,
+            s02_scenes,
+            s03_keyframes,
+            s04_audio,
+            s04_embedded_text,
+        )
     }
 
 

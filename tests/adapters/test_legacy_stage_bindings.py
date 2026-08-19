@@ -138,11 +138,27 @@ def fake_modules(seen: list[tuple[str, object]]):
         )
         return {"has_audio": True}
 
+    def embedded_text(ctx):
+        seen.append(("04_embedded_text", None))
+        ctx.save_json(
+            ctx.stage_dir("04_embedded_text") / "embedded_text.json",
+            {
+                "executed": True,
+                "subtitles": [],
+                "chapters": [{"title": "Opening"}],
+            },
+        )
+        return {"subtitle_cue_count": 0, "chapter_count": 1}
+
     return {
         "01_probe": SimpleNamespace(NAME="01_probe", run=probe),
         "02_scenes": SimpleNamespace(NAME="02_scenes", run=scenes),
         "03_keyframes": SimpleNamespace(NAME="03_keyframes", run=keyframes),
         "04_audio": SimpleNamespace(NAME="04_audio", run=audio),
+        "04_embedded_text": SimpleNamespace(
+            NAME="04_embedded_text",
+            run=embedded_text,
+        ),
     }
 
 
@@ -194,30 +210,42 @@ def test_media_bindings_execute_legacy_stages_and_publish_artifacts(
             {"video": video, "metadata": first.outputs["metadata"]},
         )
         fourth = await executor.result(await executor.submit(fourth_task))
-        return first, second, third, fourth
+        embedded_task = task(
+            "04_embedded_text",
+            "1.0.0",
+            {"video": video, "metadata": first.outputs["metadata"]},
+        )
+        embedded = await executor.result(await executor.submit(embedded_task))
+        return first, second, third, fourth, embedded
 
-    first, second, third, fourth = asyncio.run(scenario())
+    first, second, third, fourth, embedded = asyncio.run(scenario())
 
     assert bindings.names == (
         "01_probe",
         "02_scenes",
         "03_keyframes",
         "04_audio",
+        "04_embedded_text",
     )
-    assert [result.status for result in (first, second, third, fourth)] == [
+    assert [
+        result.status
+        for result in (first, second, third, fourth, embedded)
+    ] == [
         StageStatus.SUCCEEDED,
-    ] * 4
+    ] * 5
     assert set(first.outputs) == {"metadata"}
     assert set(second.outputs) == {"scenes", "scene_stats"}
     assert set(third.outputs) == {"keyframes", "keyframe_images"}
     assert set(fourth.outputs) == {"audio", "audio_metadata"}
-    for result in (first, second, third, fourth):
+    assert set(embedded.outputs) == {"embedded_text"}
+    for result in (first, second, third, fourth, embedded):
         assert all(store.verify(ref).ok for ref in result.outputs.values())
     assert seen == [
         ("01_probe", None),
         ("02_scenes", (31.5, 20)),
         ("03_keyframes", 2),
         ("04_audio", None),
+        ("04_embedded_text", None),
     ]
     assert context.scene_threshold == 27.0
     assert context.min_scene_len_frames == 15
@@ -232,13 +260,13 @@ def test_media_bindings_execute_legacy_stages_and_publish_artifacts(
         assert archive.read(archive.namelist()[0]) == b"first-image"
 
 
-def test_pipeline_engine_runs_first_four_legacy_bindings(
+def test_pipeline_engine_runs_legacy_media_bindings(
     tmp_path: Path,
 ) -> None:
     context, _, bindings, video = create_runtime(tmp_path)
-    first_four = DEFAULT_STAGE_SPECS[:4]
+    media_specs = DEFAULT_STAGE_SPECS[:5]
     execution_plan = DAGPlanner(
-        StageRegistry(first_four, external_inputs=("video",))
+        StageRegistry(media_specs, external_inputs=("video",))
     ).plan()
     engine = PipelineEngine(LocalExecutor(bindings))
 
@@ -264,6 +292,7 @@ def test_pipeline_engine_runs_first_four_legacy_bindings(
         "02_scenes",
         "03_keyframes",
         "04_audio",
+        "04_embedded_text",
     ]
     assert set(result.artifacts) >= {
         "metadata",
@@ -273,6 +302,7 @@ def test_pipeline_engine_runs_first_four_legacy_bindings(
         "keyframe_images",
         "audio",
         "audio_metadata",
+        "embedded_text",
     }
     assert context.scene_threshold == 27.0
 
