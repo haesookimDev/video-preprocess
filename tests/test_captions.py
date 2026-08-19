@@ -49,6 +49,25 @@ class MultiCaptionService:
         )
 
 
+class SelectedCaptionService:
+    def __init__(self) -> None:
+        self.images = []
+
+    def caption(self, images, **kwargs) -> CaptionBatch:
+        self.images = list(images)
+        return CaptionBatch(
+            captions=tuple("selected caption" for _ in self.images),
+            model=EffectiveModel(
+                provider="fake.caption",
+                name="fake/model",
+                revision="rev-1",
+                runtime="fake/1.0",
+            ),
+            usage={"input_count": len(self.images)},
+            timing={"inference_sec": 0.01},
+        )
+
+
 def test_caption_stage_keeps_legacy_output_with_provider_metadata(
     tmp_path: Path,
 ) -> None:
@@ -179,3 +198,67 @@ def test_caption_stage_groups_multiple_keyframes_per_scene(
         1,
     ]
     assert output["scene_captions"][0]["captions"] == output["captions"][:2]
+
+
+def test_reprocessing_caption_only_infers_selected_scene(tmp_path: Path) -> None:
+    context = PipelineContext(
+        video_path=tmp_path / "source.mp4",
+        out_root=tmp_path / "derived",
+        caption_model="fake/model",
+        reprocessing_source_run_id="run-source",
+        reprocessing_profile="visual-detail-v1",
+        reprocessing_scene_ids=(2,),
+        reprocessing_overlay_policy="copy-unselected-from-source-v1",
+    )
+    keyframes = []
+    for scene_id in (1, 2):
+        relative = f"03_keyframes/frames/scene_{scene_id:03d}.jpg"
+        path = context.out_root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(f"frame-{scene_id}".encode())
+        keyframes.append({
+            "scene_id": scene_id,
+            "keyframe_index": 1,
+            "keyframe_count": 1,
+            "timestamp_sec": float(scene_id * 3),
+            "path": relative,
+        })
+    context.save_json(
+        context.out_root / "03_keyframes" / "keyframes.json",
+        {"keyframes": keyframes},
+    )
+    source_captions = (
+        context.out_root / "00_source" / "08_captions" / "captions.json"
+    )
+    source_captions.parent.mkdir(parents=True)
+    context.save_json(
+        source_captions,
+        {
+            "captions": [{
+                **keyframes[0],
+                "keyframe": keyframes[0]["path"],
+                "caption": "source caption",
+            }]
+        },
+    )
+    service = SelectedCaptionService()
+    store = LocalArtifactStore(context.out_root, namespace="derived")
+    context.caption_service = service
+    context.artifact_registrar = LegacyOutputAdapter(store)
+
+    metrics = s08_captions.run(context)
+
+    output = context.load_json(
+        context.out_root / "08_captions" / "captions.json"
+    )
+    assert len(service.images) == 1
+    assert service.images[0].metadata["scene_id"] == 2
+    assert [item["caption"] for item in output["captions"]] == [
+        "source caption",
+        "selected caption",
+    ]
+    assert [
+        item["reprocessing"]["origin"] for item in output["captions"]
+    ] == ["source", "selected-pass"]
+    assert metrics["processed_caption_count"] == 1
+    assert metrics["reused_caption_count"] == 1

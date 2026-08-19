@@ -60,6 +60,15 @@ from .reprocessing import (
     VISUAL_DETAIL_PROFILE,
     VISUAL_DETAIL_V1,
 )
+from .reprocessing_artifacts import (
+    ImportedReprocessingSource,
+    ReprocessingArtifactImportError,
+    ReprocessingArtifactImporter,
+    SOURCE_ARTIFACT_PATHS,
+    SOURCE_BOUNDARY_ALIASES,
+    SOURCE_IMPORT_POLICY,
+    SOURCE_MANIFEST_CONTRACT,
+)
 from .retrieval_evaluation import (
     RetrievalEvaluationCase,
     RetrievalEvaluationReport,
@@ -118,6 +127,13 @@ __all__ = [
     "ReprocessingStageContract",
     "VISUAL_DETAIL_PROFILE",
     "VISUAL_DETAIL_V1",
+    "ImportedReprocessingSource",
+    "ReprocessingArtifactImportError",
+    "ReprocessingArtifactImporter",
+    "SOURCE_ARTIFACT_PATHS",
+    "SOURCE_BOUNDARY_ALIASES",
+    "SOURCE_IMPORT_POLICY",
+    "SOURCE_MANIFEST_CONTRACT",
     "RetrievalEvaluationCase",
     "RetrievalEvaluationReport",
     "evaluate_retrieval",

@@ -10,6 +10,12 @@ import time
 from .s08_captions import _image_media_type, _normalize_keyframes
 from ..context import PipelineContext
 from ..logging_setup import stage_logger
+from ._reprocessing import (
+    keyed_entries,
+    provenance,
+    selected_scene_ids,
+    source_path,
+)
 
 
 NAME = "08_ocr"
@@ -101,12 +107,60 @@ def _caption_candidates(
     return candidates, hints
 
 
+def _merge_source_ocr(
+    ctx: PipelineContext,
+    keyframes: list[dict],
+    selected_results: list[dict],
+    selected_ids: tuple[int, ...],
+) -> list[dict]:
+    source_payload = ctx.load_json(source_path(ctx, "08_ocr/ocr.json"))
+    source = keyed_entries(source_payload.get("results"), "source OCR results")
+    selected = keyed_entries(selected_results, "selected OCR results")
+    selected_set = set(selected_ids)
+    combined = []
+    for keyframe in keyframes:
+        key = (keyframe["scene_id"], keyframe["keyframe_index"])
+        origin = "selected-pass" if key[0] in selected_set else "source"
+        entries = selected if origin == "selected-pass" else source
+        entry = entries.get(key)
+        if entry is None:
+            if origin == "source":
+                continue
+            raise ValueError(f"selected OCR does not cover visual {key}")
+        if entry.get("keyframe") != keyframe["path"]:
+            raise ValueError("OCR keyframe path does not match overlay")
+        combined.append({
+            **entry,
+            "keyframe_index": keyframe["keyframe_index"],
+            "keyframe_count": keyframe["keyframe_count"],
+            "timestamp_sec": keyframe["timestamp_sec"],
+            "reprocessing": provenance(ctx, origin),
+        })
+    return combined
+
+
 def run(ctx: PipelineContext) -> dict[str, object]:
     log = stage_logger(NAME)
     out_dir = ctx.stage_dir(NAME)
     keyframes = _normalize_keyframes(ctx.load_json(
         ctx.out_root / "03_keyframes" / "keyframes.json"
     )["keyframes"])
+    reprocessing_scene_ids = selected_scene_ids(
+        ctx,
+        (keyframe["scene_id"] for keyframe in keyframes),
+    )
+    selected_set = set(reprocessing_scene_ids)
+    if reprocessing_scene_ids and ctx.ocr_mode != "all":
+        raise ValueError("visual-detail reprocessing requires ocr_mode=all")
+    processing_keyframes = (
+        [
+            keyframe
+            for keyframe in keyframes
+            if keyframe["scene_id"] in selected_set
+        ]
+        if reprocessing_scene_ids
+        else keyframes
+    )
 
     if ctx.ocr_mode == "disabled":
         log.info("OCR 비활성화 — 08_ocr 스킵")
@@ -134,11 +188,11 @@ def run(ctx: PipelineContext) -> dict[str, object]:
             ctx.out_root / "08_captions" / "captions.json"
         )["captions"]
         candidates, trigger_hints = _caption_candidates(
-            keyframes,
+            processing_keyframes,
             caption_entries,
         )
     else:
-        candidates = keyframes
+        candidates = processing_keyframes
     if not candidates:
         log.info("OCR trigger에 해당하는 키프레임 없음 — 08_ocr 스킵")
         return _skip(
@@ -188,6 +242,8 @@ def run(ctx: PipelineContext) -> dict[str, object]:
     )
 
     results = []
+    if len(batch.results) != len(candidates):
+        raise ValueError("OCR provider result count does not match input")
     for keyframe, result in zip(candidates, batch.results):
         key = (keyframe["scene_id"], keyframe["keyframe_index"])
         entry = {
@@ -211,9 +267,18 @@ def run(ctx: PipelineContext) -> dict[str, object]:
             result.text or "(텍스트 없음)",
         )
 
+    selected_result_count = len(results)
+    if reprocessing_scene_ids:
+        results = _merge_source_ocr(
+            ctx,
+            keyframes,
+            results,
+            reprocessing_scene_ids,
+        )
+
     text_frame_count = sum(bool(result["text"]) for result in results)
     region_count = sum(len(result["regions"]) for result in results)
-    ctx.save_json(out_dir / "ocr.json", {
+    payload = {
         "enabled": True,
         "executed": True,
         "model": ctx.ocr_model,
@@ -233,7 +298,15 @@ def run(ctx: PipelineContext) -> dict[str, object]:
         "usage": batch.usage,
         "timing": batch.timing,
         "results": results,
-    })
+    }
+    if reprocessing_scene_ids:
+        payload["reprocessing"] = {
+            **provenance(ctx, "selected-pass"),
+            "selected_scene_ids": list(reprocessing_scene_ids),
+            "processed_result_count": selected_result_count,
+            "reused_result_count": len(results) - selected_result_count,
+        }
+    ctx.save_json(out_dir / "ocr.json", payload)
     log.info(
         "OCR 완료: %d장, text %d장, region %d개 (%.1fs)",
         len(results),
@@ -241,8 +314,14 @@ def run(ctx: PipelineContext) -> dict[str, object]:
         region_count,
         time.monotonic() - started,
     )
-    return {
+    metrics = {
         "ocr_image_count": len(results),
         "ocr_text_frame_count": text_frame_count,
         "ocr_region_count": region_count,
     }
+    if reprocessing_scene_ids:
+        metrics.update({
+            "processed_ocr_image_count": selected_result_count,
+            "reused_ocr_image_count": len(results) - selected_result_count,
+        })
+    return metrics

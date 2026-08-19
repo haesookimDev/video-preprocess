@@ -141,6 +141,54 @@ def test_ocr_stage_processes_all_keyframes_in_stable_order(
     }
 
 
+def test_reprocessing_ocr_only_infers_selected_scene(tmp_path: Path) -> None:
+    context = _context(tmp_path, mode="all")
+    context.reprocessing_source_run_id = "run-source"
+    context.reprocessing_profile = "visual-detail-v1"
+    context.reprocessing_scene_ids = (2,)
+    context.reprocessing_overlay_policy = "copy-unselected-from-source-v1"
+    source_ocr = context.out_root / "00_source" / "08_ocr" / "ocr.json"
+    source_ocr.parent.mkdir(parents=True)
+    context.save_json(
+        source_ocr,
+        {
+            "results": [
+                {
+                    "scene_id": 1,
+                    "keyframe_index": index,
+                    "keyframe_count": 2,
+                    "timestamp_sec": float(index * 2),
+                    "keyframe": (
+                        f"03_keyframes/frames/scene_001_{index:02d}.jpg"
+                    ),
+                    "text": f"source {index}",
+                    "image_width": 640,
+                    "image_height": 360,
+                    "regions": [],
+                }
+                for index in (1, 2)
+            ]
+        },
+    )
+    service = _compose(context)
+
+    metrics = s08_ocr.run(context)
+
+    output = context.load_json(context.out_root / "08_ocr" / "ocr.json")
+    assert len(service.images) == 1
+    assert service.images[0].metadata["scene_id"] == 2
+    assert [item["text"] for item in output["results"]] == [
+        "source 1",
+        "source 2",
+        "screen 1",
+    ]
+    assert [
+        item["reprocessing"]["origin"] for item in output["results"]
+    ] == ["source", "source", "selected-pass"]
+    assert metrics["processed_ocr_image_count"] == 1
+    assert metrics["reused_ocr_image_count"] == 2
+
+
 def test_caption_hint_mode_only_processes_matching_keyframes(
     tmp_path: Path,
 ) -> None:

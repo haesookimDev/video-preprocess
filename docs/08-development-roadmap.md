@@ -1,6 +1,6 @@
 # 엔진·실행기 분리 개발 로드맵
 
-상태: **Phase 7 진행 중 — 오디오 이벤트 local/HTTP Provider 완료, 다음 2-pass 재처리**
+상태: **Phase 7 진행 중 — 2-pass source import·visual overlay 완료**
 기준일: 2026-08-19
 대상 설계: [`06-target-architecture.md`](./06-target-architecture.md)  
 공개 계약: [`07-execution-inference-contracts.md`](./07-execution-inference-contracts.md)
@@ -398,7 +398,7 @@ static/API query context가 지정한 256 token 예산을 넘지 않음을 확�
 7. [x] 오디오 이벤트 provider — 공통 계약·local AST/HTTP/disabled Stage 완료
 8. [ ] 질의 기반 2-pass 고품질 재처리
    - [x] submission/profile/plan, 1-pass provenance와 cache/version 계약
-   - [ ] source Artifact import와 selected-scene keyframe/caption/OCR overlay
+   - [x] source Artifact import와 selected-scene keyframe/caption/OCR overlay
    - [ ] 파생 run 실행·상태 저장과 별도 CLI/API mutation adapter
 9. [ ] 필요 시 RemoteExecutor와 분산 worker
 
@@ -470,12 +470,19 @@ resolved Hub commit을 소유한다. composition root는 endpoint가 없으면 l
 ArtifactRef provenance를 고정한다. request/plan fingerprint는 idempotency key를 제외하되 source
 checksum, 선택 scene, profile과 Stage version을 포함한다. 부모를 덮어쓰지 않는 파생 run 정책과
 별도 mutation command/API 경계를
-[`ADR-0036`](./adr/0036-query-guided-derived-run-reprocessing-plan.md)에 기록했다. 현재 plan은 source
-import와 selected-scene overlay capability가 없어 `execution.ready=false`다.
+[`ADR-0036`](./adr/0036-query-guided-derived-run-reprocessing-plan.md)에 기록했다. 첫 planning slice
+당시에는 source import와 selected-scene overlay가 없어 `execution.ready=false`였다.
 
-다음 slice는 source Artifact를 파생 namespace로 checksum 검증 후 import하고 03 keyframe,
-08 caption/OCR이 선택 scene만 새로 만들며 비선택 scene은 source 결과를 결정적으로 복사하는 overlay
-계약을 구현한다. 그 후 09/10/11 전체 materialization과 parent 불변성을 fake Engine/Store로 검증한다.
+8번의 두 번째 slice도 완료했다. source 13개를 모두 checksum 검증한 뒤 파생 `00_source/`로
+import하고 manifest를 마지막에 publish한다. 전용 6-stage registry/binding은 source visual을
+`source_*` boundary로 분리하며 03/08은 선택 scene만 새로 처리하고 비선택 scene을 source에서
+결정적으로 복사한다. 09/10/11은 전체 timeline/index/context를 파생 namespace에 새로 만든다.
+손상 source의 실행 전 거부, 부모 file checksum·mtime 불변, selected-only Provider 입력과 6-stage
+Engine 실행을 fake/local Store로 검증했다.
+
+다음 slice는 남은 `derived-run-application-runtime-v1`을 구현한다. plan→source import→reprocessing
+Engine을 하나의 Application Service로 조합하고 파생 run idempotency·상태·실패 복구를 저장한 다음
+별도 CLI command와 REST/OpenAPI mutation route를 공개한다.
 
 ## 12. 테스트 전략
 

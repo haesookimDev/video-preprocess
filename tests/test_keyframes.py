@@ -159,6 +159,112 @@ def test_stage_extracts_one_to_three_evenly_spaced_keyframes(
     }
 
 
+def test_reprocessing_extracts_selected_scene_and_reuses_source_visual(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    out_root = tmp_path / "derived"
+    video = out_root / "00_source" / "00_input" / "video.mp4"
+    video.parent.mkdir(parents=True)
+    video.write_bytes(b"source-video")
+    context = PipelineContext(
+        video_path=video,
+        out_root=out_root,
+        keyframes_per_scene=3,
+        reprocessing_source_run_id="run-source",
+        reprocessing_profile="visual-detail-v1",
+        reprocessing_scene_ids=(2,),
+        reprocessing_overlay_policy="copy-unselected-from-source-v1",
+    )
+    scenes = [
+        {
+            "scene_id": 1,
+            "start_sec": 0.0,
+            "end_sec": 6.0,
+            "duration_sec": 6.0,
+        },
+        {
+            "scene_id": 2,
+            "start_sec": 6.0,
+            "end_sec": 12.0,
+            "duration_sec": 6.0,
+        },
+    ]
+    scenes_path = out_root / "00_source" / "02_scenes" / "scenes.json"
+    scenes_path.parent.mkdir(parents=True)
+    context.save_json(
+        scenes_path,
+        {"scenes": scenes},
+    )
+    source_frames = out_root / "00_source" / "03_keyframes" / "frames"
+    source_frames.mkdir(parents=True)
+    for scene_id in (1, 2):
+        (source_frames / f"scene_{scene_id:03d}.jpg").write_bytes(
+            f"source-{scene_id}".encode()
+        )
+    context.save_json(
+        source_frames.parent / "keyframes.json",
+        {
+            "deduplication": {
+                "scene_statistics": [
+                    {
+                        "scene_id": scene_id,
+                        "candidate_count": 1,
+                        "retained_count": 1,
+                        "removed_count": 0,
+                    }
+                    for scene_id in (1, 2)
+                ],
+                "removed": [],
+            },
+            "keyframes": [
+                {
+                    "scene_id": scene_id,
+                    "keyframe_index": 1,
+                    "keyframe_count": 1,
+                    "timestamp_sec": float(scene_id * 3),
+                    "path": f"03_keyframes/frames/scene_{scene_id:03d}.jpg",
+                    "size_bytes": 8,
+                    "perceptual_hash": f"source-{scene_id}",
+                }
+                for scene_id in (1, 2)
+            ],
+        },
+    )
+    commands = []
+
+    def fake_run(command, *, capture_output, check):
+        commands.append(command)
+        Path(command[-1]).write_bytes(b"selected-2")
+
+    monkeypatch.setattr(s03_keyframes.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        s03_keyframes,
+        "_perceptual_hash",
+        lambda path: "ffffffffffffffff",
+    )
+
+    metrics = s03_keyframes.run(context)
+
+    payload = context.load_json(
+        out_root / "03_keyframes" / "keyframes.json"
+    )
+    assert len(commands) == 1
+    assert commands[0][commands[0].index("-ss") + 1] == "9.000"
+    assert [item["scene_id"] for item in payload["keyframes"]] == [1, 2]
+    assert [
+        item["reprocessing"]["origin"] for item in payload["keyframes"]
+    ] == ["source", "selected-pass"]
+    assert (
+        out_root / "03_keyframes" / "frames" / "scene_001.jpg"
+    ).read_bytes() == b"source-1"
+    assert (
+        out_root / "03_keyframes" / "frames" / "scene_002.jpg"
+    ).read_bytes() == b"selected-2"
+    assert metrics["processed_scene_count"] == 1
+    assert metrics["reused_scene_count"] == 1
+
+
 def test_single_keyframe_keeps_legacy_midpoint_filename(
     tmp_path: Path,
     monkeypatch,

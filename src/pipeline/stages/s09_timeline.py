@@ -19,6 +19,7 @@ import math
 
 from ..context import PipelineContext
 from ..logging_setup import stage_logger
+from ._reprocessing import provenance, source_path
 
 NAME = "09_timeline"
 OUTPUT = "09_timeline/timeline.json"
@@ -271,7 +272,12 @@ def run(ctx: PipelineContext) -> dict:
     log = stage_logger(NAME)
     out_dir = ctx.stage_dir(NAME)
 
-    scenes = ctx.load_json(ctx.out_root / "02_scenes" / "scenes.json")["scenes"]
+    def boundary_path(relative_path: str):
+        if ctx.reprocessing_scene_ids:
+            return source_path(ctx, relative_path)
+        return ctx.out_root / relative_path
+
+    scenes = ctx.load_json(boundary_path("02_scenes/scenes.json"))["scenes"]
     keyframes = _group_by_scene(ctx.load_json(
         ctx.out_root / "03_keyframes" / "keyframes.json"
     )["keyframes"])
@@ -285,7 +291,7 @@ def run(ctx: PipelineContext) -> dict:
         raise ValueError("08_ocr results must be an array")
     ocr_results = _group_by_scene(ocr_entries)
     embedded_text = ctx.load_json(
-        ctx.out_root / "04_embedded_text" / "embedded_text.json"
+        boundary_path("04_embedded_text/embedded_text.json")
     )
     subtitle_entries = embedded_text.get("subtitles", [])
     chapters = embedded_text.get("chapters", [])
@@ -294,16 +300,16 @@ def run(ctx: PipelineContext) -> dict:
     if not isinstance(chapters, list):
         raise ValueError("04_embedded_text chapters must be an array")
     audio_event_payload = ctx.load_json(
-        ctx.out_root / "05_audio_events" / "audio_events.json"
+        boundary_path("05_audio_events/audio_events.json")
     )
     audio_event_entries = audio_event_payload.get("events", [])
     if not isinstance(audio_event_entries, list):
         raise ValueError("05_audio_events events must be an array")
     transcript = ctx.load_json(
-        ctx.out_root / "06_stt" / "transcript.json"
+        boundary_path("06_stt/transcript.json")
     )["segments"]
     diarization = ctx.load_json(
-        ctx.out_root / "07_diarize" / "diarization.json"
+        boundary_path("07_diarize/diarization.json")
     )
     speaker_turns = diarization.get("turns", [])
 
@@ -388,9 +394,7 @@ def run(ctx: PipelineContext) -> dict:
     with_speech = sum(1 for c in cards if c["transcript"])
     log.info("씬 카드 %d개 생성 (발화 포함 씬 %d개)", len(cards), with_speech)
 
-    ctx.save_json(
-        out_dir / "timeline.json",
-        {
+    payload = {
             "interval_convention": INTERVAL_CONVENTION,
             "transcript_assignment": ASSIGNMENT_POLICY,
             "visual_summary_policy": VISUAL_SUMMARY_POLICY,
@@ -415,8 +419,13 @@ def run(ctx: PipelineContext) -> dict:
             ),
             "unassigned_audio_event_ids": unassigned_audio_events,
             "scene_cards": cards,
-        },
-    )
+    }
+    if ctx.reprocessing_scene_ids:
+        payload["reprocessing"] = {
+            **provenance(ctx, "full-materialization"),
+            "selected_scene_ids": list(ctx.reprocessing_scene_ids),
+        }
+    ctx.save_json(out_dir / "timeline.json", payload)
 
     md_lines = [f"# 타임라인: {ctx.video_path.name}", ""]
     for card in cards:

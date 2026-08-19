@@ -120,6 +120,15 @@ LocalOCRProvider는 Tesseract TSV를 parse하고 설치 version을 effective rev
 상세 결정은
 [`ADR-0033`](./adr/0033-optional-ocr-stage-and-provider-contract.md)를 따른다.
 
+질의 기반 2-pass의 내부 실행 경로는 기본 14-stage DAG와 별도인 6-stage reprocessing DAG를
+사용한다. 먼저 1-pass의 video/metadata/scenes/keyframes/keyframe image bundle/embedded text/
+audio events/transcript/diarization/captions/OCR/timeline/index 13개 Artifact를 checksum 검증해 파생
+workspace의 `00_source/`로 복사한다. 03 keyframe, 08 caption과 OCR은 profile이 선택한 scene만 새로
+실행하고 비선택 scene 항목은 source path와 순서를 유지해 overlay한다. 09 timeline, 10 index와 11
+context는 이 overlay와 source 비시각 산출물을 사용해 전체 결과를 다시 만든다. 각 overlay entry는
+`source` 또는 `selected-pass` provenance를 가진다. 이 경로의 Application runtime과 공개 CLI/API는
+아직 구현되지 않아 일반 사용자가 실행하는 명령은 없다.
+
 `04_embedded_text/embedded_text.json`은 `ffmpeg-webvtt-text-subtitles-v1` 정책으로 text subtitle
 stream을 cue로 변환한다. stream은 global index·codec·language/title/disposition·상태를, cue는
 stream/cue source ID와 `[start_sec,end_sec)`·plain text를 가진다. chapter는 원본 ID, title,

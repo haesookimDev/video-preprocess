@@ -65,6 +65,10 @@ class PipelineContext:
     diarize_model: str = "pyannote/speaker-diarization-community-1"
     max_context_tokens: int | None = None
     context_tokenizer_model: str | None = None
+    reprocessing_source_run_id: str | None = None
+    reprocessing_profile: str | None = None
+    reprocessing_scene_ids: tuple[int, ...] = ()
+    reprocessing_overlay_policy: str | None = None
 
     caption_service: CaptionService | None = field(
         default=None,

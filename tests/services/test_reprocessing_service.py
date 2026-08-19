@@ -7,7 +7,7 @@ from dataclasses import replace
 import pytest
 
 from video_preprocess.domain import ArtifactRef, Checksum
-from video_preprocess.engine import DAGPlanner, create_default_registry
+from video_preprocess.engine import DAGPlanner, create_reprocessing_registry
 from video_preprocess.services import (
     PipelineQueryResult,
     PipelineReprocessingSubmission,
@@ -104,7 +104,7 @@ def service(query=None, source_value=None):
     queries = query or QueryService()
     resolver = SourceResolver(source_value or source())
     planner = QueryReprocessingApplicationService(
-        DAGPlanner(create_default_registry()),
+        DAGPlanner(create_reprocessing_registry()),
         queries,
         resolver,
     )
@@ -148,12 +148,24 @@ def test_reprocessing_plan_captures_ranked_scenes_stage_scope_and_provenance():
         "full-materialization",
         "full-materialization",
     ]
+    assert [stage.version for stage in plan.stages] == [
+        "1.4.0",
+        "1.4.0",
+        "1.1.0",
+        "1.6.0",
+        "1.4.0",
+        "1.5.0",
+    ]
     assert plan.boundary_inputs == (
         "audio_events",
         "diarization",
         "embedded_text",
         "metadata",
         "scenes",
+        "source_captions",
+        "source_keyframe_images",
+        "source_keyframes",
+        "source_ocr",
         "transcript",
         "video",
     )
@@ -165,10 +177,7 @@ def test_reprocessing_plan_captures_ranked_scenes_stage_scope_and_provenance():
     }
     assert payload["execution"]["ready"] is False
     assert payload["execution"]["pending_capabilities"] == [
-        "source-artifact-import-v1",
-        "selected-scene-keyframe-overlay-v1",
-        "selected-scene-caption-overlay-v1",
-        "selected-scene-ocr-overlay-v1",
+        "derived-run-application-runtime-v1",
     ]
     assert str(plan.source_artifacts["video"].uri) in str(payload)
     assert "/Users/" not in str(payload)

@@ -149,3 +149,49 @@ def test_context_stage_requires_counter_when_budget_is_enabled(
         assert str(exc) == "context token counter is not configured"
     else:
         raise AssertionError("missing token counter was accepted")
+
+
+def test_reprocessing_context_reads_source_metadata_and_records_provenance(
+    tmp_path: Path,
+) -> None:
+    context = PipelineContext(
+        video_path=tmp_path / "derived/00_source/00_input/video.mp4",
+        out_root=tmp_path / "derived",
+        reprocessing_source_run_id="parent-run",
+        reprocessing_profile="visual-detail-v1",
+        reprocessing_scene_ids=(1,),
+        reprocessing_overlay_policy="copy-unselected-from-source-v1",
+    )
+    metadata = context.out_root / "00_source/01_probe/metadata.json"
+    metadata.parent.mkdir(parents=True)
+    context.save_json(
+        metadata,
+        {"summary": {"duration_sec": 10.0, "size_bytes": 100}},
+    )
+    diarization = context.out_root / "00_source/07_diarize/diarization.json"
+    diarization.parent.mkdir(parents=True)
+    context.save_json(diarization, {"speakers": []})
+    context.save_json(
+        context.stage_dir("09_timeline") / "timeline.json",
+        {
+            "scene_cards": [{
+                "scene_id": 1,
+                "start_sec": 0.0,
+                "end_sec": 10.0,
+                "caption": "selected dashboard",
+                "ocr_text": None,
+                "chapter": None,
+                "subtitle_text": None,
+                "audio_event_text": None,
+                "audio_events": [],
+                "transcript": [],
+            }]
+        },
+    )
+
+    s11_context.run(context)
+
+    payload = context.load_json(context.out_root / "11_context/context.json")
+    assert payload["duration_sec"] == 10.0
+    assert payload["reprocessing"]["origin"] == "full-materialization"
+    assert payload["reprocessing"]["source_run_id"] == "parent-run"

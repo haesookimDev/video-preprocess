@@ -53,11 +53,12 @@ flowchart LR
 - 기본 disabled의 오디오 이벤트 Stage, local AudioSet AST/HTTP 전환과 downstream 병합
 - 기존 JSON·Markdown·SQLite 출력 구조와 공통 QueryService 기반 query CLI
 - 질의 결과·품질 profile·1-pass Artifact provenance를 고정하는 2-pass 재처리 planning 계약
+- checksum 검증 source import, 전용 6-stage DAG와 selected-scene keyframe/caption/OCR overlay
 
 아직 구현되지 않은 범위:
 
 - caption/STT/diarization/VAD alias의 HTTP 배포 연결
-- 2-pass source Artifact import, selected-scene overlay와 파생 run CLI/API 실행
+- 2-pass 파생 run Application runtime·상태 저장과 CLI/API 실행
 - 직접 media upload, queue adapter와 RemoteExecutor
 
 정확한 완료 상태와 다음 작업은 [docs/STATUS.md](docs/STATUS.md)를 기준으로 한다.
@@ -599,7 +600,7 @@ ffmpeg -v error \
 ## 아직 없는 것 (다음 단계 후보)
 
 - 한국어 캡셔닝 VLM 교체 (현재 BLIP은 영어 캡션)
-- 질의 기반 2-pass 고품질 재처리
+- 질의 기반 2-pass 파생 run 실행·상태·CLI/API 공개 adapter
 
 아키텍처 마이그레이션과 위 기능의 정확한 구현 순서는
 [`docs/08-development-roadmap.md`](docs/08-development-roadmap.md)를 기준으로 하며, 실제

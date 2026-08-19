@@ -13,6 +13,12 @@ from pathlib import PurePosixPath
 
 from ..context import PipelineContext
 from ..logging_setup import stage_logger
+from ._reprocessing import (
+    keyed_entries,
+    provenance,
+    selected_scene_ids,
+    source_path,
+)
 
 NAME = "08_captions"
 OUTPUT = "08_captions/captions.json"
@@ -81,6 +87,41 @@ def _scene_caption_groups(captions: list[dict]) -> list[dict]:
     ]
 
 
+def _merge_source_captions(
+    ctx: PipelineContext,
+    keyframes: list[dict],
+    selected_captions: list[dict],
+    selected_ids: tuple[int, ...],
+) -> list[dict]:
+    source_payload = ctx.load_json(
+        source_path(ctx, "08_captions/captions.json")
+    )
+    source = keyed_entries(source_payload.get("captions"), "source captions")
+    selected = keyed_entries(selected_captions, "selected captions")
+    selected_set = set(selected_ids)
+    combined = []
+    for keyframe in keyframes:
+        key = (keyframe["scene_id"], keyframe["keyframe_index"])
+        origin = "selected-pass" if key[0] in selected_set else "source"
+        entries = selected if origin == "selected-pass" else source
+        try:
+            entry = entries[key]
+        except KeyError as exc:
+            raise ValueError(
+                f"{origin} captions do not cover visual {key}"
+            ) from exc
+        if entry.get("keyframe") != keyframe["path"]:
+            raise ValueError("caption keyframe path does not match overlay")
+        combined.append({
+            **entry,
+            "keyframe_index": keyframe["keyframe_index"],
+            "keyframe_count": keyframe["keyframe_count"],
+            "timestamp_sec": keyframe["timestamp_sec"],
+            "reprocessing": provenance(ctx, origin),
+        })
+    return combined
+
+
 def run(ctx: PipelineContext) -> dict:
     log = stage_logger(NAME)
     out_dir = ctx.stage_dir(NAME)
@@ -88,6 +129,20 @@ def run(ctx: PipelineContext) -> dict:
     keyframes = _normalize_keyframes(ctx.load_json(
         ctx.out_root / "03_keyframes" / "keyframes.json"
     )["keyframes"])
+    reprocessing_scene_ids = selected_scene_ids(
+        ctx,
+        (keyframe["scene_id"] for keyframe in keyframes),
+    )
+    selected_set = set(reprocessing_scene_ids)
+    inference_keyframes = (
+        [
+            keyframe
+            for keyframe in keyframes
+            if keyframe["scene_id"] in selected_set
+        ]
+        if reprocessing_scene_ids
+        else keyframes
+    )
 
     if ctx.caption_service is None or ctx.artifact_registrar is None:
         raise RuntimeError(
@@ -95,7 +150,7 @@ def run(ctx: PipelineContext) -> dict:
         )
 
     image_refs = []
-    for kf in keyframes:
+    for kf in inference_keyframes:
         artifact_id = f"keyframe_scene_{int(kf['scene_id']):03d}"
         if kf["keyframe_count"] > 1:
             artifact_id += f"_{int(kf['keyframe_index']):02d}"
@@ -142,7 +197,9 @@ def run(ctx: PipelineContext) -> dict:
     )
 
     captions = []
-    for kf, caption in zip(keyframes, batch.captions):
+    if len(batch.captions) != len(inference_keyframes):
+        raise ValueError("caption provider result count does not match input")
+    for kf, caption in zip(inference_keyframes, batch.captions):
         captions.append({
             "scene_id": kf["scene_id"],
             "keyframe_index": kf["keyframe_index"],
@@ -152,6 +209,15 @@ def run(ctx: PipelineContext) -> dict:
             "caption": caption,
         })
         log.info("씬 %02d 캡션: %s", kf["scene_id"], caption)
+
+    selected_caption_count = len(captions)
+    if reprocessing_scene_ids:
+        captions = _merge_source_captions(
+            ctx,
+            keyframes,
+            captions,
+            reprocessing_scene_ids,
+        )
 
     elapsed = time.monotonic() - t_start
     log.info(
@@ -171,7 +237,7 @@ def run(ctx: PipelineContext) -> dict:
         batch.model.runtime,
     )
 
-    ctx.save_json(out_dir / "captions.json", {
+    payload = {
         "model": ctx.caption_model,
         "provider": batch.model.provider,
         "revision": batch.model.revision,
@@ -182,8 +248,22 @@ def run(ctx: PipelineContext) -> dict:
         "scene_count": len({caption["scene_id"] for caption in captions}),
         "captions": captions,
         "scene_captions": _scene_caption_groups(captions),
-    })
-    return {
+    }
+    if reprocessing_scene_ids:
+        payload["reprocessing"] = {
+            **provenance(ctx, "selected-pass"),
+            "selected_scene_ids": list(reprocessing_scene_ids),
+            "processed_caption_count": selected_caption_count,
+            "reused_caption_count": len(captions) - selected_caption_count,
+        }
+    ctx.save_json(out_dir / "captions.json", payload)
+    metrics = {
         "caption_count": len(captions),
         "caption_batch_count": batch.usage.get("batch_count", 1),
     }
+    if reprocessing_scene_ids:
+        metrics.update({
+            "processed_caption_count": selected_caption_count,
+            "reused_caption_count": len(captions) - selected_caption_count,
+        })
+    return metrics

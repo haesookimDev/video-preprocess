@@ -1,8 +1,8 @@
 # 개발 상태와 세션 인수인계
 
 - 마지막 갱신: **2026-08-19**
-- 현재 단계: **Phase 7 진행 중 — 질의 기반 2-pass 재처리 planning 계약 완료**
-- 다음 작업: **source Artifact import와 selected-scene visual overlay 구현**
+- 현재 단계: **Phase 7 진행 중 — source import·selected-scene overlay 완료**
+- 다음 작업: **파생 재처리 run Application runtime·상태 저장·CLI/API 구현**
 
 이 문서는 개발 진행 상황의 단일 진입점이다. 새로운 세션은 이 문서를 먼저 읽고, 실제 코드와
 Git 상태를 확인한 뒤 작업을 시작한다.
@@ -41,6 +41,7 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - 기본 disabled의 독립 OCR Stage, local Tesseract/HTTP alias와 timeline/index/context 병합 완료
 - FFmpeg text subtitle·chapter Artifact와 timeline/index/static·query context 병합 완료
 - 오디오 이벤트 공통 계약, local AudioSet AST/HTTP alias와 기본 disabled Stage·downstream 병합 완료
+- 2-pass source Artifact 검증 import, 전용 6-stage DAG와 selected-scene 03/08 overlay 완료
 - queue consumer, direct upload와 RemoteExecutor는 아직 미구현
 - Local Store가 input copy, 단계 산출물과 run/stage manifest를 관리
 
@@ -221,7 +222,7 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - [x] 내장 자막·챕터 Artifact와 timeline/index/context 통합
 - [x] 오디오 이벤트 Provider와 pipeline/timeline/index/context 통합
 - [x] 질의 기반 2-pass 재처리 planning Application 계약
-- [ ] source Artifact import와 selected-scene keyframe/caption/OCR overlay
+- [x] source Artifact import와 selected-scene keyframe/caption/OCR overlay
 - [ ] 파생 재처리 run 실행·상태·CLI/API adapter
 
 문서가 존재한다고 구현된 것으로 간주하지 않는다. 완료 여부는 코드와 자동 테스트를 기준으로
@@ -350,12 +351,21 @@ Phase 7 여덟 번째 planning slice는 질의 결과를 선택 scene의 고품�
 `QueryReprocessingApplicationService`를 구현했다. read-only query와 별도 mutation 경계, 03/08
 selected-scene·09/10/11 full-materialization 범위, 13개 source ArtifactRef provenance와
 request/plan fingerprint를 ADR-0036과 fake Application test로 고정했다. 부모 run은 수정하지 않는
-파생 run이며, 현재 source import와 visual overlay capability가 없어 plan은 `execution.ready=false`다.
+파생 run이다.
 
-다음 slice는 source Artifact를 파생 namespace에 checksum 검증 후 import하고, 03 keyframe과 08
-caption/OCR이 선택 scene만 새로 처리하면서 비선택 scene의 1-pass 결과를 결정적으로 복사하는 overlay를
-구현한다. 09/10/11 전체 materialization과 parent manifest/artifact 불변성도 fake Engine/Store로 먼저
-검증한다. 이 경계가 완료될 때까지 실행 CLI/API/OpenAPI는 공개하지 않는다.
+Phase 7 아홉 번째 slice는 source 13개를 모두 checksum 검증한 뒤 파생 namespace의 `00_source/`로
+복사하고 `reprocessing-source-manifest-v1`을 마지막에 publish하는 import 경계를 구현했다. 별도
+reprocessing registry는 source visual을 명시적인 `source_*` boundary로 받아 03/08만 선택 scene에
+실행하고, 비선택 keyframe/caption/OCR은 source에서 순서대로 복사한다. 09/10/11은 overlay와 source의
+비시각 경계를 사용해 전체 산출물을 다시 만든다. Stage version은 03 `1.4.0`, caption `1.4.0`, OCR
+`1.1.0`, timeline `1.6.0`, context `1.5.0`으로 분리했고, 부모 Artifact의 checksum·mtime 불변성과
+6-stage Engine 실행을 network-free 테스트로 고정했다.
+
+plan의 남은 capability는 `derived-run-application-runtime-v1` 하나다. 다음 slice는 plan/import/
+reprocessing Engine을 하나의 Application Service로 조합하고 파생 run idempotency·상태·실패 복구를
+저장한 뒤 별도 CLI command와
+`POST /v1/pipeline-runs/{source_run_id}/reprocessing-runs` OpenAPI/API를 공개한다. `/queries`는 계속
+read-only로 유지한다.
 
 ## 6. 알려진 중요 문제
 
@@ -459,6 +469,30 @@ caption/OCR이 선택 scene만 새로 처리하면서 비선택 scene의 1-pass 
 
 최신 기록을 위에 추가한다. 긴 구현 설명은 PR이나 ADR에 두고 여기에는 다음 세션이 재개하는 데
 필요한 정보만 적는다.
+
+### 2026-08-19 — Phase 7 source import·selected-scene visual overlay
+
+- 목표: planning-only 2-pass 계약을 부모 run을 변경하지 않는 실제 Artifact/Stage 실행 경계까지 확장
+- import: source provenance 13개를 전부 checksum 검증하고 파생 `00_source/`의 고정 경로로 복사한 뒤
+  `reprocessing-source-manifest-v1`을 commit marker로 마지막 publish; keyframe/caption/OCR은
+  `source_*` execution boundary alias로 분리
+- overlay: 전용 6-stage registry와 strict legacy binding을 추가하고 03 `1.4.0`, caption `1.4.0`, OCR
+  `1.1.0`이 선택 scene만 FFmpeg/Provider로 처리하도록 구현. 비선택 시각 항목은 source 순서와 path를
+  유지하며 entry별 `source`/`selected-pass` provenance를 기록
+- materialization: timeline `1.6.0`과 context `1.5.0`은 source의 scene/metadata/transcript/diarization/
+  embedded text/audio event와 새 overlay를 사용하고, 10 index를 포함한 09/10/11 전체 결과를 파생
+  namespace에 새로 publish
+- 안전성: source 손상은 target publish 전에 거부하며 부모 file checksum·mtime 불변, source bundle
+  member 검증·복원, selected-only inference, 6-stage Engine→LocalExecutor 실행과 context config 복원을
+  network-free 테스트로 고정
+- 검증: default suite 502 passed/20 deselected; `compileall`, `git diff --check` 성공. offline
+  `sample.mp4 --force` 14-stage `ok`, SQLite/index/context 생성과 query `음성 구간 검출 --topk 2`의
+  direct match scene 02를 확인
+- 호환성: 기존 14-stage registry·Stage version·CLI/API/query는 그대로다. 새 경로는 별도 registry와
+  reprocessing metadata가 있을 때만 활성화되고, 실행 공개 adapter가 없어 plan은 아직
+  `execution.ready=false`다.
+- 다음 작업: `derived-run-application-runtime-v1` composition, 파생 run repository/idempotency/status와
+  CLI/API/OpenAPI mutation 경계를 구현한다.
 
 ### 2026-08-19 — Phase 7 질의 기반 2-pass 재처리 planning 계약
 

@@ -36,8 +36,10 @@ adapter가 추가될 때 CLI는 별도 reprocess command를 사용하고 API는
 
 재처리 실행은 새 `run_id`와 workspace를 만들고 `source_run_id`를 provenance로 보존한다. 1-pass
 workspace, Engine manifest와 Artifact 본문은 read-only다. source resolver는 succeeded run에서
-필요한 ArtifactRef를 checksum과 함께 고정하고, 파생 runtime은 다음 구현 slice에서 이를 자기
-namespace로 검증·import한다. source Artifact가 없거나 checksum 검증이 실패하면 실행 전에 거부한다.
+필요한 ArtifactRef를 checksum과 함께 고정하고, importer는 이를 파생 namespace로 검증·import한다.
+이 경계는 `verified-derived-copy-v1`로 구현됐다. source 13개를 모두
+검증한 뒤 파생 `00_source/`에 publish하고 `reprocessing-source-manifest-v1`을 마지막 commit marker로
+publish한다. source Artifact가 없거나 checksum 검증이 실패하면 Stage 실행 전에 거부한다.
 
 ### 3. 후보 선택은 direct query match만 사용한다
 
@@ -69,33 +71,32 @@ versioned 품질 정책이다.
 - 출력 정책: `derived-run-no-parent-overwrite-v1`
 - overlay 정책: `copy-unselected-from-source-v1`
 
-03부터 descendant를 선택한 현재 DAG는 다음 6개 Stage와 7개 boundary input을 만든다.
+전용 reprocessing DAG는 다음 6개 Stage와 11개 boundary input을 만든다.
 
 | 구분 | 이름 |
 |---|---|
 | selected-scene Stage | `03_keyframes`, `08_captions`, `08_ocr` |
 | full-materialization Stage | `09_timeline`, `10_index`, `11_context` |
-| boundary input | `audio_events`, `diarization`, `embedded_text`, `metadata`, `scenes`, `transcript`, `video` |
+| boundary input | `audio_events`, `diarization`, `embedded_text`, `metadata`, `scenes`, `transcript`, `video`, `source_keyframes`, `source_keyframe_images`, `source_captions`, `source_ocr` |
 | overlay source | `keyframes`, `keyframe_images`, `captions`, `ocr` |
 | query provenance | `timeline`, `search_index` |
 
-profile의 Stage 집합은 현재 DAG와 exact match해야 한다. 새 descendant가 추가되면 비용·결과 의미를
+`source_*` boundary는 같은 이름의 1-pass visual Artifact를 파생 namespace로 import한 참조다.
+profile의 Stage 집합은 전용 DAG와 exact match해야 한다. 새 descendant가 추가되면 비용·결과 의미를
 검토하고 profile version 또는 계약을 명시적으로 갱신한다.
 
-### 5. plan은 현재 실행 불가 상태를 명시한다
+### 5. plan은 남은 Application runtime capability를 명시한다
 
 `ReprocessingPlan`은 후보, Stage name/version과 scope, boundary input, source ArtifactRef 전체,
-request/plan fingerprint를 직렬화한다. 현재는 다음 capability가 구현되지 않았으므로
+request/plan fingerprint를 직렬화한다. source import와 03/08 overlay는 구현됐지만 plan→import→Engine,
+파생 run 상태·idempotency를 한 유스케이스로 조합하는 다음 capability가 구현되지 않았으므로
 `execution.ready=false`다.
 
-- `source-artifact-import-v1`
-- `selected-scene-keyframe-overlay-v1`
-- `selected-scene-caption-overlay-v1`
-- `selected-scene-ocr-overlay-v1`
+- `derived-run-application-runtime-v1`
 
-CLI/API는 이 capability가 구현되기 전에 plan을 성공한 pipeline run처럼 제출하면 안 된다. 다음
-slice는 source import와 03/08 overlay를 구현하고 fake Engine/Store에서 parent 불변성과 merge 결과를
-검증한 뒤에만 실행 adapter를 연다.
+CLI/API는 이 capability가 구현되기 전에 plan을 성공한 pipeline run처럼 제출하면 안 된다. source
+import와 03/08 overlay는 fake Engine/Local Store에서 parent 불변성과 merge 결과를 검증했다. 다음
+slice에서 파생 Application runtime과 상태 저장을 완성한 뒤에만 실행 adapter를 연다.
 
 ### 6. cache와 version은 요청이 아니라 결과 의미를 따른다
 
@@ -140,14 +141,25 @@ profile 의미와 보안·배포 경계를 깨고 Stage/Provider 선택 책임�
 비용과 제약:
 
 - source Artifact를 파생 namespace로 import할 저장·I/O 비용이 있다.
-- 선택 scene overlay가 구현되기 전 plan은 의도적으로 실행할 수 없다.
+- 공개 Application runtime이 구현되기 전 plan은 의도적으로 실행할 수 없다.
 - OCR을 포함한 profile 실행은 배포 환경의 configured Provider와 언어 data가 필요하다.
 
 ## 구현 위치
 
 - submission/profile/plan/service:
   `src/video_preprocess/services/reprocessing.py`
+- source import:
+  `src/video_preprocess/services/reprocessing_artifacts.py`
+- 전용 DAG와 strict binding:
+  `src/video_preprocess/engine/defaults.py`,
+  `src/video_preprocess/adapters/legacy_stages.py`
+- selected-scene overlay:
+  `src/pipeline/stages/s03_keyframes.py`,
+  `src/pipeline/stages/s08_captions.py`,
+  `src/pipeline/stages/s08_ocr.py`
 - fake Application 계약:
   `tests/services/test_reprocessing_service.py`
-- source import와 selected-scene overlay: 다음 구현 slice
-- CLI/API/OpenAPI mutation adapter: overlay 완료 후 구현
+- import/parent 불변성·Engine/overlay 계약:
+  `tests/services/test_reprocessing_artifacts.py`,
+  `tests/adapters/test_reprocessing_bindings.py`
+- 파생 Application runtime과 CLI/API/OpenAPI mutation adapter: 다음 구현 slice

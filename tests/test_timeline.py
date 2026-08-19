@@ -347,3 +347,71 @@ def test_timeline_preserves_multi_visuals_and_legacy_scene_summary(
     assert "- 내장 자막 [00:09] (eng): Boundary subtitle" in markdown
     assert "- 오디오 이벤트 [00:01]: music (0.92)" in markdown
     assert "- 시각: a closing frame" in markdown
+
+
+def test_reprocessing_timeline_materializes_from_source_boundaries(
+    tmp_path: Path,
+) -> None:
+    context = PipelineContext(
+        video_path=tmp_path / "derived/00_source/00_input/video.mp4",
+        out_root=tmp_path / "derived",
+        reprocessing_source_run_id="parent-run",
+        reprocessing_profile="visual-detail-v1",
+        reprocessing_scene_ids=(1,),
+        reprocessing_overlay_policy="copy-unselected-from-source-v1",
+    )
+
+    def save_source(relative, payload):
+        path = context.out_root / "00_source" / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        context.save_json(path, payload)
+
+    scene = {
+        "scene_id": 1,
+        "start_sec": 0.0,
+        "end_sec": 10.0,
+        "duration_sec": 10.0,
+    }
+    save_source("02_scenes/scenes.json", {"scenes": [scene]})
+    save_source(
+        "04_embedded_text/embedded_text.json",
+        {"subtitles": [], "chapters": []},
+    )
+    save_source("05_audio_events/audio_events.json", {"events": []})
+    save_source("06_stt/transcript.json", {"segments": []})
+    save_source("07_diarize/diarization.json", {"turns": []})
+    keyframe = "03_keyframes/frames/scene_001.jpg"
+    context.save_json(
+        context.stage_dir("03_keyframes") / "keyframes.json",
+        {
+            "keyframes": [{
+                "scene_id": 1,
+                "timestamp_sec": 5.0,
+                "path": keyframe,
+            }]
+        },
+    )
+    context.save_json(
+        context.stage_dir("08_captions") / "captions.json",
+        {
+            "captions": [{
+                "scene_id": 1,
+                "timestamp_sec": 5.0,
+                "keyframe": keyframe,
+                "caption": "selected dashboard",
+            }]
+        },
+    )
+    context.save_json(
+        context.stage_dir("08_ocr") / "ocr.json",
+        {"results": []},
+    )
+
+    s09_timeline.run(context)
+
+    payload = context.load_json(
+        context.out_root / "09_timeline/timeline.json"
+    )
+    assert payload["scene_cards"][0]["caption"] == "selected dashboard"
+    assert payload["reprocessing"]["origin"] == "full-materialization"
+    assert payload["reprocessing"]["source_run_id"] == "parent-run"

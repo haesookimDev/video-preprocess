@@ -14,6 +14,7 @@
 
 from ..context import PipelineContext
 from ..logging_setup import stage_logger
+from ._reprocessing import provenance, source_path
 
 NAME = "11_context"
 OUTPUT = "11_context/context.md"
@@ -225,9 +226,14 @@ def run(ctx: PipelineContext) -> dict:
     log = stage_logger(NAME)
     out_dir = ctx.stage_dir(NAME)
 
-    probe = ctx.load_json(ctx.out_root / "01_probe" / "metadata.json")["summary"]
+    probe_path = ctx.out_root / "01_probe" / "metadata.json"
+    diarization_path = ctx.out_root / "07_diarize" / "diarization.json"
+    if ctx.reprocessing_scene_ids:
+        probe_path = source_path(ctx, "01_probe/metadata.json")
+        diarization_path = source_path(ctx, "07_diarize/diarization.json")
+    probe = ctx.load_json(probe_path)["summary"]
     diarization = ctx.load_json(
-        ctx.out_root / "07_diarize" / "diarization.json"
+        diarization_path
     )
     cards = ctx.load_json(
         ctx.out_root / "09_timeline" / "timeline.json"
@@ -283,7 +289,7 @@ def run(ctx: PipelineContext) -> dict:
             len(cards),
         )
 
-    ctx.save_json(out_dir / "context.json", {
+    payload = {
         "video": ctx.video_path.name,
         "duration_sec": duration,
         "speakers": speakers,
@@ -296,7 +302,13 @@ def run(ctx: PipelineContext) -> dict:
             "est_tokens": est_tokens,
             "token_budget": budget_stats,
         },
-    })
+    }
+    if ctx.reprocessing_scene_ids:
+        payload["reprocessing"] = {
+            **provenance(ctx, "full-materialization"),
+            "selected_scene_ids": list(ctx.reprocessing_scene_ids),
+        }
+    ctx.save_json(out_dir / "context.json", payload)
     result = {"chars": chars, "est_tokens": est_tokens}
     if budget_stats is not None:
         result.update(

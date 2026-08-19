@@ -235,8 +235,11 @@ CLI/API의 검색은 같은 `QueryService`를 사용한다. media ID, API snapsh
 `QueryReprocessingApplicationService` 유스케이스다. service는 read-only QueryService 결과를 후보로
 사용하고 1-pass ArtifactRef/checksum, quality profile과 Stage version을 고정한 파생 run plan을 만든다.
 파생 run은 부모 workspace와 manifest를 수정하지 않으며, 선택 scene의 03/08 visual 산출물만 고품질
-overlay하고 09/10/11 전체 산출물을 다시 물질화하는 것이 목표다. 현재 planning 계약은 구현됐지만
-source namespace import와 selected-scene overlay가 남아 있어 실행 adapter에는 연결하지 않았다.
+overlay하고 09/10/11 전체 산출물을 다시 물질화한다. 현재 source Artifact 검증 import,
+`create_reprocessing_registry()`와 strict compatibility binding, selected-scene 03/08 overlay까지
+구현됐다. import는 부모 Store를 읽기만 하고 파생 `00_source/` snapshot과 manifest를 만들며,
+비선택 scene은 source 시각 결과를 복사한다. 남은 경계는 이 부품을 plan에서 파생 run으로 조합하는
+Application runtime과 영속 상태·CLI/API adapter다.
 소유권과 cache/version 결정은
 [`ADR-0036`](./adr/0036-query-guided-derived-run-reprocessing-plan.md)에 기록한다.
 

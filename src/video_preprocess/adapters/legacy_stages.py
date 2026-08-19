@@ -329,6 +329,40 @@ def create_legacy_pipeline_bindings(
     return _create_binding_registry(context, registrar, definitions)
 
 
+def create_legacy_reprocessing_bindings(
+    context: PipelineContext,
+    registrar: LegacyArtifactRegistrar,
+    *,
+    stage_modules: Mapping[str, LegacyStageModule] | None = None,
+) -> StageBindingRegistry:
+    """Bind the six-Stage selected-scene derived-run pipeline."""
+
+    modules = (
+        _load_reprocessing_modules()
+        if stage_modules is None
+        else dict(stage_modules)
+    )
+    expected_names = {
+        "03_keyframes",
+        "08_captions",
+        "08_ocr",
+        "09_timeline",
+        "10_index",
+        "11_context",
+    }
+    if set(modules) != expected_names:
+        raise ValueError(
+            "stage_modules must define the six reprocessing Stages"
+        )
+    _validate_modules(modules, expected_names)
+    context.artifact_registrar = registrar
+    return _create_binding_registry(
+        context,
+        registrar,
+        _reprocessing_definitions(modules),
+    )
+
+
 def _create_binding_registry(
     context: PipelineContext,
     registrar: LegacyArtifactRegistrar,
@@ -539,6 +573,218 @@ def _model_definitions(
 
 
 def _final_definitions(
+    modules: Mapping[str, LegacyStageModule],
+) -> tuple[LegacyStageDefinition, ...]:
+    return _legacy_final_definitions(modules)
+
+
+def _reprocessing_definitions(
+    modules: Mapping[str, LegacyStageModule],
+) -> tuple[LegacyStageDefinition, ...]:
+    def source_root(ctx: PipelineContext) -> Path:
+        return ctx.out_root / "00_source"
+
+    reprocessing_config = (
+        "reprocessing_source_run_id",
+        "reprocessing_profile",
+        "reprocessing_scene_ids",
+        "reprocessing_overlay_policy",
+    )
+    keyframes = LegacyInputBinding(
+        "keyframes",
+        lambda ctx, task: ctx.out_root / "03_keyframes" / "keyframes.json",
+    )
+    keyframe_images = LegacyInputBinding(
+        "keyframe_images",
+        lambda ctx, task: (
+            ctx.out_root / "03_keyframes" / "keyframe_images.zip"
+        ),
+    )
+    captions = LegacyInputBinding(
+        "captions",
+        lambda ctx, task: ctx.out_root / "08_captions" / "captions.json",
+    )
+    timeline = LegacyInputBinding(
+        "timeline",
+        lambda ctx, task: ctx.out_root / "09_timeline" / "timeline.json",
+    )
+    return (
+        LegacyStageDefinition(
+            name="03_keyframes",
+            stage_version="1.4.0",
+            module=modules["03_keyframes"],
+            inputs=(
+                LegacyInputBinding("video", lambda ctx, task: ctx.video_path),
+                LegacyInputBinding(
+                    "scenes",
+                    lambda ctx, task: (
+                        source_root(ctx) / "02_scenes" / "scenes.json"
+                    ),
+                ),
+                LegacyInputBinding(
+                    "source_keyframes",
+                    lambda ctx, task: (
+                        source_root(ctx) / "03_keyframes" / "keyframes.json"
+                    ),
+                ),
+                LegacyInputBinding(
+                    "source_keyframe_images",
+                    lambda ctx, task: (
+                        source_root(ctx)
+                        / "03_keyframes"
+                        / "keyframe_images.zip"
+                    ),
+                ),
+            ),
+            config_fields=("keyframes_per_scene", *reprocessing_config),
+            model_bindings={},
+            output_resolver=_keyframe_outputs,
+            before_run=_restore_source_keyframe_bundle,
+            after_run=_write_keyframe_bundle,
+        ),
+        LegacyStageDefinition(
+            name="08_captions",
+            stage_version="1.4.0",
+            module=modules["08_captions"],
+            inputs=(
+                keyframes,
+                keyframe_images,
+                LegacyInputBinding(
+                    "source_captions",
+                    lambda ctx, task: (
+                        source_root(ctx) / "08_captions" / "captions.json"
+                    ),
+                ),
+            ),
+            config_fields=("caption_model", *reprocessing_config),
+            model_bindings={"caption": "caption.default"},
+            output_resolver=_caption_outputs,
+            before_run=_restore_keyframe_bundle,
+            outcome_resolver=_caption_outcome,
+        ),
+        LegacyStageDefinition(
+            name="08_ocr",
+            stage_version="1.1.0",
+            module=modules["08_ocr"],
+            inputs=(
+                keyframes,
+                keyframe_images,
+                captions,
+                LegacyInputBinding(
+                    "source_ocr",
+                    lambda ctx, task: (
+                        source_root(ctx) / "08_ocr" / "ocr.json"
+                    ),
+                ),
+            ),
+            config_fields=(
+                "ocr_mode",
+                "ocr_model",
+                "ocr_languages",
+                "ocr_detect_orientation",
+                "ocr_min_confidence",
+                *reprocessing_config,
+            ),
+            model_bindings={"ocr": "ocr.default"},
+            output_resolver=_ocr_outputs,
+            before_run=_restore_keyframe_bundle,
+            outcome_resolver=_ocr_outcome,
+        ),
+        LegacyStageDefinition(
+            name="09_timeline",
+            stage_version="1.6.0",
+            module=modules["09_timeline"],
+            inputs=(
+                LegacyInputBinding(
+                    "scenes",
+                    lambda ctx, task: (
+                        source_root(ctx) / "02_scenes" / "scenes.json"
+                    ),
+                ),
+                keyframes,
+                LegacyInputBinding(
+                    "embedded_text",
+                    lambda ctx, task: (
+                        source_root(ctx)
+                        / "04_embedded_text"
+                        / "embedded_text.json"
+                    ),
+                ),
+                LegacyInputBinding(
+                    "audio_events",
+                    lambda ctx, task: (
+                        source_root(ctx)
+                        / "05_audio_events"
+                        / "audio_events.json"
+                    ),
+                ),
+                LegacyInputBinding(
+                    "transcript",
+                    lambda ctx, task: (
+                        source_root(ctx) / "06_stt" / "transcript.json"
+                    ),
+                ),
+                LegacyInputBinding(
+                    "diarization",
+                    lambda ctx, task: (
+                        source_root(ctx)
+                        / "07_diarize"
+                        / "diarization.json"
+                    ),
+                ),
+                captions,
+                LegacyInputBinding(
+                    "ocr",
+                    lambda ctx, task: ctx.out_root / "08_ocr" / "ocr.json",
+                ),
+            ),
+            config_fields=reprocessing_config,
+            model_bindings={},
+            output_resolver=_timeline_outputs,
+        ),
+        LegacyStageDefinition(
+            name="10_index",
+            stage_version="1.4.0",
+            module=modules["10_index"],
+            inputs=(timeline,),
+            config_fields=("embed_model",),
+            model_bindings={"embedding": "embedding.default"},
+            output_resolver=_index_outputs,
+            outcome_resolver=_index_outcome,
+        ),
+        LegacyStageDefinition(
+            name="11_context",
+            stage_version="1.5.0",
+            module=modules["11_context"],
+            inputs=(
+                LegacyInputBinding(
+                    "metadata",
+                    lambda ctx, task: (
+                        source_root(ctx) / "01_probe" / "metadata.json"
+                    ),
+                ),
+                LegacyInputBinding(
+                    "diarization",
+                    lambda ctx, task: (
+                        source_root(ctx)
+                        / "07_diarize"
+                        / "diarization.json"
+                    ),
+                ),
+                timeline,
+            ),
+            config_fields=(
+                "max_context_tokens",
+                "context_tokenizer_model",
+                *reprocessing_config,
+            ),
+            model_bindings={},
+            output_resolver=_context_outputs,
+        ),
+    )
+
+
+def _legacy_final_definitions(
     modules: Mapping[str, LegacyStageModule],
 ) -> tuple[LegacyStageDefinition, ...]:
     metadata = LegacyInputBinding(
@@ -1179,9 +1425,35 @@ def _restore_keyframe_bundle(
     ctx: PipelineContext,
     task: StageTask,
 ) -> None:
-    payload = ctx.load_json(
-        ctx.out_root / "03_keyframes" / "keyframes.json"
+    _restore_keyframe_bundle_at(
+        ctx,
+        root=ctx.out_root,
+        document=ctx.out_root / "03_keyframes" / "keyframes.json",
+        bundle=ctx.out_root / "03_keyframes" / "keyframe_images.zip",
     )
+
+
+def _restore_source_keyframe_bundle(
+    ctx: PipelineContext,
+    task: StageTask,
+) -> None:
+    source_root = ctx.out_root / "00_source"
+    _restore_keyframe_bundle_at(
+        ctx,
+        root=source_root,
+        document=source_root / "03_keyframes" / "keyframes.json",
+        bundle=source_root / "03_keyframes" / "keyframe_images.zip",
+    )
+
+
+def _restore_keyframe_bundle_at(
+    ctx: PipelineContext,
+    *,
+    root: Path,
+    document: Path,
+    bundle: Path,
+) -> None:
+    payload = ctx.load_json(document)
     keyframes = payload.get("keyframes")
     if not isinstance(keyframes, list):
         raise LegacyStageContractError(
@@ -1195,7 +1467,6 @@ def _restore_keyframe_bundle(
             )
         expected.append(_safe_keyframe_path(entry.get("path")))
     expected_names = tuple(sorted(path.as_posix() for path in expected))
-    bundle = ctx.out_root / "03_keyframes" / "keyframe_images.zip"
     try:
         with zipfile.ZipFile(bundle) as archive:
             actual_names = tuple(sorted(archive.namelist()))
@@ -1205,7 +1476,7 @@ def _restore_keyframe_bundle(
                 )
             for name in actual_names:
                 relative = _safe_keyframe_path(name)
-                target = ctx.out_root.joinpath(*relative.parts)
+                target = root.joinpath(*relative.parts)
                 target.parent.mkdir(parents=True, exist_ok=True)
                 _atomic_write_bytes(target, archive.read(name))
     except (OSError, zipfile.BadZipFile, KeyError) as exc:
@@ -1347,3 +1618,20 @@ def _load_final_modules() -> dict[str, LegacyStageModule]:
         module.NAME: module
         for module in (s09_timeline, s10_index, s11_context)
     }
+
+
+def _load_reprocessing_modules() -> dict[str, LegacyStageModule]:
+    modules = {
+        **_load_default_modules(),
+        **_load_model_modules(),
+        **_load_final_modules(),
+    }
+    names = {
+        "03_keyframes",
+        "08_captions",
+        "08_ocr",
+        "09_timeline",
+        "10_index",
+        "11_context",
+    }
+    return {name: modules[name] for name in names}

@@ -7,6 +7,7 @@
 """
 
 import math
+import shutil
 import statistics
 import subprocess
 import tempfile
@@ -17,6 +18,12 @@ from PIL import Image
 
 from ..context import PipelineContext
 from ..logging_setup import stage_logger
+from ._reprocessing import (
+    frame_relative_path,
+    provenance,
+    selected_scene_ids,
+    source_path,
+)
 
 NAME = "03_keyframes"
 OUTPUT = "03_keyframes/keyframes.json"
@@ -174,13 +181,128 @@ def _deduplicate_candidates(
     return retained, removed
 
 
+def _merge_source_overlay(
+    ctx: PipelineContext,
+    scenes: list[dict],
+    selected_ids: tuple[int, ...],
+    selected_keyframes: list[dict],
+    selected_removed: list[dict],
+    selected_statistics: list[dict],
+    selected_frame_paths: set[Path],
+) -> tuple[list[dict], list[dict], list[dict]]:
+    """Merge new selected scenes with immutable first-pass visual output."""
+
+    source_payload = ctx.load_json(
+        source_path(ctx, "03_keyframes/keyframes.json")
+    )
+    source_keyframes = source_payload.get("keyframes")
+    source_dedup = source_payload.get("deduplication")
+    if not isinstance(source_keyframes, list) or not isinstance(
+        source_dedup, dict
+    ):
+        raise ValueError("source keyframe overlay document is invalid")
+    selected_set = set(selected_ids)
+    scene_order = [int(scene["scene_id"]) for scene in scenes]
+    source_by_scene: dict[int, list[dict]] = {}
+    for entry in source_keyframes:
+        if not isinstance(entry, dict):
+            raise ValueError("source keyframes must contain objects")
+        scene_id = int(entry["scene_id"])
+        source_by_scene.setdefault(scene_id, []).append(entry)
+    selected_by_scene: dict[int, list[dict]] = {}
+    for entry in selected_keyframes:
+        selected_by_scene.setdefault(int(entry["scene_id"]), []).append(entry)
+    if set(selected_by_scene) != selected_set:
+        raise ValueError("selected keyframe output does not cover every scene")
+
+    combined = []
+    for scene_id in scene_order:
+        if scene_id in selected_set:
+            entries = selected_by_scene[scene_id]
+            for entry in entries:
+                combined.append({
+                    **entry,
+                    "reprocessing": provenance(ctx, "selected-pass"),
+                })
+            continue
+        entries = source_by_scene.get(scene_id, [])
+        if not entries:
+            raise ValueError(
+                f"source keyframes do not cover scene {scene_id}"
+            )
+        for entry in entries:
+            relative = frame_relative_path(entry.get("path"))
+            source_frame = source_path(ctx, relative.as_posix())
+            if not source_frame.is_file():
+                raise ValueError("source keyframe image is missing")
+            target = ctx.out_root.joinpath(*relative.parts)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source_frame, target)
+            selected_frame_paths.add(target)
+            combined.append({
+                **entry,
+                "size_bytes": target.stat().st_size,
+                "reprocessing": provenance(ctx, "source"),
+            })
+
+    source_statistics = source_dedup.get("scene_statistics")
+    source_removed = source_dedup.get("removed")
+    if not isinstance(source_statistics, list) or not isinstance(
+        source_removed, list
+    ):
+        raise ValueError("source keyframe deduplication metadata is invalid")
+    statistics_by_scene = {
+        int(item["scene_id"]): dict(item)
+        for item in source_statistics
+        if isinstance(item, dict) and "scene_id" in item
+    }
+    statistics_by_scene.update({
+        int(item["scene_id"]): dict(item)
+        for item in selected_statistics
+    })
+    if any(scene_id not in statistics_by_scene for scene_id in scene_order):
+        raise ValueError("source keyframe statistics do not cover every scene")
+    combined_statistics = [
+        statistics_by_scene[scene_id] for scene_id in scene_order
+    ]
+    combined_removed = [
+        {
+            **item,
+            "reprocessing": provenance(ctx, "source"),
+        }
+        for item in source_removed
+        if isinstance(item, dict)
+        and int(item.get("scene_id", -1)) not in selected_set
+    ] + [
+        {
+            **item,
+            "reprocessing": provenance(ctx, "selected-pass"),
+        }
+        for item in selected_removed
+    ]
+    return combined, combined_removed, combined_statistics
+
+
 def run(ctx: PipelineContext) -> dict:
     log = stage_logger(NAME)
     out_dir = ctx.stage_dir(NAME)
     frames_dir = out_dir / "frames"
     frames_dir.mkdir(exist_ok=True)
 
-    scenes = ctx.load_json(ctx.out_root / "02_scenes" / "scenes.json")["scenes"]
+    scenes_path = ctx.out_root / "02_scenes" / "scenes.json"
+    if ctx.reprocessing_scene_ids:
+        scenes_path = source_path(ctx, "02_scenes/scenes.json")
+    scenes = ctx.load_json(scenes_path)["scenes"]
+    reprocessing_scene_ids = selected_scene_ids(
+        ctx,
+        (int(scene["scene_id"]) for scene in scenes),
+    )
+    selected_set = set(reprocessing_scene_ids)
+    processing_scenes = (
+        [scene for scene in scenes if int(scene["scene_id"]) in selected_set]
+        if reprocessing_scene_ids
+        else scenes
+    )
     max_keyframes = ctx.keyframes_per_scene
     if (
         isinstance(max_keyframes, bool)
@@ -190,7 +312,7 @@ def run(ctx: PipelineContext) -> dict:
         raise ValueError("keyframes_per_scene must be between 1 and 3")
     log.info(
         "씬 %d개에서 adaptive 키프레임 추출 시작 (씬당 최대 %d장)",
-        len(scenes),
+        len(processing_scenes),
         max_keyframes,
     )
 
@@ -205,7 +327,7 @@ def run(ctx: PipelineContext) -> dict:
     ) as temporary_directory:
         candidate_dir = Path(temporary_directory)
         scene_selections = []
-        for scene in scenes:
+        for scene in processing_scenes:
             scene_id = int(scene["scene_id"])
             start_sec = float(scene["start_sec"])
             end_sec = float(scene["end_sec"])
@@ -309,6 +431,23 @@ def run(ctx: PipelineContext) -> dict:
                 "removed_count": len(removed),
             })
 
+    processed_candidate_count = candidate_keyframe_count
+    if reprocessing_scene_ids:
+        keyframes, removed_keyframes, scene_statistics = (
+            _merge_source_overlay(
+                ctx,
+                scenes,
+                reprocessing_scene_ids,
+                keyframes,
+                removed_keyframes,
+                scene_statistics,
+                selected_frame_paths,
+            )
+        )
+        candidate_keyframe_count = sum(
+            int(item["candidate_count"]) for item in scene_statistics
+        )
+
     for stale_path in frames_dir.glob("scene_*.jpg"):
         if stale_path not in selected_frame_paths:
             stale_path.unlink()
@@ -322,36 +461,46 @@ def run(ctx: PipelineContext) -> dict:
         total_kb,
     )
 
-    ctx.save_json(
-        out_dir / "keyframes.json",
-        {
-            "selection_policy": {
-                "name": SELECTION_POLICY,
-                "max_keyframes_per_scene": max_keyframes,
-                "duration_thresholds_sec": list(DURATION_THRESHOLDS_SEC),
-                "timestamp_strategy": TIMESTAMP_STRATEGY,
-            },
-            "deduplication": {
-                "algorithm": DEDUPLICATION_ALGORITHM,
-                "hash_bits": HASH_BITS,
-                "hamming_distance_threshold": (
-                    HAMMING_DISTANCE_THRESHOLD
-                ),
-                "comparison_scope": DEDUPLICATION_SCOPE,
-                "comparison_order": COMPARISON_ORDER,
-                "minimum_retained_per_scene": 1,
-                "candidate_count": candidate_keyframe_count,
-                "retained_count": len(keyframes),
-                "removed_count": len(removed_keyframes),
-                "scene_statistics": scene_statistics,
-                "removed": removed_keyframes,
-            },
-            "keyframes": keyframes,
+    payload = {
+        "selection_policy": {
+            "name": SELECTION_POLICY,
+            "max_keyframes_per_scene": max_keyframes,
+            "duration_thresholds_sec": list(DURATION_THRESHOLDS_SEC),
+            "timestamp_strategy": TIMESTAMP_STRATEGY,
         },
-    )
-    return {
+        "deduplication": {
+            "algorithm": DEDUPLICATION_ALGORITHM,
+            "hash_bits": HASH_BITS,
+            "hamming_distance_threshold": HAMMING_DISTANCE_THRESHOLD,
+            "comparison_scope": DEDUPLICATION_SCOPE,
+            "comparison_order": COMPARISON_ORDER,
+            "minimum_retained_per_scene": 1,
+            "candidate_count": candidate_keyframe_count,
+            "retained_count": len(keyframes),
+            "removed_count": len(removed_keyframes),
+            "scene_statistics": scene_statistics,
+            "removed": removed_keyframes,
+        },
+        "keyframes": keyframes,
+    }
+    if reprocessing_scene_ids:
+        payload["reprocessing"] = {
+            **provenance(ctx, "selected-pass"),
+            "selected_scene_ids": list(reprocessing_scene_ids),
+            "processed_scene_count": len(reprocessing_scene_ids),
+            "reused_scene_count": len(scenes) - len(reprocessing_scene_ids),
+        }
+    ctx.save_json(out_dir / "keyframes.json", payload)
+    metrics = {
         "candidate_keyframe_count": candidate_keyframe_count,
         "keyframe_count": len(keyframes),
         "removed_keyframe_count": len(removed_keyframes),
         "scene_count": len(scenes),
     }
+    if reprocessing_scene_ids:
+        metrics.update({
+            "processed_candidate_keyframe_count": processed_candidate_count,
+            "processed_scene_count": len(reprocessing_scene_ids),
+            "reused_scene_count": len(scenes) - len(reprocessing_scene_ids),
+        })
+    return metrics

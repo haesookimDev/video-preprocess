@@ -96,7 +96,7 @@ local reference server는 `--retain-terminal-runs`로 최근 terminal API snapsh
 정리는 API 조회/idempotency control record에만 적용하며 Engine manifest와 artifact body를 삭제하지
 않는다. 보존 범위를 지난 run은 `404`이고 같은 idempotency key는 새 실행으로 사용할 수 있다.
 
-## 1.2 질의 기반 2-pass 재처리 planning 계약
+## 1.2 질의 기반 2-pass 재처리·source import 계약
 
 현재 구현된 `PipelineReprocessingSubmission`은 source run, query, `visual-detail-v1` profile,
 `max_scenes`, `min_similarity`와 idempotency key를 받는다. 별도
@@ -108,10 +108,25 @@ neighbor 확장은 context 조립용이며 재처리 후보에는 포함하지 �
 `visual-detail-v1`은 선택 scene에 keyframe 상한 3과 OCR all을 적용하는 server-owned profile이다.
 선택 scene 범위는 `03_keyframes`, `08_captions`, `08_ocr`이고, 완성된 overlay 전체를 소비하는
 `09_timeline`, `10_index`, `11_context`는 full-materialization 범위다. 현재
-`from_stage=03_keyframes` plan의 boundary input은 `audio_events`, `diarization`, `embedded_text`,
-`metadata`, `scenes`, `transcript`, `video`다. source provenance에는 이 7개와 overlay base인
+전용 reprocessing plan의 boundary input은 `audio_events`, `diarization`, `embedded_text`,
+`metadata`, `scenes`, `transcript`, `video`와 `source_keyframes`, `source_keyframe_images`,
+`source_captions`, `source_ocr`다. source provenance에는 원래 이름의 7개와 overlay base인
 `keyframes`, `keyframe_images`, `captions`, `ocr`, query evidence인 `timeline`, `search_index`
 ArtifactRef/checksum을 모두 포함한다.
+
+`ReprocessingArtifactImporter`는 위 13개 source ArtifactRef를 전부 `verify()`한 다음 파생
+namespace의 `00_source/` 고정 경로에 복사한다. copy 중 계산한 size/checksum도 source ref와 정확히
+일치해야 한다. 모든 body가 publish된 후에만 `reprocessing-source-manifest-v1`을
+`00_source/source_manifest.json`에 publish한다. manifest는 source URI/checksum, plan fingerprint와
+execution boundary alias를 포함하지만 host absolute path를 포함하지 않는다. 검증 실패 시 Stage를
+실행하지 않으며 부모 Artifact와 manifest는 쓰지 않는다.
+
+전용 Stage version과 범위는 03 `1.4.0`, caption `1.4.0`, OCR `1.1.0`, timeline `1.6.0`, index
+`1.4.0`, context `1.5.0`이다. `reprocessing_source_run_id`, profile, selected scene ID와 overlay policy가
+03/08/09/11 config에 포함된다. 03은 source keyframe bundle을 검증·복원한 뒤 선택 scene만 추출하고,
+caption/OCR Provider도 선택 scene image만 받는다. 비선택 항목은 source 순서대로 복사하고 각 entry에
+`source` 또는 `selected-pass` provenance를 기록한다. 09/10/11은 overlay 전체와 source 비시각
+boundary를 사용해 파생 namespace에 전체 결과를 새로 만든다.
 
 재처리는 source run을 덮어쓰지 않고 새 run/workspace를 만드는
 `derived-run-no-parent-overwrite-v1` 정책을 따른다. request fingerprint는 idempotency key를 제외하고,
@@ -119,10 +134,10 @@ plan fingerprint는 정규화 query, 선택 scene, profile 정책, Stage version
 포함한다. 선택/overlay 의미가 바뀌면 profile 또는 Stage version을 올리고, 09/10/11은 overlay 결과
 checksum으로 cache를 판정한다.
 
-현재 plan은 source namespace import와 선택 scene별 03/08 overlay capability가 없어
-`execution.ready=false`를 명시한다. 따라서 아직 실행 CLI/API/OpenAPI에는 노출하지 않는다. 다음
-slice에서 `source-artifact-import-v1`, keyframe/caption/OCR overlay를 구현하고 부모 불변성을 검증한
-뒤 별도 mutation command와
+source import와 overlay는 구현됐지만 plan→import→Engine을 조합하고 상태를 저장하는
+`derived-run-application-runtime-v1`이 남아 있어 `execution.ready=false`를 유지한다. 따라서 아직
+실행 CLI/API/OpenAPI에는 노출하지 않는다. 다음 slice에서 파생 run Application runtime과 idempotent
+상태 저장을 구현한 뒤 별도 mutation command와
 `POST /v1/pipeline-runs/{source_run_id}/reprocessing-runs`를 공개한다. `/queries`는 계속 read-only다.
 세부 결정은
 [`ADR-0036`](./adr/0036-query-guided-derived-run-reprocessing-plan.md)에 기록한다.

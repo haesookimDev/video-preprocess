@@ -189,6 +189,7 @@ class ReprocessingQualityProfile:
     overlay_artifacts: Sequence[str]
     query_artifacts: Sequence[str]
     settings_overrides: Mapping[str, object]
+    boundary_source_artifacts: Mapping[str, str]
     selector_policy: str = "ranked-query-scenes-v1"
     overlay_policy: str = "copy-unselected-from-source-v1"
     output_policy: str = "derived-run-no-parent-overwrite-v1"
@@ -243,6 +244,21 @@ class ReprocessingQualityProfile:
             "settings_overrides",
             dict(self.settings_overrides),
         )
+        if not isinstance(self.boundary_source_artifacts, Mapping) or not all(
+            isinstance(name, str)
+            and name.strip()
+            and isinstance(source, str)
+            and source.strip()
+            for name, source in self.boundary_source_artifacts.items()
+        ):
+            raise ReprocessingInputError(
+                "boundary_source_artifacts must map non-empty names"
+            )
+        object.__setattr__(
+            self,
+            "boundary_source_artifacts",
+            dict(self.boundary_source_artifacts),
+        )
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -253,6 +269,9 @@ class ReprocessingQualityProfile:
             "output_policy": self.output_policy,
             "cache_policy": self.cache_policy,
             "settings_overrides": dict(self.settings_overrides),
+            "boundary_source_artifacts": dict(
+                sorted(self.boundary_source_artifacts.items())
+            ),
         }
 
 
@@ -280,6 +299,12 @@ VISUAL_DETAIL_V1 = ReprocessingQualityProfile(
     settings_overrides={
         "keyframes_per_scene": 3,
         "ocr_mode": "all",
+    },
+    boundary_source_artifacts={
+        "source_keyframes": "keyframes",
+        "source_keyframe_images": "keyframe_images",
+        "source_captions": "captions",
+        "source_ocr": "ocr",
     },
 )
 
@@ -521,10 +546,7 @@ class QueryReprocessingApplicationService:
     """Turn read-only query results into an immutable derived-run plan."""
 
     _PENDING_CAPABILITIES = (
-        "source-artifact-import-v1",
-        "selected-scene-keyframe-overlay-v1",
-        "selected-scene-caption-overlay-v1",
-        "selected-scene-ocr-overlay-v1",
+        "derived-run-application-runtime-v1",
     )
 
     def __init__(
@@ -578,13 +600,14 @@ class QueryReprocessingApplicationService:
             raise ReprocessingSourceNotReadyError(
                 "resolved source run does not match the request"
             )
-        required_artifacts = tuple(
-            sorted(
-                set(execution.boundary_inputs)
-                | set(profile.overlay_artifacts)
-                | set(profile.query_artifacts)
-            )
-        )
+        required_artifacts = tuple(sorted(
+            {
+                profile.boundary_source_artifacts.get(name, name)
+                for name in execution.boundary_inputs
+            }
+            | set(profile.overlay_artifacts)
+            | set(profile.query_artifacts)
+        ))
         missing = tuple(
             name for name in required_artifacts if name not in source.artifacts
         )

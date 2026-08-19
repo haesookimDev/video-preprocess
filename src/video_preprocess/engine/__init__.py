@@ -9,7 +9,13 @@ from .cache import (
     ManifestCacheEvaluator,
     compute_stage_cache_key,
 )
-from .defaults import DEFAULT_STAGE_SPECS, create_default_registry
+from .defaults import (
+    DEFAULT_STAGE_SPECS,
+    REPROCESSING_EXTERNAL_INPUTS,
+    REPROCESSING_STAGE_SPECS,
+    create_default_registry,
+    create_reprocessing_registry,
+)
 from .errors import (
     DependencyCycleError,
     DuplicateOutputError,
@@ -45,6 +51,8 @@ __all__ = [
     "DAGPlanner",
     "DEFAULT_RETRYABLE_REASONS",
     "DEFAULT_STAGE_SPECS",
+    "REPROCESSING_EXTERNAL_INPUTS",
+    "REPROCESSING_STAGE_SPECS",
     "DependencyCycleError",
     "DuplicateOutputError",
     "DuplicateStageError",
@@ -70,5 +78,6 @@ __all__ = [
     "StateTransitionError",
     "UnknownDependencyError",
     "create_default_registry",
+    "create_reprocessing_registry",
     "compute_stage_cache_key",
 ]
