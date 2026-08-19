@@ -30,6 +30,7 @@ class InferenceTask(str, Enum):
     SPEECH_TO_TEXT = "speech_to_text"
     SPEAKER_DIARIZATION = "speaker_diarization"
     IMAGE_CAPTIONING = "image_captioning"
+    OPTICAL_CHARACTER_RECOGNITION = "optical_character_recognition"
     TEXT_EMBEDDING = "text_embedding"
 
 

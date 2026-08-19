@@ -10,6 +10,7 @@ from video_preprocess.domain import (
     InferenceResponse,
     ProviderCapabilities,
     ProviderHealth,
+    InferenceTask,
 )
 
 
@@ -115,3 +116,19 @@ def test_contract_forbids_host_paths_and_declares_terminal_model_data() -> None:
     serialized = SPEC_PATH.read_text(encoding="utf-8")
     assert "Authorization:" not in serialized
     assert "/Users/" not in serialized
+
+
+def test_openapi_task_enum_matches_python_contract() -> None:
+    schemas = load_spec()["components"]["schemas"]
+    request_tasks = set(
+        schemas["InferenceRequest"]["properties"]["task"]["enum"]
+    )
+    capability_tasks = set(
+        schemas["ProviderCapabilities"]["properties"]["tasks"]["items"][
+            "enum"
+        ]
+    )
+
+    expected = {task.value for task in InferenceTask}
+    assert request_tasks == expected
+    assert capability_tasks == expected

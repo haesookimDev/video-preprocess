@@ -4,15 +4,23 @@ from pathlib import Path
 
 import pytest
 
-from pipeline.deployment import embedding_deployments_from_environment
+from pipeline.deployment import (
+    embedding_deployments_from_environment,
+    inference_deployments_from_environment,
+)
 from video_preprocess.inference import (
     HTTPInferenceProvider,
     HTTPProviderSettings,
     InferenceDeploymentSettings,
     create_configured_embedding_service,
+    create_configured_ocr_service,
 )
-from video_preprocess.inference.local import LocalEmbeddingProvider
+from video_preprocess.inference.local import (
+    LocalEmbeddingProvider,
+    LocalOCRProvider,
+)
 from video_preprocess.services import PipelineRunRequest
+from video_preprocess.storage import LocalArtifactStore
 
 
 def bound_provider(service, alias="embedding.default"):
@@ -47,6 +55,59 @@ def test_embedding_alias_uses_http_provider_when_endpoint_is_configured() -> Non
     assert service.timeout_sec == 12
     assert "private-token" not in repr(deployments)
     assert "private-token" not in str(deployments.public_dict())
+
+
+def test_ocr_alias_selects_local_or_http_provider(tmp_path: Path) -> None:
+    store = LocalArtifactStore(tmp_path, namespace="test")
+    local = create_configured_ocr_service("tesseract", store)
+    deployments = InferenceDeploymentSettings(
+        http_providers={
+            "ocr.default": HTTPProviderSettings(
+                endpoint="https://ocr.example.test",
+                request_timeout_sec=15,
+            )
+        }
+    )
+    remote = create_configured_ocr_service(
+        "example/ocr",
+        store,
+        deployments=deployments,
+    )
+
+    assert isinstance(bound_provider(local, "ocr.default"), LocalOCRProvider)
+    assert isinstance(
+        bound_provider(remote, "ocr.default"),
+        HTTPInferenceProvider,
+    )
+    assert remote.timeout_sec == 15
+
+
+def test_environment_adapter_composes_embedding_and_ocr_aliases() -> None:
+    deployments = inference_deployments_from_environment(
+        endpoints={
+            "embedding.default": "https://models.example.test",
+            "ocr.default": "https://ocr.example.test",
+        },
+        token_envs={
+            "embedding.default": None,
+            "ocr.default": "OCR_TOKEN",
+        },
+        artifact_namespaces={
+            "embedding.default": (),
+            "ocr.default": ("run-artifacts",),
+        },
+        environ={"OCR_TOKEN": "secret-value"},
+    )
+
+    assert set(deployments.http_providers) == {
+        "embedding.default",
+        "ocr.default",
+    }
+    ocr = deployments.http_provider("ocr.default")
+    assert ocr is not None
+    assert ocr.auth_token == "secret-value"
+    assert ocr.allowed_artifact_namespaces == ("run-artifacts",)
+    assert "secret-value" not in str(deployments.public_dict())
 
 
 def test_environment_adapter_resolves_token_without_exposing_variable() -> None:

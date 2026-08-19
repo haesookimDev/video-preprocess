@@ -6,6 +6,7 @@ from .deployment import (
     HTTPProviderSettings,
     InferenceDeploymentSettings,
     create_configured_embedding_service,
+    create_configured_ocr_service,
 )
 from .embedding import EmbeddingBatch, EmbeddingService
 from .errors import InferenceCallError, ProviderConfigurationError
@@ -17,6 +18,7 @@ from .http import (
     InferenceHTTPService,
 )
 from .model_resolver import GatewayEffectiveModelResolver
+from .ocr import OCRBatch, OCRImageResult, OCRRegion, OCRService
 from .provider import InferenceProvider
 from .stt import SpeechChunk, STTService, TranscriptSegment, TranscriptionBatch
 from .vad import SpeechSegment, VADBatch, VADService
@@ -38,6 +40,10 @@ __all__ = [
     "InferenceDeploymentSettings",
     "GatewayEffectiveModelResolver",
     "InferenceProvider",
+    "OCRBatch",
+    "OCRImageResult",
+    "OCRRegion",
+    "OCRService",
     "ProviderConfigurationError",
     "SpeakerTurn",
     "SpeechChunk",
@@ -48,4 +54,5 @@ __all__ = [
     "VADBatch",
     "VADService",
     "create_configured_embedding_service",
+    "create_configured_ocr_service",
 ]

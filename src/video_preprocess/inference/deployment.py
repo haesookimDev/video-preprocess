@@ -7,9 +7,12 @@ from collections.abc import Collection, Mapping
 from dataclasses import dataclass, field
 from urllib.parse import urlparse
 
+from video_preprocess.storage import ArtifactStore
+
 from .embedding import EmbeddingService
 from .gateway import InferenceGateway
 from .http import HTTPInferenceProvider, HTTPRetryPolicy
+from .ocr import OCRService
 
 
 @dataclass(frozen=True, slots=True)
@@ -180,4 +183,53 @@ def create_configured_embedding_service(
         model_name=model_name,
         revision=revision or "default",
         timeout_sec=remote.request_timeout_sec,
+    )
+
+
+def create_configured_ocr_service(
+    model_name: str,
+    artifact_store: ArtifactStore,
+    *,
+    deployments: InferenceDeploymentSettings | None = None,
+    alias: str = "ocr.default",
+    revision: str | None = None,
+    command: str = "tesseract",
+    max_batch_size: int = 4,
+) -> OCRService:
+    """Compose the OCR alias locally or through its HTTP endpoint."""
+
+    selected = deployments or InferenceDeploymentSettings()
+    if not isinstance(selected, InferenceDeploymentSettings):
+        raise TypeError("deployments must be InferenceDeploymentSettings")
+    remote = selected.http_provider(alias)
+    if remote is None:
+        from .local import create_local_ocr_service
+
+        return create_local_ocr_service(
+            artifact_store,
+            alias=alias,
+            model_name=model_name,
+            revision=revision or "system",
+            command=command,
+            max_batch_size=max_batch_size,
+        )
+    provider = HTTPInferenceProvider(
+        alias=alias,
+        endpoint=remote.endpoint,
+        auth_token=remote.auth_token,
+        allowed_artifact_namespaces=remote.allowed_artifact_namespaces,
+        operation_timeout_sec=remote.operation_timeout_sec,
+        poll_interval_sec=remote.poll_interval_sec,
+        max_poll_interval_sec=remote.max_poll_interval_sec,
+        capability_ttl_sec=remote.capability_ttl_sec,
+        retry_policy=remote.retry_policy,
+    )
+    gateway = InferenceGateway({alias: provider})
+    return OCRService(
+        gateway,
+        alias=alias,
+        model_name=model_name,
+        revision=revision or "default",
+        timeout_sec=remote.request_timeout_sec,
+        batch_size=max_batch_size,
     )

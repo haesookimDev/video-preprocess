@@ -6,6 +6,7 @@ from .diarization import (
     create_local_diarization_service,
 )
 from .embedding import LocalEmbeddingProvider, get_local_embedding_service
+from .ocr import LocalOCRProvider, create_local_ocr_service
 from .stt import LocalSTTProvider, create_local_stt_service
 from .vad import LocalVADProvider, create_local_vad_service
 
@@ -13,10 +14,12 @@ __all__ = [
     "LocalCaptionProvider",
     "LocalDiarizationProvider",
     "LocalEmbeddingProvider",
+    "LocalOCRProvider",
     "LocalSTTProvider",
     "LocalVADProvider",
     "create_local_caption_service",
     "create_local_diarization_service",
+    "create_local_ocr_service",
     "create_local_stt_service",
     "create_local_vad_service",
     "get_local_embedding_service",

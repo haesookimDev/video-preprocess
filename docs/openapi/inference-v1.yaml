@@ -387,6 +387,7 @@ components:
             - speech_to_text
             - speaker_diarization
             - image_captioning
+            - optical_character_recognition
             - text_embedding
         model:
           $ref: "#/components/schemas/RequestedModel"
@@ -565,6 +566,7 @@ components:
               - speech_to_text
               - speaker_diarization
               - image_captioning
+              - optical_character_recognition
               - text_embedding
         model_aliases:
           type: array
