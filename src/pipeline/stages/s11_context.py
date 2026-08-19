@@ -23,6 +23,7 @@ PREAMBLE = """\
 - 시간은 [분:초] 형식이며 영상 시작 기준이다.
 - `시각:`은 씬 키프레임을 캡셔닝한 것으로 영어일 수 있다.
 - `화면 텍스트:`는 키프레임 OCR 결과로 오인식이 있을 수 있다.
+- `챕터:`와 `내장 자막:`은 원본 컨테이너에서 추출한 구조·텍스트다.
 - 발화 줄의 (SPEAKER_NN)은 화자 분리 라벨이다. 라벨이 없으면 화자 미상이다.
 - 발화 텍스트는 음성 인식 결과로 일부 오인식이 있을 수 있다."""
 
@@ -37,7 +38,12 @@ def _card_lines(card: dict) -> list[str]:
         f"### 씬 {card['scene_id']:02d} "
         f"[{_fmt_ts(card['start_sec'])} ~ {_fmt_ts(card['end_sec'])}]"
     ]
-    if card["caption"]:
+    chapter = card.get("chapter")
+    if isinstance(chapter, dict) and chapter.get("title"):
+        lines.append(f"챕터: {chapter['title']}")
+    if card.get("subtitle_text"):
+        lines.append(f"내장 자막: {card['subtitle_text']}")
+    if card.get("caption"):
         lines.append(f"시각: {card['caption']}")
     if card.get("ocr_text"):
         lines.append(f"화면 텍스트: {card['ocr_text']}")
@@ -58,10 +64,20 @@ def _card_lines(card: dict) -> list[str]:
 
 
 def _toc_line(card: dict) -> str:
-    head = card["caption"] or card.get("ocr_text") or (
-        card["transcript"][0]["text"][:40]
-        if card["transcript"]
-        else "(내용 없음)"
+    chapter = card.get("chapter")
+    chapter_title = (
+        chapter.get("title") if isinstance(chapter, dict) else None
+    )
+    head = (
+        card.get("caption")
+        or card.get("ocr_text")
+        or chapter_title
+        or card.get("subtitle_text")
+        or (
+            card["transcript"][0]["text"][:40]
+            if card["transcript"]
+            else "(내용 없음)"
+        )
     )
     return (
         f"- 씬 {card['scene_id']:02d} "
@@ -121,10 +137,20 @@ def _budget_context(
             blocks.append(full)
             continue
         heading = _card_lines(card)[0]
-        summary = card["caption"] or card.get("ocr_text") or (
-            card["transcript"][0]["text"]
-            if card["transcript"]
-            else "(내용 없음)"
+        chapter = card.get("chapter")
+        chapter_title = (
+            chapter.get("title") if isinstance(chapter, dict) else None
+        )
+        summary = (
+            card.get("caption")
+            or card.get("ocr_text")
+            or chapter_title
+            or card.get("subtitle_text")
+            or (
+                card["transcript"][0]["text"]
+                if card["transcript"]
+                else "(내용 없음)"
+            )
         )
         compact = f"{heading}\n{summary}"
         fitted = _fit_static_card(

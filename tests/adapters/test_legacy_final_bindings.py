@@ -428,6 +428,7 @@ def test_timeline_requires_json_and_markdown_outputs(tmp_path: Path) -> None:
     relative_inputs = {
         "scenes": "02_scenes/scenes.json",
         "keyframes": "03_keyframes/keyframes.json",
+        "embedded_text": "04_embedded_text/embedded_text.json",
         "transcript": "06_stt/transcript.json",
         "diarization": "07_diarize/diarization.json",
         "captions": "08_captions/captions.json",

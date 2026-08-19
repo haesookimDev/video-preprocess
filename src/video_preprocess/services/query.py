@@ -816,10 +816,20 @@ def _render_legacy_context(
         )
     lines = ["## 영상 개요 (전체 씬 목차)"]
     for card in timeline:
-        head = card["caption"] or card.get("ocr_text") or (
-            card["transcript"][0]["text"][:30]
-            if card["transcript"]
-            else "(내용 없음)"
+        chapter = card.get("chapter")
+        chapter_title = (
+            chapter.get("title") if isinstance(chapter, dict) else None
+        )
+        head = (
+            card.get("caption")
+            or card.get("ocr_text")
+            or chapter_title
+            or card.get("subtitle_text")
+            or (
+                card["transcript"][0]["text"][:30]
+                if card["transcript"]
+                else "(내용 없음)"
+            )
         )
         lines.append(
             f"- 씬 {card['scene_id']:02d} "
@@ -864,6 +874,11 @@ def _render_scene_card(card: Mapping[str, object]) -> str:
         f"[{_fmt_ts(float(card['start_sec']))}~"
         f"{_fmt_ts(float(card['end_sec']))}]"
     ]
+    chapter = card.get("chapter")
+    if isinstance(chapter, Mapping) and chapter.get("title"):
+        lines.append(f"챕터: {chapter['title']}")
+    if card.get("subtitle_text"):
+        lines.append(f"내장 자막: {card['subtitle_text']}")
     if card.get("caption"):
         lines.append(f"시각: {card['caption']}")
     if card.get("ocr_text"):
@@ -884,9 +899,23 @@ def _render_scene_card(card: Mapping[str, object]) -> str:
 
 
 def _compact_scene_card(card: Mapping[str, object]) -> str:
-    heading = _render_scene_card({**card, "caption": None, "transcript": []}).splitlines()[0]
-    body = card.get("caption") or card.get("ocr_text") or (
-        card["transcript"][0]["text"] if card["transcript"] else "(내용 없음)"
+    heading = _render_scene_card(
+        {**card, "caption": None, "transcript": []}
+    ).splitlines()[0]
+    chapter = card.get("chapter")
+    chapter_title = (
+        chapter.get("title") if isinstance(chapter, Mapping) else None
+    )
+    body = (
+        card.get("caption")
+        or card.get("ocr_text")
+        or chapter_title
+        or card.get("subtitle_text")
+        or (
+            card["transcript"][0]["text"]
+            if card["transcript"]
+            else "(내용 없음)"
+        )
     )
     return f"{heading}\n{body}"
 

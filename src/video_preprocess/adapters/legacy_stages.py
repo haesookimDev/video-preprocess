@@ -550,6 +550,12 @@ def _final_definitions(
         "ocr",
         lambda ctx, task: ctx.out_root / "08_ocr" / "ocr.json",
     )
+    embedded_text = LegacyInputBinding(
+        "embedded_text",
+        lambda ctx, task: (
+            ctx.out_root / "04_embedded_text" / "embedded_text.json"
+        ),
+    )
     timeline = LegacyInputBinding(
         "timeline",
         lambda ctx, task: ctx.out_root / "09_timeline" / "timeline.json",
@@ -557,11 +563,12 @@ def _final_definitions(
     return (
         LegacyStageDefinition(
             name="09_timeline",
-            stage_version="1.3.0",
+            stage_version="1.4.0",
             module=modules["09_timeline"],
             inputs=(
                 scenes,
                 keyframes,
+                embedded_text,
                 transcript,
                 diarization,
                 captions,
@@ -573,7 +580,7 @@ def _final_definitions(
         ),
         LegacyStageDefinition(
             name="10_index",
-            stage_version="1.2.0",
+            stage_version="1.3.0",
             module=modules["10_index"],
             inputs=(timeline,),
             config_fields=("embed_model",),
@@ -583,7 +590,7 @@ def _final_definitions(
         ),
         LegacyStageDefinition(
             name="11_context",
-            stage_version="1.2.0",
+            stage_version="1.3.0",
             module=modules["11_context"],
             inputs=(metadata, diarization, timeline),
             config_fields=("max_context_tokens", "context_tokenizer_model"),

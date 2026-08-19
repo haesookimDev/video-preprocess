@@ -5,7 +5,12 @@ from pathlib import Path
 
 from pipeline.context import PipelineContext
 from pipeline.stages import s09_timeline
-from pipeline.stages.s09_timeline import _assign_transcript, _match_speaker
+from pipeline.stages.s09_timeline import (
+    _assign_subtitles,
+    _assign_transcript,
+    _chapter_for_scene,
+    _match_speaker,
+)
 
 
 FIXTURE = Path(__file__).parent / "fixtures" / "timeline_boundaries.json"
@@ -83,6 +88,49 @@ def test_transcript_without_positive_scene_overlap_is_reported() -> None:
     assert unassigned == [1, 2]
 
 
+def test_embedded_text_uses_same_single_assignment_and_chapter_policy() -> None:
+    scenes = [
+        {"scene_id": 1, "start_sec": 0.0, "end_sec": 5.0},
+        {"scene_id": 2, "start_sec": 5.0, "end_sec": 10.0},
+    ]
+    subtitles = [
+        {
+            "source_id": "subtitle:stream:2:cue:1",
+            "start_sec": 4.0,
+            "end_sec": 6.0,
+            "text": "boundary",
+        },
+        {
+            "source_id": "subtitle:stream:2:cue:2",
+            "start_sec": 10.0,
+            "end_sec": 11.0,
+            "text": "outside",
+        },
+    ]
+    chapters = [
+        {
+            "source_id": "chapter:0",
+            "start_sec": 0.0,
+            "end_sec": 5.0,
+            "title": "Opening",
+        },
+        {
+            "source_id": "chapter:1",
+            "start_sec": 5.0,
+            "end_sec": 10.0,
+            "title": "Main",
+        },
+    ]
+
+    assigned, unassigned = _assign_subtitles(scenes, subtitles)
+
+    assert assigned[1] == []
+    assert assigned[2][0]["source_id"] == "subtitle:stream:2:cue:1"
+    assert unassigned == ["subtitle:stream:2:cue:2"]
+    assert _chapter_for_scene(scenes[0], chapters)["source_id"] == "chapter:0"
+    assert _chapter_for_scene(scenes[1], chapters)["source_id"] == "chapter:1"
+
+
 def test_timeline_preserves_multi_visuals_and_legacy_scene_summary(
     tmp_path: Path,
 ) -> None:
@@ -142,6 +190,63 @@ def test_timeline_preserves_multi_visuals_and_legacy_scene_summary(
             ]
         },
     )
+    context.save_json(
+        context.stage_dir("04_embedded_text") / "embedded_text.json",
+        {
+            "subtitles": [
+                {
+                    "source_id": "subtitle:stream:2:cue:1",
+                    "source_stream_id": "subtitle:stream:2",
+                    "cue_index": 1,
+                    "stream_index": 2,
+                    "language": "eng",
+                    "start_sec": 1.0,
+                    "end_sec": 4.0,
+                    "text": "Welcome",
+                },
+                {
+                    "source_id": "subtitle:stream:2:cue:2",
+                    "source_stream_id": "subtitle:stream:2",
+                    "cue_index": 2,
+                    "stream_index": 2,
+                    "language": "eng",
+                    "start_sec": 9.0,
+                    "end_sec": 11.0,
+                    "text": "Boundary subtitle",
+                },
+                {
+                    "source_id": "subtitle:stream:2:cue:3",
+                    "source_stream_id": "subtitle:stream:2",
+                    "cue_index": 3,
+                    "stream_index": 2,
+                    "language": "eng",
+                    "start_sec": 20.0,
+                    "end_sec": 22.0,
+                    "text": "Outside",
+                },
+            ],
+            "chapters": [
+                {
+                    "source_id": "chapter:0",
+                    "chapter_index": 0,
+                    "source_chapter_id": 10,
+                    "start_sec": 0.0,
+                    "end_sec": 8.0,
+                    "title": "Opening",
+                    "language": "eng",
+                },
+                {
+                    "source_id": "chapter:1",
+                    "chapter_index": 1,
+                    "source_chapter_id": 20,
+                    "start_sec": 8.0,
+                    "end_sec": 16.0,
+                    "title": "Main",
+                    "language": "eng",
+                },
+            ],
+        },
+    )
 
     metrics = s09_timeline.run(context)
 
@@ -153,6 +258,16 @@ def test_timeline_preserves_multi_visuals_and_legacy_scene_summary(
     assert timeline["visual_summary_policy"] == (
         "ordered_unique_caption_join"
     )
+    assert timeline["subtitle_assignment"] == (
+        "maximum_overlap_single_midpoint_tiebreak"
+    )
+    assert timeline["chapter_assignment"] == (
+        "maximum_overlap_single_midpoint_tiebreak"
+    )
+    assert timeline["assigned_subtitle_count"] == 2
+    assert timeline["unassigned_subtitle_source_ids"] == [
+        "subtitle:stream:2:cue:3"
+    ]
     assert first["keyframe"] == fixture["keyframes"][0]["path"]
     assert first["caption"] == "a title card | a presenter"
     assert first["keyframes"] == [
@@ -178,11 +293,22 @@ def test_timeline_preserves_multi_visuals_and_legacy_scene_summary(
     assert first["visual_ocr"][0]["regions"][0]["confidence"] == 0.98
     assert first["visual_ocr"][0]["trigger_hint"] == "title"
     assert second["ocr_text"] is None
+    assert first["chapter"]["source_id"] == "chapter:0"
+    assert second["chapter"]["source_id"] == "chapter:1"
+    assert first["subtitle_text"] == "Welcome"
+    assert second["subtitle_text"] == "Boundary subtitle"
+    assert first["subtitles"][0]["source_stream_id"] == "subtitle:stream:2"
     assert metrics["scenes_with_ocr"] == 1
+    assert metrics["assigned_subtitle_count"] == 2
+    assert metrics["unassigned_subtitle_count"] == 1
+    assert metrics["scenes_with_subtitles"] == 2
+    assert metrics["scenes_with_chapter"] == 2
     markdown = (
         context.out_root / "09_timeline" / "timeline.md"
     ).read_text(encoding="utf-8")
     assert "시각 1/2 [00:03]: a title card" in markdown
     assert "시각 2/2 [00:06]: a presenter" in markdown
     assert "- 화면 텍스트: OPENAI" in markdown
+    assert "- 챕터: Opening" in markdown
+    assert "- 내장 자막 [00:01] (eng): Welcome" in markdown
     assert "- 시각: a closing frame" in markdown

@@ -65,9 +65,11 @@ def test_default_registry_has_stable_thirteen_stage_plan() -> None:
         "08_captions",
     )
     assert registry.get("08_ocr").model_slots == ("ocr",)
-    assert registry.get("09_timeline").stage_version == "1.3.0"
-    assert registry.get("10_index").stage_version == "1.2.0"
-    assert registry.get("11_context").stage_version == "1.2.0"
+    assert registry.get("09_timeline").stage_version == "1.4.0"
+    assert "04_embedded_text" in registry.get("09_timeline").dependencies
+    assert "embedded_text" in registry.get("09_timeline").required_inputs
+    assert registry.get("10_index").stage_version == "1.3.0"
+    assert registry.get("11_context").stage_version == "1.3.0"
 
 
 def test_topological_order_is_independent_of_registration_order() -> None:
@@ -181,6 +183,7 @@ def test_from_stage_selects_all_descendants_in_topological_order() -> None:
         "audio",
         "captions",
         "diarization",
+        "embedded_text",
         "keyframes",
         "metadata",
         "ocr",
@@ -194,9 +197,7 @@ def test_to_stage_selects_all_ancestors() -> None:
 
     plan = planner.plan(to_stage="09_timeline")
 
-    assert plan.stage_names == tuple(
-        name for name in EXPECTED_ORDER if name != "04_embedded_text"
-    )[:10]
+    assert plan.stage_names == EXPECTED_ORDER[:11]
     assert plan.boundary_inputs == ("video",)
 
 
@@ -214,6 +215,7 @@ def test_from_and_to_stage_select_dependency_path_intersection() -> None:
     )
     assert plan.boundary_inputs == (
         "captions",
+        "embedded_text",
         "keyframes",
         "metadata",
         "ocr",

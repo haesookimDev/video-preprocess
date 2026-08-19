@@ -1,11 +1,13 @@
-"""9단계: 시각·OCR·전사·화자를 공통 시간축으로 병합한다.
+"""9단계: 시각·내장 텍스트·전사·화자를 공통 시간축으로 병합한다.
 
 - 모든 시간 구간은 반개구간 ``[start_sec, end_sec)``로 해석한다.
 - 전사 세그먼트는 가장 많이 겹치는 씬 하나에만 귀속한다.
 - 겹침이 같으면 세그먼트 중점을 포함하는 구간, 그 다음 입력 순서를 사용한다.
-- 화자 라벨도 같은 최대 겹침·중점 규칙으로 정렬한다.
+- 내장 자막과 화자 라벨도 같은 최대 겹침·중점 규칙으로 정렬한다.
+- 씬은 가장 많이 겹치는 챕터 하나를 구조 정보로 갖는다.
 
-입력: 02_scenes, 03_keyframes, 06_stt, 07_diarize, 08_captions, 08_ocr 산출물
+입력: 02_scenes, 03_keyframes, 04_embedded_text, 06_stt, 07_diarize,
+08_captions, 08_ocr 산출물
 출력:
 - 09_timeline/timeline.json : 씬 카드 목록 (LLM 입력 조립의 기본 단위)
 - 09_timeline/timeline.md   : 사람이 읽는 확인용 뷰
@@ -22,6 +24,8 @@ INTERVAL_CONVENTION = "[start_sec,end_sec)"
 ASSIGNMENT_POLICY = "maximum_overlap_single_midpoint_tiebreak"
 VISUAL_SUMMARY_POLICY = "ordered_unique_caption_join"
 OCR_SUMMARY_POLICY = "ordered_unique_ocr_text_join"
+SUBTITLE_SUMMARY_POLICY = "ordered_unique_embedded_subtitle_join"
+CHAPTER_ASSIGNMENT_POLICY = "maximum_overlap_single_midpoint_tiebreak"
 
 
 def _overlap_duration(left: dict, right: dict) -> float:
@@ -117,6 +121,43 @@ def _assign_transcript(
     return assigned, unassigned
 
 
+def _assign_subtitles(
+    scenes: list[dict],
+    subtitles: list[dict],
+) -> tuple[dict[object, list[dict]], list[object]]:
+    """Assign each subtitle cue to at most one scene and preserve identity."""
+
+    assigned = {scene["scene_id"]: [] for scene in scenes}
+    unassigned = []
+    for position, cue in enumerate(subtitles, start=1):
+        source_id = cue.get("source_id", f"subtitle:cue:{position}")
+        scene_index = _best_overlap_index(cue, scenes)
+        if scene_index is None:
+            unassigned.append(source_id)
+            continue
+        assigned[scenes[scene_index]["scene_id"]].append(dict(cue))
+    return assigned, unassigned
+
+
+def _chapter_for_scene(scene: dict, chapters: list[dict]) -> dict | None:
+    """Return the single chapter with maximum positive scene overlap."""
+
+    chapter_index = _best_overlap_index(scene, chapters)
+    return None if chapter_index is None else dict(chapters[chapter_index])
+
+
+def _subtitle_scene_fields(subtitles: list[dict]) -> dict:
+    unique_texts = []
+    for cue in subtitles:
+        text = cue["text"].strip()
+        if text and text not in unique_texts:
+            unique_texts.append(text)
+    return {
+        "subtitle_text": " | ".join(unique_texts) or None,
+        "subtitles": subtitles,
+    }
+
+
 def _fmt_ts(sec: float) -> str:
     m, s = divmod(int(sec), 60)
     return f"{m:02d}:{s:02d}"
@@ -210,6 +251,15 @@ def run(ctx: PipelineContext) -> dict:
     if not isinstance(ocr_entries, list):
         raise ValueError("08_ocr results must be an array")
     ocr_results = _group_by_scene(ocr_entries)
+    embedded_text = ctx.load_json(
+        ctx.out_root / "04_embedded_text" / "embedded_text.json"
+    )
+    subtitle_entries = embedded_text.get("subtitles", [])
+    chapters = embedded_text.get("chapters", [])
+    if not isinstance(subtitle_entries, list):
+        raise ValueError("04_embedded_text subtitles must be an array")
+    if not isinstance(chapters, list):
+        raise ValueError("04_embedded_text chapters must be an array")
     transcript = ctx.load_json(
         ctx.out_root / "06_stt" / "transcript.json"
     )["segments"]
@@ -220,10 +270,12 @@ def run(ctx: PipelineContext) -> dict:
 
     log.info(
         "타임라인 병합 시작: 씬 %d개, 캡션 %d개, OCR %d개, "
-        "전사 세그먼트 %d개, 화자 턴 %d개",
+        "내장 자막 %d개, 챕터 %d개, 전사 세그먼트 %d개, 화자 턴 %d개",
         len(scenes),
         len(caption_entries),
         len(ocr_entries),
+        len(subtitle_entries),
+        len(chapters),
         len(transcript),
         len(speaker_turns),
     )
@@ -232,6 +284,10 @@ def run(ctx: PipelineContext) -> dict:
         scenes,
         transcript,
         speaker_turns,
+    )
+    assigned_subtitles, unassigned_subtitles = _assign_subtitles(
+        scenes,
+        subtitle_entries,
     )
     cards = []
     for scene in scenes:
@@ -242,6 +298,9 @@ def run(ctx: PipelineContext) -> dict:
             captions.get(scene["scene_id"], []),
             ocr_results.get(scene["scene_id"], []),
         )
+        subtitle_fields = _subtitle_scene_fields(
+            assigned_subtitles[scene["scene_id"]]
+        )
 
         card = {
             "scene_id": scene["scene_id"],
@@ -249,6 +308,8 @@ def run(ctx: PipelineContext) -> dict:
             "end_sec": scene["end_sec"],
             "duration_sec": scene["duration_sec"],
             **visual_fields,
+            "chapter": _chapter_for_scene(scene, chapters),
+            **subtitle_fields,
             "transcript": lines,
         }
         cards.append(card)
@@ -262,6 +323,12 @@ def run(ctx: PipelineContext) -> dict:
             len(unassigned),
             unassigned,
         )
+    if unassigned_subtitles:
+        log.warning(
+            "씬과 겹치지 않은 내장 자막 cue %d개: %s",
+            len(unassigned_subtitles),
+            unassigned_subtitles,
+        )
 
     with_speech = sum(1 for c in cards if c["transcript"])
     log.info("씬 카드 %d개 생성 (발화 포함 씬 %d개)", len(cards), with_speech)
@@ -273,9 +340,18 @@ def run(ctx: PipelineContext) -> dict:
             "transcript_assignment": ASSIGNMENT_POLICY,
             "visual_summary_policy": VISUAL_SUMMARY_POLICY,
             "ocr_summary_policy": OCR_SUMMARY_POLICY,
+            "subtitle_assignment": ASSIGNMENT_POLICY,
+            "subtitle_summary_policy": SUBTITLE_SUMMARY_POLICY,
+            "chapter_assignment": CHAPTER_ASSIGNMENT_POLICY,
             "source_transcript_count": len(transcript),
             "assigned_transcript_count": len(transcript) - len(unassigned),
             "unassigned_source_segment_ids": unassigned,
+            "source_subtitle_count": len(subtitle_entries),
+            "assigned_subtitle_count": (
+                len(subtitle_entries) - len(unassigned_subtitles)
+            ),
+            "unassigned_subtitle_source_ids": unassigned_subtitles,
+            "source_chapter_count": len(chapters),
             "scene_cards": cards,
         },
     )
@@ -286,6 +362,18 @@ def run(ctx: PipelineContext) -> dict:
             f"## 씬 {card['scene_id']:02d} "
             f"[{_fmt_ts(card['start_sec'])} ~ {_fmt_ts(card['end_sec'])}]"
         )
+        if card["chapter"] is not None:
+            md_lines.append(f"- 챕터: {card['chapter']['title']}")
+        for subtitle in card["subtitles"]:
+            language = (
+                f" ({subtitle['language']})"
+                if subtitle.get("language")
+                else ""
+            )
+            md_lines.append(
+                f"- 내장 자막 [{_fmt_ts(subtitle['start_sec'])}]"
+                f"{language}: {subtitle['text'].replace(chr(10), ' / ')}"
+            )
         visuals = card["visual_captions"]
         if len(visuals) == 1:
             md_lines.append(f"- 시각: {visuals[0]['caption']}")
@@ -333,10 +421,18 @@ def run(ctx: PipelineContext) -> dict:
     log.debug("확인용 마크다운 저장: %s", out_dir / "timeline.md")
 
     with_ocr = sum(1 for card in cards if card["ocr_text"])
+    with_subtitles = sum(1 for card in cards if card["subtitle_text"])
+    with_chapters = sum(1 for card in cards if card["chapter"] is not None)
     return {
         "scene_card_count": len(cards),
         "scenes_with_speech": with_speech,
         "assigned_transcript_count": len(transcript) - len(unassigned),
         "unassigned_transcript_count": len(unassigned),
         "scenes_with_ocr": with_ocr,
+        "assigned_subtitle_count": (
+            len(subtitle_entries) - len(unassigned_subtitles)
+        ),
+        "unassigned_subtitle_count": len(unassigned_subtitles),
+        "scenes_with_subtitles": with_subtitles,
+        "scenes_with_chapter": with_chapters,
     }

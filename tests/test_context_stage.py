@@ -44,6 +44,8 @@ def test_context_stage_never_exceeds_configured_token_budget(
             "end_sec": float(scene_id * 10),
             "caption": f"scene {scene_id} " + "설명" * 80,
             "ocr_text": "OPENAI 화면" if scene_id == 1 else None,
+            "chapter": {"title": "Opening"} if scene_id == 1 else None,
+            "subtitle_text": "Welcome" if scene_id == 1 else None,
             "transcript": [],
         }
         for scene_id in range(1, 5)
@@ -97,6 +99,8 @@ def test_context_stage_includes_ocr_text_in_markdown(tmp_path: Path) -> None:
                     "end_sec": 10.0,
                     "caption": "dashboard",
                     "ocr_text": "OPENAI 화면",
+                    "chapter": {"title": "Opening"},
+                    "subtitle_text": "Welcome subtitle",
                     "transcript": [],
                 }
             ]
@@ -109,6 +113,8 @@ def test_context_stage_includes_ocr_text_in_markdown(tmp_path: Path) -> None:
         context.out_root / "11_context" / "context.md"
     ).read_text(encoding="utf-8")
     assert "화면 텍스트: OPENAI 화면" in markdown
+    assert "챕터: Opening" in markdown
+    assert "내장 자막: Welcome subtitle" in markdown
 
 
 def test_context_stage_requires_counter_when_budget_is_enabled(

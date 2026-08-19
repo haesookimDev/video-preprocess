@@ -112,10 +112,11 @@ DEFAULT_STAGE_SPECS = (
     ),
     StageSpec(
         name="09_timeline",
-        stage_version="1.3.0",
+        stage_version="1.4.0",
         dependencies=(
             "02_scenes",
             "03_keyframes",
+            "04_embedded_text",
             "06_stt",
             "07_diarize",
             "08_captions",
@@ -124,6 +125,7 @@ DEFAULT_STAGE_SPECS = (
         required_inputs=(
             "scenes",
             "keyframes",
+            "embedded_text",
             "transcript",
             "diarization",
             "captions",
@@ -134,7 +136,7 @@ DEFAULT_STAGE_SPECS = (
     ),
     StageSpec(
         name="10_index",
-        stage_version="1.2.0",
+        stage_version="1.3.0",
         dependencies=("09_timeline",),
         required_inputs=("timeline",),
         outputs=("search_index", "index_summary"),
@@ -147,7 +149,7 @@ DEFAULT_STAGE_SPECS = (
     ),
     StageSpec(
         name="11_context",
-        stage_version="1.2.0",
+        stage_version="1.3.0",
         dependencies=("01_probe", "07_diarize", "09_timeline"),
         required_inputs=("metadata", "diarization", "timeline"),
         outputs=("context", "context_json"),
