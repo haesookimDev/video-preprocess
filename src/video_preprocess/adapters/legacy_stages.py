@@ -453,7 +453,7 @@ def _model_definitions(
         ),
         LegacyStageDefinition(
             name="08_captions",
-            stage_version="1.1.0",
+            stage_version="1.2.0",
             module=modules["08_captions"],
             inputs=(keyframes, keyframe_images),
             config_fields=("caption_model",),
@@ -499,7 +499,7 @@ def _final_definitions(
     return (
         LegacyStageDefinition(
             name="09_timeline",
-            stage_version="1.1.0",
+            stage_version="1.2.0",
             module=modules["09_timeline"],
             inputs=(scenes, keyframes, transcript, diarization, captions),
             config_fields=(),

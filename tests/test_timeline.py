@@ -3,10 +3,13 @@
 import json
 from pathlib import Path
 
+from pipeline.context import PipelineContext
+from pipeline.stages import s09_timeline
 from pipeline.stages.s09_timeline import _assign_transcript, _match_speaker
 
 
 FIXTURE = Path(__file__).parent / "fixtures" / "timeline_boundaries.json"
+VISUAL_FIXTURE = Path(__file__).parent / "fixtures" / "adaptive_visuals.json"
 
 
 def test_match_speaker_selects_largest_overlap() -> None:
@@ -78,3 +81,71 @@ def test_transcript_without_positive_scene_overlap_is_reported() -> None:
 
     assert assigned == {1: []}
     assert unassigned == [1, 2]
+
+
+def test_timeline_preserves_multi_visuals_and_legacy_scene_summary(
+    tmp_path: Path,
+) -> None:
+    fixture = json.loads(VISUAL_FIXTURE.read_text(encoding="utf-8"))
+    context = PipelineContext(
+        video_path=tmp_path / "sample.mp4",
+        out_root=tmp_path / "output" / "sample",
+    )
+    context.save_json(
+        context.stage_dir("02_scenes") / "scenes.json",
+        {"scenes": fixture["scenes"]},
+    )
+    context.save_json(
+        context.stage_dir("03_keyframes") / "keyframes.json",
+        {"keyframes": fixture["keyframes"]},
+    )
+    context.save_json(
+        context.stage_dir("06_stt") / "transcript.json",
+        {"segments": []},
+    )
+    context.save_json(
+        context.stage_dir("07_diarize") / "diarization.json",
+        {"turns": []},
+    )
+    context.save_json(
+        context.stage_dir("08_captions") / "captions.json",
+        {"captions": fixture["captions"]},
+    )
+
+    metrics = s09_timeline.run(context)
+
+    timeline = context.load_json(
+        context.out_root / "09_timeline" / "timeline.json"
+    )
+    first, second = timeline["scene_cards"]
+    assert metrics["scene_card_count"] == 2
+    assert timeline["visual_summary_policy"] == (
+        "ordered_unique_caption_join"
+    )
+    assert first["keyframe"] == fixture["keyframes"][0]["path"]
+    assert first["caption"] == "a title card | a presenter"
+    assert first["keyframes"] == [
+        fixture["keyframes"][0]["path"],
+        fixture["keyframes"][1]["path"],
+    ]
+    assert first["visual_captions"] == [
+        {
+            key: caption[key]
+            for key in (
+                "keyframe_index",
+                "keyframe_count",
+                "timestamp_sec",
+                "keyframe",
+                "caption",
+            )
+        }
+        for caption in fixture["captions"][:2]
+    ]
+    assert second["keyframe"] == fixture["keyframes"][2]["path"]
+    assert second["caption"] == "a closing frame"
+    markdown = (
+        context.out_root / "09_timeline" / "timeline.md"
+    ).read_text(encoding="utf-8")
+    assert "시각 1/2 [00:03]: a title card" in markdown
+    assert "시각 2/2 [00:06]: a presenter" in markdown
+    assert "- 시각: a closing frame" in markdown

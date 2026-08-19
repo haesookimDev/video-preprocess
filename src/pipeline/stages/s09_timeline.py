@@ -20,6 +20,7 @@ NAME = "09_timeline"
 OUTPUT = "09_timeline/timeline.json"
 INTERVAL_CONVENTION = "[start_sec,end_sec)"
 ASSIGNMENT_POLICY = "maximum_overlap_single_midpoint_tiebreak"
+VISUAL_SUMMARY_POLICY = "ordered_unique_caption_join"
 
 
 def _overlap_duration(left: dict, right: dict) -> float:
@@ -120,23 +121,64 @@ def _fmt_ts(sec: float) -> str:
     return f"{m:02d}:{s:02d}"
 
 
+def _group_by_scene(entries: list[dict]) -> dict[object, list[dict]]:
+    """Group entries without losing their deterministic input order."""
+
+    grouped: dict[object, list[dict]] = {}
+    for entry in entries:
+        grouped.setdefault(entry["scene_id"], []).append(entry)
+    return grouped
+
+
+def _visual_scene_fields(
+    scene: dict,
+    keyframes: list[dict],
+    captions: list[dict],
+) -> dict:
+    """Build additive multi-visual fields and compatible scalar summaries."""
+
+    midpoint = (
+        float(scene["start_sec"]) + float(scene["end_sec"])
+    ) / 2.0
+    representative = min(
+        keyframes,
+        key=lambda entry: abs(float(entry["timestamp_sec"]) - midpoint),
+        default=None,
+    )
+    visual_captions = []
+    for position, caption in enumerate(captions, start=1):
+        visual_captions.append({
+            "keyframe_index": caption.get("keyframe_index", position),
+            "keyframe_count": caption.get("keyframe_count", len(captions)),
+            "timestamp_sec": caption["timestamp_sec"],
+            "keyframe": caption["keyframe"],
+            "caption": caption["caption"],
+        })
+    unique_captions = []
+    for visual in visual_captions:
+        caption = visual["caption"].strip()
+        if caption not in unique_captions:
+            unique_captions.append(caption)
+    return {
+        "keyframe": None if representative is None else representative["path"],
+        "caption": " | ".join(unique_captions) or None,
+        "keyframes": [entry["path"] for entry in keyframes],
+        "visual_captions": visual_captions,
+    }
+
+
 def run(ctx: PipelineContext) -> dict:
     log = stage_logger(NAME)
     out_dir = ctx.stage_dir(NAME)
 
     scenes = ctx.load_json(ctx.out_root / "02_scenes" / "scenes.json")["scenes"]
-    keyframes = {
-        k["scene_id"]: k
-        for k in ctx.load_json(
-            ctx.out_root / "03_keyframes" / "keyframes.json"
-        )["keyframes"]
-    }
-    captions = {
-        c["scene_id"]: c["caption"]
-        for c in ctx.load_json(
-            ctx.out_root / "08_captions" / "captions.json"
-        )["captions"]
-    }
+    keyframes = _group_by_scene(ctx.load_json(
+        ctx.out_root / "03_keyframes" / "keyframes.json"
+    )["keyframes"])
+    caption_entries = ctx.load_json(
+        ctx.out_root / "08_captions" / "captions.json"
+    )["captions"]
+    captions = _group_by_scene(caption_entries)
     transcript = ctx.load_json(
         ctx.out_root / "06_stt" / "transcript.json"
     )["segments"]
@@ -147,7 +189,8 @@ def run(ctx: PipelineContext) -> dict:
 
     log.info("타임라인 병합 시작: 씬 %d개, 캡션 %d개, 전사 세그먼트 %d개, "
              "화자 턴 %d개",
-             len(scenes), len(captions), len(transcript), len(speaker_turns))
+             len(scenes), len(caption_entries), len(transcript),
+             len(speaker_turns))
 
     assigned, unassigned = _assign_transcript(
         scenes,
@@ -157,14 +200,18 @@ def run(ctx: PipelineContext) -> dict:
     cards = []
     for scene in scenes:
         lines = assigned[scene["scene_id"]]
+        visual_fields = _visual_scene_fields(
+            scene,
+            keyframes.get(scene["scene_id"], []),
+            captions.get(scene["scene_id"], []),
+        )
 
         card = {
             "scene_id": scene["scene_id"],
             "start_sec": scene["start_sec"],
             "end_sec": scene["end_sec"],
             "duration_sec": scene["duration_sec"],
-            "keyframe": keyframes.get(scene["scene_id"], {}).get("path"),
-            "caption": captions.get(scene["scene_id"]),
+            **visual_fields,
             "transcript": lines,
         }
         cards.append(card)
@@ -187,6 +234,7 @@ def run(ctx: PipelineContext) -> dict:
         {
             "interval_convention": INTERVAL_CONVENTION,
             "transcript_assignment": ASSIGNMENT_POLICY,
+            "visual_summary_policy": VISUAL_SUMMARY_POLICY,
             "source_transcript_count": len(transcript),
             "assigned_transcript_count": len(transcript) - len(unassigned),
             "unassigned_source_segment_ids": unassigned,
@@ -200,10 +248,25 @@ def run(ctx: PipelineContext) -> dict:
             f"## 씬 {card['scene_id']:02d} "
             f"[{_fmt_ts(card['start_sec'])} ~ {_fmt_ts(card['end_sec'])}]"
         )
-        if card["caption"]:
-            md_lines.append(f"- 시각: {card['caption']}")
-        if card["keyframe"]:
-            md_lines.append(f"- 키프레임: `{card['keyframe']}`")
+        visuals = card["visual_captions"]
+        if len(visuals) == 1:
+            md_lines.append(f"- 시각: {visuals[0]['caption']}")
+        elif visuals:
+            for visual in visuals:
+                md_lines.append(
+                    f"- 시각 {visual['keyframe_index']}/"
+                    f"{visual['keyframe_count']} "
+                    f"[{_fmt_ts(visual['timestamp_sec'])}]: "
+                    f"{visual['caption']}"
+                )
+        if len(card["keyframes"]) == 1:
+            md_lines.append(f"- 키프레임: `{card['keyframes'][0]}`")
+        elif card["keyframes"]:
+            for index, keyframe in enumerate(card["keyframes"], start=1):
+                md_lines.append(
+                    f"- 키프레임 {index}/{len(card['keyframes'])}: "
+                    f"`{keyframe}`"
+                )
         if card["transcript"]:
             for line in card["transcript"]:
                 who = f" ({line['speaker']})" if line.get("speaker") else ""

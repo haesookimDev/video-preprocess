@@ -78,7 +78,7 @@ DEFAULT_STAGE_SPECS = (
     ),
     StageSpec(
         name="08_captions",
-        stage_version="1.1.0",
+        stage_version="1.2.0",
         dependencies=("03_keyframes",),
         required_inputs=("keyframes", "keyframe_images"),
         outputs=("captions",),
@@ -91,7 +91,7 @@ DEFAULT_STAGE_SPECS = (
     ),
     StageSpec(
         name="09_timeline",
-        stage_version="1.1.0",
+        stage_version="1.2.0",
         dependencies=(
             "02_scenes",
             "03_keyframes",

@@ -8,6 +8,7 @@
 """
 
 import time
+from collections import Counter
 from pathlib import PurePosixPath
 
 from ..context import PipelineContext
@@ -15,6 +16,7 @@ from ..logging_setup import stage_logger
 
 NAME = "08_captions"
 OUTPUT = "08_captions/captions.json"
+CAPTION_POLICY = "per-keyframe-scene-group-v1"
 
 
 def _image_media_type(relative_path: str) -> str:
@@ -33,13 +35,59 @@ def _image_media_type(relative_path: str) -> str:
         ) from exc
 
 
+def _normalize_keyframes(keyframes: list[dict]) -> list[dict]:
+    """Add and validate one-based indices for legacy and adaptive inputs."""
+
+    counts = Counter(int(keyframe["scene_id"]) for keyframe in keyframes)
+    positions: Counter[int] = Counter()
+    normalized = []
+    for keyframe in keyframes:
+        scene_id = int(keyframe["scene_id"])
+        positions[scene_id] += 1
+        index = positions[scene_id]
+        count = counts[scene_id]
+        supplied_index = keyframe.get("keyframe_index")
+        supplied_count = keyframe.get("keyframe_count")
+        if supplied_index is not None and supplied_index != index:
+            raise ValueError(
+                f"scene {scene_id} keyframe_index must follow input order"
+            )
+        if supplied_count is not None and supplied_count != count:
+            raise ValueError(
+                f"scene {scene_id} keyframe_count does not match entries"
+            )
+        normalized.append({
+            **keyframe,
+            "scene_id": scene_id,
+            "keyframe_index": index,
+            "keyframe_count": count,
+        })
+    return normalized
+
+
+def _scene_caption_groups(captions: list[dict]) -> list[dict]:
+    """Return ordered per-scene groups while retaining the legacy flat list."""
+
+    grouped: dict[int, list[dict]] = {}
+    for caption in captions:
+        grouped.setdefault(caption["scene_id"], []).append(caption)
+    return [
+        {
+            "scene_id": scene_id,
+            "caption_count": len(entries),
+            "captions": entries,
+        }
+        for scene_id, entries in grouped.items()
+    ]
+
+
 def run(ctx: PipelineContext) -> dict:
     log = stage_logger(NAME)
     out_dir = ctx.stage_dir(NAME)
 
-    keyframes = ctx.load_json(
+    keyframes = _normalize_keyframes(ctx.load_json(
         ctx.out_root / "03_keyframes" / "keyframes.json"
-    )["keyframes"]
+    )["keyframes"])
 
     if ctx.caption_service is None or ctx.artifact_registrar is None:
         raise RuntimeError(
@@ -48,16 +96,19 @@ def run(ctx: PipelineContext) -> dict:
 
     image_refs = []
     for kf in keyframes:
+        artifact_id = f"keyframe_scene_{int(kf['scene_id']):03d}"
+        if kf["keyframe_count"] > 1:
+            artifact_id += f"_{int(kf['keyframe_index']):02d}"
         image_refs.append(
             ctx.artifact_registrar.register_file(
                 kf["path"],
-                artifact_id=(
-                    f"keyframe_scene_{int(kf['scene_id']):03d}"
-                ),
+                artifact_id=artifact_id,
                 kind="image",
                 media_type=_image_media_type(kf["path"]),
                 metadata={
                     "scene_id": kf["scene_id"],
+                    "keyframe_index": kf["keyframe_index"],
+                    "keyframe_count": kf["keyframe_count"],
                     "timestamp_sec": kf["timestamp_sec"],
                     "stage": "03_keyframes",
                 },
@@ -67,7 +118,13 @@ def run(ctx: PipelineContext) -> dict:
     if not image_refs:
         ctx.save_json(
             out_dir / "captions.json",
-            {"model": ctx.caption_model, "captions": []},
+            {
+                "model": ctx.caption_model,
+                "caption_policy": CAPTION_POLICY,
+                "scene_count": 0,
+                "captions": [],
+                "scene_captions": [],
+            },
         )
         return {"caption_count": 0}
 
@@ -88,6 +145,8 @@ def run(ctx: PipelineContext) -> dict:
     for kf, caption in zip(keyframes, batch.captions):
         captions.append({
             "scene_id": kf["scene_id"],
+            "keyframe_index": kf["keyframe_index"],
+            "keyframe_count": kf["keyframe_count"],
             "timestamp_sec": kf["timestamp_sec"],
             "keyframe": kf["path"],
             "caption": caption,
@@ -114,6 +173,9 @@ def run(ctx: PipelineContext) -> dict:
         "provider": batch.model.provider,
         "revision": batch.model.revision,
         "runtime": batch.model.runtime,
+        "caption_policy": CAPTION_POLICY,
+        "scene_count": len({caption["scene_id"] for caption in captions}),
         "captions": captions,
+        "scene_captions": _scene_caption_groups(captions),
     })
     return {"caption_count": len(captions)}

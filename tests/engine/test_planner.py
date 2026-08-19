@@ -51,6 +51,8 @@ def test_default_registry_has_stable_eleven_stage_plan() -> None:
         "keyframes",
         "keyframe_images",
     )
+    assert registry.get("08_captions").stage_version == "1.2.0"
+    assert registry.get("09_timeline").stage_version == "1.2.0"
 
 
 def test_topological_order_is_independent_of_registration_order() -> None:

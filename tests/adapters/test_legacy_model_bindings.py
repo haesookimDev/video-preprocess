@@ -264,7 +264,7 @@ def test_model_bindings_publish_effective_models_and_restore_keyframes(
         )
         caption_task = task(
             "08_captions",
-            "1.1.0",
+            "1.2.0",
             {
                 "keyframes": keyframes,
                 "keyframe_images": keyframe_images,
@@ -520,7 +520,7 @@ def test_caption_rejects_bundle_with_unlisted_member(tmp_path: Path) -> None:
         bindings.get("08_captions")(
             task(
                 "08_captions",
-                "1.1.0",
+                "1.2.0",
                 {
                     "keyframes": keyframes,
                     "keyframe_images": changed_bundle,

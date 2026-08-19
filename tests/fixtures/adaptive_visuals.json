@@ -1,0 +1,65 @@
+{
+  "scenes": [
+    {
+      "scene_id": 1,
+      "start_sec": 0.0,
+      "end_sec": 10.0,
+      "duration_sec": 10.0
+    },
+    {
+      "scene_id": 2,
+      "start_sec": 10.0,
+      "end_sec": 16.0,
+      "duration_sec": 6.0
+    }
+  ],
+  "keyframes": [
+    {
+      "scene_id": 1,
+      "keyframe_index": 1,
+      "keyframe_count": 2,
+      "timestamp_sec": 3.333,
+      "path": "03_keyframes/frames/scene_001_01.jpg"
+    },
+    {
+      "scene_id": 1,
+      "keyframe_index": 2,
+      "keyframe_count": 2,
+      "timestamp_sec": 6.667,
+      "path": "03_keyframes/frames/scene_001_02.jpg"
+    },
+    {
+      "scene_id": 2,
+      "keyframe_index": 1,
+      "keyframe_count": 1,
+      "timestamp_sec": 13.0,
+      "path": "03_keyframes/frames/scene_002.jpg"
+    }
+  ],
+  "captions": [
+    {
+      "scene_id": 1,
+      "keyframe_index": 1,
+      "keyframe_count": 2,
+      "timestamp_sec": 3.333,
+      "keyframe": "03_keyframes/frames/scene_001_01.jpg",
+      "caption": "a title card"
+    },
+    {
+      "scene_id": 1,
+      "keyframe_index": 2,
+      "keyframe_count": 2,
+      "timestamp_sec": 6.667,
+      "keyframe": "03_keyframes/frames/scene_001_02.jpg",
+      "caption": "a presenter"
+    },
+    {
+      "scene_id": 2,
+      "keyframe_index": 1,
+      "keyframe_count": 1,
+      "timestamp_sec": 13.0,
+      "keyframe": "03_keyframes/frames/scene_002.jpg",
+      "caption": "a closing frame"
+    }
+  ]
+}

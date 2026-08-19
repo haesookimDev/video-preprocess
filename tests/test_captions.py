@@ -30,6 +30,25 @@ class FakeCaptionService:
         )
 
 
+class MultiCaptionService:
+    def __init__(self) -> None:
+        self.images = []
+
+    def caption(self, images, **kwargs) -> CaptionBatch:
+        self.images = list(images)
+        return CaptionBatch(
+            captions=("first view", "second view", "other scene"),
+            model=EffectiveModel(
+                provider="fake.caption",
+                name="fake/model",
+                revision="rev-1",
+                runtime="fake/1.0",
+            ),
+            usage={"input_count": 3},
+            timing={"inference_sec": 0.01},
+        )
+
+
 def test_caption_stage_keeps_legacy_output_with_provider_metadata(
     tmp_path: Path,
 ) -> None:
@@ -88,3 +107,73 @@ def test_caption_stage_keeps_legacy_output_with_provider_metadata(
     assert output["provider"] == "fake.caption"
     assert output["revision"] == "rev-1"
     assert output["runtime"] == "fake/1.0"
+
+
+def test_caption_stage_groups_multiple_keyframes_per_scene(
+    tmp_path: Path,
+) -> None:
+    context = PipelineContext(
+        video_path=tmp_path / "sample.mp4",
+        out_root=tmp_path / "output" / "sample",
+        caption_model="fake/model",
+    )
+    frames_dir = context.stage_dir("03_keyframes") / "frames"
+    frames_dir.mkdir()
+    paths = [
+        "03_keyframes/frames/scene_001_01.jpg",
+        "03_keyframes/frames/scene_001_02.jpg",
+        "03_keyframes/frames/scene_002.jpg",
+    ]
+    for index, relative_path in enumerate(paths, start=1):
+        (context.out_root / relative_path).write_bytes(f"frame-{index}".encode())
+    context.save_json(
+        context.out_root / "03_keyframes" / "keyframes.json",
+        {
+            "keyframes": [
+                {
+                    "scene_id": 1,
+                    "keyframe_index": 1,
+                    "keyframe_count": 2,
+                    "timestamp_sec": 3.333,
+                    "path": paths[0],
+                },
+                {
+                    "scene_id": 1,
+                    "keyframe_index": 2,
+                    "keyframe_count": 2,
+                    "timestamp_sec": 6.667,
+                    "path": paths[1],
+                },
+                {
+                    "scene_id": 2,
+                    "keyframe_index": 1,
+                    "keyframe_count": 1,
+                    "timestamp_sec": 12.0,
+                    "path": paths[2],
+                },
+            ]
+        },
+    )
+    service = MultiCaptionService()
+    store = LocalArtifactStore(context.out_root, namespace="sample")
+    context.caption_service = service
+    context.artifact_registrar = LegacyOutputAdapter(store)
+
+    result = s08_captions.run(context)
+
+    output = context.load_json(
+        context.out_root / "08_captions" / "captions.json"
+    )
+    assert result == {"caption_count": 3}
+    assert [image.artifact_id for image in service.images] == [
+        "keyframe_scene_001_01",
+        "keyframe_scene_001_02",
+        "keyframe_scene_002",
+    ]
+    assert output["caption_policy"] == "per-keyframe-scene-group-v1"
+    assert output["scene_count"] == 2
+    assert [group["caption_count"] for group in output["scene_captions"]] == [
+        2,
+        1,
+    ]
+    assert output["scene_captions"][0]["captions"] == output["captions"][:2]
