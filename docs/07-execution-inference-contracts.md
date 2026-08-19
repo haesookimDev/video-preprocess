@@ -18,7 +18,7 @@ Executor Port와 bounded LocalExecutor는
 [`src/video_preprocess/executors/`](../src/video_preprocess/executors/)에 구현됐다. dependency-ready
 PipelineEngine과 상태 머신은
 [`src/video_preprocess/engine/`](../src/video_preprocess/engine/)에 구현됐다. manifest cache key와
-decision, RunStore journal, 같은 run resume와 Store 범위 global cache index도 구현됐다. 전체 01~11
+decision, RunStore journal, 같은 run resume와 Store 범위 global cache index도 구현됐다. 전체 12개
 legacy Stage binding과 기본 CLI/cache-aware preview도 구현됐다. HTTP Inference v1 transport는
 [`openapi/inference-v1.yaml`](./openapi/inference-v1.yaml)로 확정했고 stdlib 기반 HTTP Provider
 client와 reference server가 구현됐다. 배포별 local/HTTP binding 설정은 composition root에 연결됐다.
@@ -275,7 +275,8 @@ Engine 내부 상태인 `pending`, `queued`, `running`은 최종 `StageResult`�
 - producer가 없거나 해당 Stage의 ancestor가 아닌 required input
 
 `DAGPlanner`는 등록 순서와 무관하게 dependency를 우선하고, 동시에 준비된 Stage는 stable
-name 사전순으로 정렬한다. 현재 11개 숫자 prefix Stage는 기존 01~11 순서로 plan된다.
+name 사전순으로 정렬한다. 현재 12개 Stage는 기존 01~11 순서를 유지하면서
+`08_captions → 08_ocr → 09_timeline`으로 plan된다.
 
 선택 규칙:
 
@@ -317,7 +318,7 @@ RunStore가 주입되면 Engine은 시작, 각 Stage terminal과 run terminal �
 [`ADR-0013`](./adr/0013-pipeline-engine-run-journal-and-cache-resume.md),
 [`ADR-0029`](./adr/0029-dependency-ready-bounded-local-concurrency.md)에 기록한다.
 
-### 4.6 Legacy 01~11 compatibility binding
+### 4.6 Legacy 01~11 + OCR compatibility binding
 
 `LegacyStageTaskRunner`는 기존 `run(ctx)` Stage를 LocalExecutor에 연결하는 migration adapter다.
 task의 Stage/version, logical input, config와 model binding key를 exact match하고, legacy Stage가
@@ -364,7 +365,8 @@ version은 기존 가변 집합 계약을 유지한다. adaptive 결정은 [`ADR
 중복 제거 결정은 [`ADR-0031`](./adr/0031-within-scene-perceptual-keyframe-deduplication.md)에 기록한다.
 
 05~08 model Stage는 task config와 `vad.default`, `stt.default`, `diarization.default`,
-`caption.default` binding을 exact match한다. 성공 JSON의 provider/model/revision/runtime을 slot별
+`caption.default`, `ocr.default` binding을 exact match한다. 성공 JSON의
+provider/model/revision/runtime을 slot별
 `ModelExecution`으로 변환하고 필수 metadata가 없으면 실패한다. no-audio, no-speech, optional
 diarization unavailable과 no-keyframe은 sentinel output을 유지한 `skipped` result와 stable reason
 code로 반환한다.
@@ -387,6 +389,13 @@ publish하지 않는다. `captions.json`은 aggregate `usage`와 `timing`을 추
 `caption_batch_count` metric을 기록한다. resolved local device는 runtime에 포함되며 상세 결정은
 [`ADR-0032`](./adr/0032-caption-device-selection-and-ordered-chunking.md)에 기록한다.
 
+독립 `08_ocr` version `1.0.0`은 `keyframes`, deterministic `keyframe_images` bundle과 `captions`를
+입력으로 받는다. `ocr_mode=disabled`는 Provider를 호출하지 않고 `OCR_DISABLED` sentinel output과
+skipped result를 반환한다. `all`은 모든 최종 keyframe, `caption-hints`는 고정 caption keyword가
+일치한 frame만 OCR Service로 전달한다. 성공 시 provider/model/revision/runtime은 `ocr` slot의
+`ModelExecution`으로 변환한다. 상세 결정은
+[`ADR-0033`](./adr/0033-optional-ocr-stage-and-provider-contract.md)에 기록한다.
+
 09~11은 다음 companion output을 marker와 함께 등록한다.
 
 | Stage | outputs |
@@ -397,7 +406,7 @@ publish하지 않는다. `captions.json`은 aggregate `usage`와 `timing`을 추
 
 10은 `embedding.default`를 exact match하고 `embed_model` config를 task/cache semantics에 포함한다.
 성공한 index summary의 embed provider/model/revision/runtime은 `embedding` slot의
-`ModelExecution`으로 변환한다. 세 binding 묶음과 전체 11단계 binding은 각각 생성할 수 있고,
+`ModelExecution`으로 변환한다. 세 binding 묶음과 전체 12단계 binding은 각각 생성할 수 있고,
 전체 registry는 서로 다른 Stage가 사용하는 config field를 분리하고 binding별 잠금으로 적용·복원을
 보호해 독립 Stage 본문을 병렬 실행할 수 있다. 상세 결정은
 [`ADR-0016`](./adr/0016-legacy-final-stage-and-pipeline-bindings.md)에 기록한다.
@@ -409,11 +418,18 @@ speaker turn도 같은 규칙으로 하나를 고른다. timeline은 assignment 
 기록하며 각 transcript line에 source segment identity, VAD source ID와 STT confidence를 가능한 범위에서
 보존한다. 결정 근거는 [`ADR-0026`](./adr/0026-half-open-timeline-single-assignment.md)에 기록한다.
 
-현재 09 version `1.2.0` scene card는 모든 path를 `keyframes`, 모든 frame caption metadata를
+09 version `1.2.0` scene card는 모든 path를 `keyframes`, 모든 frame caption metadata를
 `visual_captions`에 보존한다. 기존 `keyframe`은 scene midpoint에 가장 가까운 path이고 거리 동률이면
 입력 순서가 빠른 frame이다. 기존 `caption`은 frame 순서에서 동일 문자열을 한 번만 남겨 ` | `로
 연결한다. 단일 frame에서는 기존 scalar 값과 Markdown 표현을 유지한다. top-level
 `visual_summary_policy`는 `ordered_unique_caption_join`이다.
+
+현재 09 version `1.3.0`은 `08_ocr` 결과를 scene별로 병합한다. `visual_ocr`은 frame 순서와
+word region confidence/pixel bbox를 보존하고 `ocr_text`는 비어 있지 않은 중복 문자열을 한 번만
+남긴 ` | ` 호환 summary다. top-level `ocr_summary_policy`는
+`ordered_unique_ocr_text_join`이다. 10 version `1.2.0`은 OCR text를 embedding/FTS card text에,
+11 version `1.2.0`과 QueryService는 `화면 텍스트:` context 줄에 포함한다. OCR이 disabled이거나
+text가 없으면 scalar는 `null`, 배열은 비어 기존 필드 의미를 바꾸지 않는다.
 
 ### 4.7 Pipeline Application Service
 
@@ -424,6 +440,14 @@ Stage의 config/model binding만 Engine에 전달한다. runtime factory는 plan
 
 `PipelineSettings.keyframes_per_scene`은 03 adaptive 정책의 최대 frame 수이며 1~3만 허용한다.
 CLI `--keyframes-per-scene`과 Pipeline OpenAPI `settings.keyframes_per_scene`도 같은 범위를 사용한다.
+
+`PipelineSettings.ocr_mode`은 `disabled|all|caption-hints`, `ocr_languages`는 1개 이상의 정규화된
+language ID, `ocr_detect_orientation`은 boolean, `ocr_min_confidence`는 0~1이다. 이 값과
+`ocr_model`은 Stage task/cache 의미다. local command와 ordered chunk 크기, HTTP endpoint·token·공유
+Artifact namespace는 composition 배포 설정이며 PipelineSettings에 넣지 않는다. CLI는
+`--ocr-mode`, 반복 가능한 `--ocr-language`, `--ocr-model`, confidence/orientation과 local 또는 HTTP
+배포 option을 제공한다. 공개 Pipeline API는 settings만 받고 서버 운영자가 alias deployment를
+결정한다.
 
 local runtime은 video bytes를 `00_input/`에 원자적으로 publish하고 output root별 stable artifact
 namespace를 사용한다. 부분 실행 boundary는 명시한 같은 `run_id`의 RunManifest와 StageManifest에서
@@ -547,6 +571,7 @@ manifest에 저장하고 transient reason과 최대 시도 수를 확인한 뒤 
 | `speech_to_text` | faster-whisper | 전사·언어·신뢰도 |
 | `speaker_diarization` | pyannote | 화자 턴 |
 | `image_captioning` | BLIP 또는 대체 VLM | 캡션 |
+| `optical_character_recognition` | Tesseract 또는 대체 OCR | 문자열·word box·confidence |
 | `text_embedding` | SentenceTransformer | 정규화 벡터 |
 
 VAD를 포함한 모든 현재 모델 task는 동일한 Gateway 계약을 사용한다.
@@ -718,6 +743,50 @@ memory 부족은 `INFERENCE_FAILED`와 details의 stable reason `DEVICE_OUT_OF_M
 배포 옵션, cache 의미와 실패 원칙은
 [`ADR-0032`](./adr/0032-caption-device-selection-and-ordered-chunking.md)를 따른다.
 
+현재 OCR 요청·응답 규칙:
+
+```json
+{
+  "task": "optical_character_recognition",
+  "model": {
+    "alias": "ocr.default",
+    "name": "tesseract",
+    "revision": "system"
+  },
+  "inputs": {
+    "images": [
+      {"artifact_id": "ocr_keyframe_scene_001", "uri": "artifact://..."}
+    ]
+  },
+  "parameters": {
+    "languages": ["eng"],
+    "detect_orientation": true,
+    "min_confidence": 0.5
+  }
+}
+```
+
+- `inputs.images`: 1개 이상의 ordered ArtifactRef 배열
+- 지원 local media type: `image/jpeg`, `image/png`, `image/webp`, `image/tiff`
+- `languages`: lowercase letter, digit와 underscore로 된 중복 없는 ID 배열
+- `detect_orientation`: boolean, `min_confidence`: 유한한 0~1 수
+- `outputs.results`: 입력과 같은 개수·artifact ID·순서의 이미지 결과
+- 이미지 결과: 전체 `text`, 양수 `image_width`·`image_height`, `regions`
+- region: 1부터 연속인 `region_id`, 비어 있지 않은 text, 0~1 confidence와 image pixel 공간의
+  `{x,y,width,height}` bbox. bbox는 image bounds 안에 있어야 함
+- OCR Service는 `min(configured_batch_size, provider.max_batch_size)`로 ordered chunking하고 하나의
+  total deadline, deterministic chunk idempotency, effective model 일치와 all-or-nothing aggregate를
+  적용함
+- aggregate `usage`: image/region/text character count, batch size/count/list와 설정/provider 최대값
+- aggregate `timing`: service total, inference 합계와 chunk별 timing
+
+LocalOCRProvider는 image bytes를 Tesseract stdin으로 전달하고 TSV stdout을 parse한다. local 기본
+batch는 4이고 설치된 Tesseract version이 effective revision, `tesseract-cli/<version>`이 runtime이다.
+command 누락과 language data 누락은 각각 stable detail `OCR_COMMAND_NOT_FOUND`,
+`OCR_LANGUAGE_DATA_UNAVAILABLE`로 분류한다. CLI preflight는 Tesseract를 선택 dependency warning으로
+표시하고 OCR을 활성화한 local 실행에서만 command를 필수화한다. 상세 결정은
+[`ADR-0033`](./adr/0033-optional-ocr-stage-and-provider-contract.md)를 따른다.
+
 ## 7. Provider 계약
 
 ```python
@@ -730,7 +799,7 @@ class InferenceProvider(Protocol):
 
 현재 `InferenceGateway`는 alias binding, capability·batch·중첩 artifact 크기 검증, 전체
 timeout, 예외 정규화와 response ID 검증을 구현한다. `embedding.default`,
-`caption.default`, `stt.default`, `diarization.default`, `vad.default`의 local provider는
+`caption.default`, `ocr.default`, `stt.default`, `diarization.default`, `vad.default`의 local provider는
 lazy model load, process 내 재사용, warmup hook과 idempotent 결과 cache를 제공한다. 동기
 CLI/Stage는 task별 동기 Service를 사용하고 async application은 각 Service의 async 메서드를
 사용한다.
@@ -812,13 +881,19 @@ network-free suite와 분리한다.
 
 `PipelineSettings`의 model 이름은 Stage 알고리즘 설정이고 `PipelineRunRequest.deployments`는 실행
 환경 설정이다. `InferenceDeploymentSettings.http_providers`에 alias가 있으면 HTTP, 없으면 local
-binding을 조합한다. 현재 적용 alias는 `embedding.default`다.
+binding을 조합한다. 현재 pipeline composition에 적용한 alias는 `embedding.default`와
+`ocr.default`다.
 
 `HTTPProviderSettings`는 endpoint, remote Artifact namespace allowlist, request/operation timeout,
 poll 간격, capability TTL과 retry policy를 가진다. bearer token은 runtime field로만 주입하며
 `repr`, `public_dict`, dry-run, manifest와 cache config에 포함하지 않는다. endpoint 설정을 공개 출력할
 수는 있지만 URL credential, query와 fragment는 허용하지 않는다. 상세 결정은
 [`ADR-0023`](./adr/0023-alias-based-inference-deployment-settings.md)에 기록한다.
+
+CLI와 pipeline server의 환경 adapter는 embedding/OCR endpoint, token environment variable과
+Artifact namespace를 alias map 하나로 합친다. 원격 OCR을 선택하면 local Tesseract command 검사를
+건너뛰지만 endpoint capability가 OCR task와 `ocr.default`를 제공하지 않으면 추론 전에 명확히
+실패한다. local/HTTP 사이의 조용한 fallback은 하지 않는다.
 
 ### 7.4 reference server 동작
 

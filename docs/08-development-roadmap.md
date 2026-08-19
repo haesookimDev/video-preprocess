@@ -1,6 +1,6 @@
 # 엔진·실행기 분리 개발 로드맵
 
-상태: **Phase 7 진행 중 — caption device·batch tuning 완료, 다음 OCR provider**
+상태: **Phase 7 진행 중 — OCR provider·pipeline 통합 완료, 다음 내장 자막·챕터 활용**
 기준일: 2026-08-19
 대상 설계: [`06-target-architecture.md`](./06-target-architecture.md)  
 공개 계약: [`07-execution-inference-contracts.md`](./07-execution-inference-contracts.md)
@@ -15,7 +15,7 @@
 
 - 기존 로컬 CLI와 산출물 호환
 - Engine과 LocalExecutor 분리
-- STT, diarization, caption, embedding의 local/HTTP provider 선택
+- STT, diarization, caption, OCR, embedding의 local/HTTP provider 선택
 - manifest 기반 캐시와 단계별 선택 실행
 - 다른 서비스가 API 또는 queue adapter로 실행·상태·결과 조회
 - 검색·긴 영상 개선이 새 계약을 통해 확장 가능
@@ -393,7 +393,7 @@ static/API query context가 지정한 256 token 예산을 넘지 않음을 확�
 2. [x] 씬 길이에 따른 키프레임 1~3장 추출
 3. [x] perceptual hash 중복 제거
 4. [x] caption device 자동 선택과 batch 크기 tuning
-5. [ ] OCR provider
+5. [x] OCR provider
 6. [ ] 내장 자막·챕터 활용
 7. [ ] 오디오 이벤트 provider
 8. [ ] 질의 기반 2-pass 고품질 재처리
@@ -429,11 +429,19 @@ version `1.3.0`이다. fake Provider로 `[2,2,1]` 경계·순서와 두 번째 c
 장비에서 MPS/CUDA는 unavailable이었다. 결정은
 [`ADR-0032`](./adr/0032-caption-device-selection-and-ordered-chunking.md)에 기록한다.
 
-다음 slice는 OCR Provider다. 먼저 OCR inference task의 입력 keyframe ArtifactRef, ordered text/box와
-confidence 출력, 언어·회전 option, capability/error 계약을 fake Provider로 고정한다. 이어 OCR 실행
-trigger와 새 Stage/DAG 위치, artifact schema, timeline/index/context 병합 및 cache version을 ADR로
-결정한 뒤 local Provider와 sample fixture를 구현한다. Stage가 OCR 엔진이나 배포 위치를 선택하지 않고
-기존 caption·timeline 소비자가 additive 필드 없이도 계속 동작하는 것을 exit 기준으로 삼는다.
+다섯 번째 slice도 완료했다. `optical_character_recognition` task와 ordered ArtifactRef→전체
+text/word confidence/pixel bbox 계약, capability 기반 chunking과 local Tesseract 5.5.3/HTTP alias
+전환을 구현했다. 독립 `08_ocr`은 기본 disabled, `all`, `caption-hints` trigger를 가지며 09의
+`ocr_text`·`visual_ocr`, 10 index, 11 static/query context에 화면 문자열을 additive하게 전달한다.
+기본 DAG는 12개 Stage가 됐고 command/language data 실패, skip, cache version과 provider 독립성은
+fake/default/loopback/실제 sample 경계에서 검증했다. 결정은
+[`ADR-0033`](./adr/0033-optional-ocr-stage-and-provider-contract.md)에 기록한다.
+
+다음 slice는 ffprobe가 이미 감지하는 내장 subtitle stream과 chapter metadata를 실제 Artifact와
+timeline 입력으로 승격한다. 먼저 subtitle codec별 추출 범위, 시간 구간·언어·source identity schema,
+chapter와 scene의 병합 우선순위, 없는 stream의 skip과 cache version을 fixture/ADR로 고정한다. 자막
+추출은 FFmpeg adapter가 담당하고 09/10/11은 수동 경로 선택 없이 additive text/source 필드를
+소비해야 한다.
 
 ## 12. 테스트 전략
 

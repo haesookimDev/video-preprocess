@@ -1,8 +1,8 @@
 # 개발 상태와 세션 인수인계
 
 - 마지막 갱신: **2026-08-19**
-- 현재 단계: **Phase 7 진행 중 — caption device·batch tuning 완료**
-- 다음 작업: **OCR Provider 계약과 pipeline 통합 설계**
+- 현재 단계: **Phase 7 진행 중 — OCR Provider·pipeline 통합 완료**
+- 다음 작업: **내장 자막·챕터 Artifact와 timeline 병합 계약 설계**
 
 이 문서는 개발 진행 상황의 단일 진입점이다. 새로운 세션은 이 문서를 먼저 읽고, 실제 코드와
 Git 상태를 확인한 뒤 작업을 시작한다.
@@ -16,18 +16,18 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - `src/serve_pipeline.py`: 영속 상태·artifact·query를 제공하는 Pipeline REST API v1 server
 - `src/pipeline/runner.py`: 이전 파일 marker 방식의 compatibility runner
 - `src/pipeline/context.py`: 경로·설정·JSON I/O 공유
-- `src/pipeline/stages/s01_*`~`s11_*`: 단계 구현
+- `src/pipeline/stages/s01_*`~`s11_*`: `08_captions`·`08_ocr`을 포함한 12개 단계 구현
 - `src/video_preprocess/domain/`: 버전이 있는 Artifact·Stage 공개 계약
 - `src/video_preprocess/storage/`: Artifact·Run Store Port와 로컬 구현
 - `src/video_preprocess/engine/`: planner, PipelineEngine, manifest cache와 RunStore journal
 - `src/video_preprocess/executors/`: async Executor Port, Stage binding과 bounded LocalExecutor
-- `src/video_preprocess/adapters/`: legacy 01~11 StageTask compatibility binding
+- `src/video_preprocess/adapters/`: legacy 01~11 + OCR StageTask compatibility binding
 - `src/video_preprocess/services/`: pipeline Application Service와 local composition root
 - 기본 CLI는 manifest·checksum·설정·model binding 기반 cache 사용
-- VAD, STT, diarization, caption과 embedding이 `InferenceGateway`와 Local Provider로 실행
+- VAD, STT, diarization, caption, OCR과 embedding이 `InferenceGateway`와 Local Provider로 실행
 - 모든 모델 Stage에서 구체 ML library import와 model lifecycle 제거 완료
-- 기본 CLI는 Application Service를 통해 새 Engine과 01~11 binding을 실행
-- embedding은 설정에 따라 local 또는 HTTP provider client를 사용하며 기본값은 local
+- 기본 CLI는 Application Service를 통해 새 Engine과 12개 binding을 실행
+- embedding과 OCR은 설정에 따라 local 또는 HTTP provider client를 사용하며 기본값은 local
 - production embedding inference server adapter와 실행 CLI 구현 완료
 - pipeline REST API와 durable control snapshot, QueryService 구현 완료
 - timeline 반개구간·단일 배정과 source/confidence 보존 구현 완료
@@ -38,6 +38,7 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - 씬 길이 기반 adaptive keyframe과 장면 내부 pHash 중복 제거 구현 완료
 - 씬별 다중 caption과 호환 timeline 요약 구현 완료
 - local caption CUDA→MPS→CPU 자동 선택과 capability 기반 ordered chunking 구현 완료
+- 기본 disabled의 독립 OCR Stage, local Tesseract/HTTP alias와 timeline/index/context 병합 완료
 - queue consumer, direct upload와 RemoteExecutor는 아직 미구현
 - Local Store가 input copy, 단계 산출물과 run/stage manifest를 관리
 
@@ -118,6 +119,8 @@ Git 상태를 확인한 뒤 작업을 시작한다.
   [`ADR-0031`](./adr/0031-within-scene-perceptual-keyframe-deduplication.md)
 - caption 장치 선택·ordered chunking 결정:
   [`ADR-0032`](./adr/0032-caption-device-selection-and-ordered-chunking.md)
+- 선택적 OCR Stage·Provider 계약 결정:
+  [`ADR-0033`](./adr/0033-optional-ocr-stage-and-provider-contract.md)
 
 ## 3. 완료된 작업
 
@@ -150,7 +153,7 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - [x] audio ArtifactRef와 local STT provider·s06 adapter
 - [x] audio ArtifactRef와 local diarization provider·s07 adapter
 - [x] audio ArtifactRef와 local VAD provider·s05 adapter
-- [x] 11개 Stage registry와 deterministic DAG planner
+- [x] OCR을 포함한 12개 Stage registry와 deterministic DAG planner
 - [x] Executor Port와 순차 LocalExecutor
 - [x] 순차 PipelineEngine과 run/stage 상태 머신
 - [x] manifest cache key와 artifact 검증 기반 cache decision
@@ -204,7 +207,7 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - [x] 씬 길이 기반 adaptive keyframe 1~3장과 다중 caption
 - [x] perceptual hash keyframe 중복 제거
 - [x] caption device 자동 선택과 provider batch tuning
-- [ ] OCR Provider와 pipeline/timeline 통합
+- [x] OCR Provider와 pipeline/timeline/index/context 통합
 
 문서가 존재한다고 구현된 것으로 간주하지 않는다. 완료 여부는 코드와 자동 테스트를 기준으로
 이 체크리스트에서 갱신한다.
@@ -307,10 +310,17 @@ idempotency, model metadata 일치와 all-or-nothing aggregate를 적용하고 O
 `DEVICE_OUT_OF_MEMORY`를 남긴다. Stage 08 version은 `1.3.0`이며 `captions.json`에 aggregate
 usage/timing을 기록한다.
 
-다음 slice는 OCR Provider다. 먼저 image ArtifactRef 입력, ordered text/box/confidence 출력,
-언어·회전 option, capability/error와 effective model 계약을 fake Provider로 고정한다. 그 뒤 OCR trigger,
-Stage/DAG 위치, artifact schema와 timeline/index/context additive 병합을 ADR로 결정하고 local Provider,
-fixture와 실제 sample을 구현한다.
+Phase 7 다섯 번째 slice는 `optical_character_recognition` task, ordered image ArtifactRef 입력과
+전체 text/word confidence/pixel bbox 출력, 언어·orientation·confidence option을 고정했다. 독립
+`08_ocr` Stage는 기본 disabled, `all`, caption keyword 기반 `caption-hints` trigger를 지원하고
+`ocr.default`를 local Tesseract 또는 HTTP Inference v1으로 조합한다. 09 timeline의
+`ocr_text`·`visual_ocr`, 10 index와 11 static/query context가 화면 문자를 additive하게 소비하며
+기본 DAG는 12개 Stage다. Tesseract command·language data 오류, chunk deadline/idempotency와
+all-or-nothing aggregate, local/HTTP composition을 fake와 loopback으로 검증했다.
+
+다음 slice는 내장 자막과 챕터다. ffprobe metadata에 이미 보이는 subtitle stream/chapter를
+Artifact 계약으로 승격하고 FFmpeg 추출, 시간 구간·언어·source identity, 없는 stream의 skip과
+09/10/11 additive 병합을 fixture와 ADR로 먼저 고정한다.
 
 ## 6. 알려진 중요 문제
 
@@ -319,6 +329,7 @@ fixture와 실제 sample을 구현한다.
 | P1 | 별도 query CLI 프로세스는 embedding 모델을 매번 로드 | 프로세스 간 cold query 지연 |
 | P1 | cached Hugging Face 모델도 metadata HEAD 요청 | offline 환경에서 모델 로드 실패 가능 |
 | P2 | macOS에서 OpenCV·PyAV FFmpeg dylib 중복 경고 | 환경에 따라 충돌 또는 불안정 가능 |
+| P2 | Homebrew Tesseract 기본 language data는 eng/osd/snum만 포함 | 한국어 OCR은 `tesseract-lang` 추가 설치 필요 |
 
 남은 문제는 Phase 7 성능·멀티모달 작업과 독립 유지보수 slice에서 우선순위를 다시 평가한다.
 
@@ -413,6 +424,33 @@ fixture와 실제 sample을 구현한다.
 
 최신 기록을 위에 추가한다. 긴 구현 설명은 PR이나 ADR에 두고 여기에는 다음 세션이 재개하는 데
 필요한 정보만 적는다.
+
+### 2026-08-19 — Phase 7 선택적 OCR Provider·pipeline 통합
+
+- 목표: 화면 문자열을 caption과 독립적으로 추출하고 같은 Stage를 local Tesseract 또는 HTTP
+  endpoint에 연결하면서 기존 기본 실행·산출물 호환 유지
+- 완료: `optical_character_recognition` task, OCR Service ordered chunk/deadline/idempotency/model
+  일치/all-or-nothing aggregate, Tesseract TSV Provider, command/language/artifact stable 오류,
+  `ocr.default` local/HTTP composition과 CLI/server endpoint 설정
+- Stage/DAG: 기본 disabled의 독립 `08_ocr` version `1.0.0`, `all`·`caption-hints`, stable sentinel,
+  12-stage DAG와 strict legacy binding; 09 `1.3.0`의 `ocr_text`·`visual_ocr`, 10/11 `1.2.0`의
+  index/static/query context 전파; ADR-0033
+- 계약 검증: fake runner/provider의 ordered `[2,1]`, TSV confidence filter·bbox·orientation,
+  command/language data/timeout/invalid output, Stage all/hint/disabled/no-candidate, OpenAPI enum/settings,
+  dependency boundary, local/HTTP alias와 loopback remote OCR Stage
+- 실제 검증: Homebrew Tesseract 5.5.3 설치와 preflight 전체 OK; 합성 `OPENAI OCR 2026`을
+  confidence 0.916715~0.968088의 3 word region으로 인식; sample pHash 후 4장을 batch `[4]`로
+  0.6초 처리(text/region 0 — 시험 영상에 실제 문자 없음), 전체 12단계 `ok`, SQLite integrity
+  `ok`, query `음성 구간 검출 --topk 2` scene 02 top-1
+- 회귀: default 442 passed/17 deselected; 전체 비모델 HTTP loopback integration 15 passed;
+  `git diff --check`와 compile 검증 성공
+- 호환성: 기본 disabled는 Tesseract 없이 `OCR_DISABLED` artifact를 만들며 기존 field를 유지한다.
+  OCR 활성화 시 08_ocr/09/10/11 cache가 새 version·input/config로 무효화된다. local/HTTP 자동
+  fallback은 없고 remote에는 공유 Artifact namespace가 필요하다
+- 관찰: Homebrew 기본 formula는 eng/osd/snum만 포함해 한국어는 `tesseract-lang`이 필요하다.
+  sample의 기존 macOS OpenCV/PyAV/FFmpeg dylib warning은 실패로 이어지지 않았다
+- 다음 작업: subtitle codec별 FFmpeg 추출 범위와 subtitle/chapter Artifact·시간·언어·source schema,
+  없는 stream skip, 09/10/11 병합 우선순위와 Stage version을 fixture/ADR로 먼저 고정
 
 ### 2026-08-19 — Phase 7 caption device·ordered batch tuning
 

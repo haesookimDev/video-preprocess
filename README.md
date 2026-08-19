@@ -1,7 +1,7 @@
 # video-preprocess
 
 긴 영상을 검색·요약·질의응답에 사용할 수 있는 타임라인과 LLM 컨텍스트로 변환하는 로컬
-전처리 파이프라인이다. 영상에서 씬, 키프레임, 음성 구간, 전사, 화자와 캡션을 추출한 뒤
+전처리 파이프라인이다. 영상에서 씬, 키프레임, 음성 구간, 전사, 화자, 캡션과 선택적 OCR을 추출한 뒤
 SQLite 검색 인덱스와 자기완결형 `context.md`를 생성한다. LLM 호출 자체는 포함하지 않는다.
 
 ## 현재 구현 상태
@@ -15,7 +15,7 @@ flowchart LR
     RUNS --> APP
     APP --> ENGINE[Pipeline Engine]
     ENGINE --> EXECUTOR[LocalExecutor]
-    EXECUTOR --> STAGES[01~11 Stage bindings]
+    EXECUTOR --> STAGES[12 Stage bindings]
     STAGES --> GATEWAY[Inference Gateway]
     GATEWAY --> LOCAL[Local Providers]
     GATEWAY -. endpoint 설정 .-> HTTP[HTTP Inference Provider]
@@ -29,16 +29,16 @@ flowchart LR
 
 구현된 범위:
 
-- 11단계 DAG의 dependency-ready scheduling과 bounded `LocalExecutor` 실행
+- 12단계 DAG의 dependency-ready scheduling과 bounded `LocalExecutor` 실행
 - 입력·설정·모델 binding·산출물 checksum 기반 manifest cache
-- VAD, STT, diarization, caption, embedding Local Inference Provider
+- VAD, STT, diarization, caption, OCR, embedding Local Inference Provider
 - 전체·단계별·from/to 선택 실행과 같은 local run 재개
 - 같은 output workspace의 run 간 content-addressed cache 재사용
 - Stage별 cache 상태·실행 예상·stable reason을 제공하는 read-only dry-run
 - offline snapshot·immutable revision·VAD asset 기반 local model fingerprint 확인
 - Stage timeout, cooperative cancellation과 분류된 bounded retry
 - HTTP Inference v1 client, async job submit/poll/cancel, retry와 circuit breaker
-- `embedding.default`의 local/HTTP 배포 설정과 원격 effective model cache fingerprint
+- `embedding.default`·`ocr.default`의 local/HTTP 배포 설정과 원격 effective model cache fingerprint
 - LocalEmbeddingProvider를 공개하는 production HTTP server adapter와 실행 CLI
 - 영속 run 상태, 멱등성, 취소, artifact와 query를 공개하는 Pipeline REST API v1
 - 반개구간·최대 겹침 기반 timeline 단일 배정과 source/confidence 보존
@@ -47,11 +47,12 @@ flowchart LR
 - 씬 길이 기반 adaptive keyframe과 장면 내부 pHash 중복 제거
 - 씬별 다중 caption과 호환 timeline 요약
 - local caption의 CUDA→MPS→CPU 자동 선택과 capability 기반 ordered batch 처리
+- 기본 disabled의 독립 OCR Stage, Tesseract text/word box/confidence와 timeline·검색·context 병합
 - 기존 JSON·Markdown·SQLite 출력 구조와 공통 QueryService 기반 query CLI
 
 아직 구현되지 않은 범위:
 
-- embedding 외 alias의 HTTP 배포 연결
+- caption/STT/diarization/VAD alias의 HTTP 배포 연결
 - 직접 media upload, queue adapter와 RemoteExecutor
 
 정확한 완료 상태와 다음 작업은 [docs/STATUS.md](docs/STATUS.md)를 기준으로 한다.
@@ -60,18 +61,23 @@ flowchart LR
 
 - Python 3.10 이상
 - FFmpeg와 ffprobe
+- OCR 사용 시 Tesseract와 필요한 language data
 - 로컬 모델을 위한 충분한 디스크와 메모리
 
 macOS 기준:
 
 ```bash
 brew install ffmpeg
+# OCR을 사용할 때만 설치. 기본 Homebrew formula는 eng/osd/snum 제공
+brew install tesseract
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 .venv/bin/python src/run_pipeline.py --preflight-only
 ```
 
-`requirements.txt`에는 현재 11단계 로컬 실행에 필요한 패키지와 diarization 의존성이 포함된다.
+`requirements.txt`에는 현재 12단계 로컬 실행에 필요한 Python 패키지와 diarization 의존성이 포함된다.
+OCR은 기본 disabled이므로 Tesseract가 없어도 기존 실행은 가능하고 preflight에는 warning만 남는다.
+한국어 OCR language data는 Homebrew 기준 `brew install tesseract-lang`으로 별도 설치한다.
 개발 환경은 pytest를 포함한 다음 파일을 사용한다.
 
 ```bash
@@ -175,6 +181,11 @@ curl -sS -X DELETE \
 | `--executor-max-concurrency N` | run 내부에서 동시에 실행할 local Stage 수. 기본값 1 |
 | `--caption-device DEVICE` | local caption 장치. 기본값 `auto`(CUDA→MPS→CPU) |
 | `--caption-batch-size N` | local caption ordered chunk 크기. 기본값 4 |
+| `--ocr-command COMMAND` | local OCR 실행 명령. 기본값 `tesseract` |
+| `--ocr-batch-size N` | OCR Service ordered chunk 크기. 기본값 4 |
+| `--ocr-endpoint URL` | `ocr.default` HTTP Inference v1 endpoint |
+| `--ocr-token-env NAME` | OCR endpoint bearer token 환경변수 이름 |
+| `--ocr-artifact-namespace NAME` | 원격 OCR이 읽을 Artifact namespace. 반복 가능 |
 | `--auth-token-env NAME` | Bearer token 값을 읽을 환경변수 이름 |
 | `--context-tokenizer-model MODEL` | query context를 계산할 server-side target tokenizer |
 
@@ -215,6 +226,12 @@ bind할 때는 Bearer 인증과 reverse proxy/service mesh의 TLS 종료를 사�
   --caption-device auto \
   --caption-batch-size 4 \
   --force-stage 08_captions
+
+# 모든 최종 keyframe을 local Tesseract로 OCR
+.venv/bin/python src/run_pipeline.py samples/sample.mp4 \
+  --ocr-mode all \
+  --ocr-language eng \
+  --force-stage 08_ocr
 ```
 
 | 옵션 | 의미 |
@@ -233,6 +250,16 @@ bind할 때는 Bearer 인증과 reverse proxy/service mesh의 TLS 종료를 사�
 | `--executor-max-concurrency N` | 동시에 실행할 local Stage 상한. 기본값은 1 |
 | `--caption-device DEVICE` | local caption 장치. `auto`는 CUDA→MPS→CPU 순서, 기본값은 `auto` |
 | `--caption-batch-size N` | Provider 최대값 이하로 나눌 ordered chunk 크기. 기본값은 4 |
+| `--ocr-mode MODE` | `disabled`, `all`, `caption-hints`. 기본값은 `disabled` |
+| `--ocr-model MODEL` | OCR Provider에 요청할 model 이름. 기본값은 `tesseract` |
+| `--ocr-language ID` | OCR language ID. 반복 가능, 기본값은 `eng` |
+| `--[no-]ocr-detect-orientation` | Tesseract orientation/page segmentation 선택 |
+| `--ocr-min-confidence N` | 보존할 word confidence 하한 0~1. 기본값은 0.5 |
+| `--ocr-command COMMAND` | local OCR command. 기본값은 `tesseract` |
+| `--ocr-batch-size N` | OCR ordered chunk 크기. 기본값은 4 |
+| `--ocr-endpoint URL` | `ocr.default`를 HTTP Inference v1 endpoint에 연결 |
+| `--ocr-token-env NAME` | OCR endpoint bearer token 환경변수 이름 |
+| `--ocr-artifact-namespace NAME` | 원격 OCR이 읽을 Artifact namespace. 반복 가능 |
 | `--embedding-endpoint URL` | `embedding.default`를 HTTP Inference v1 endpoint에 연결 |
 | `--embedding-token-env NAME` | bearer token 값을 읽을 환경변수 이름 |
 | `--embedding-artifact-namespace NAME` | endpoint가 읽을 수 있는 Artifact namespace. 반복 가능 |
@@ -266,6 +293,29 @@ Engine은 dependency가 끝난 Stage만 ready로 만들고 `--executor-max-concu
 `REQUIRED_INPUT_UNAVAILABLE`로 차단한다. 로드된 모델, immutable revision, offline local snapshot과
 VAD asset은 실행 전에 fingerprint를 확인한다. 온라인의 변경 가능한 `main/default`처럼 현재
 revision을 확정할 수 없는 Stage는 안전하게 `EFFECTIVE_MODELS_UNAVAILABLE` miss로 표시한다.
+
+### 선택적 OCR
+
+기본값 `disabled`는 Tesseract를 호출하지 않고 stable skip artifact를 만들어 기존 실행과 설치를
+유지한다. `all`은 pHash 중복 제거 후 남은 keyframe 전체를, `caption-hints`는 caption에
+text/title/sign/screen/slide 등 고정 keyword가 있는 frame만 처리한다. 결과에는 전체 문자열뿐 아니라
+word별 0~1 confidence와 image pixel bbox가 포함되고 timeline, FTS/embedding index, static/query
+context에 `화면 텍스트`로 병합된다.
+
+endpoint가 없으면 LocalOCRProvider, 있으면 HTTPInferenceProvider를 사용한다. 원격 서버는
+`optical_character_recognition` task와 `ocr.default` capability를 제공하고 Artifact namespace에
+접근할 수 있어야 한다. local/HTTP 실패 간 자동 fallback은 없다.
+
+```bash
+export OCR_SERVER_TOKEN=replace-me
+
+.venv/bin/python src/run_pipeline.py samples/sample.mp4 \
+  --ocr-mode all \
+  --ocr-model example/ocr \
+  --ocr-endpoint https://ocr.example.test \
+  --ocr-token-env OCR_SERVER_TOKEN \
+  --ocr-artifact-namespace shared-run-artifacts
+```
 
 ### 원격 embedding
 
@@ -306,7 +356,7 @@ timeout은 attempt의 cooperative cancellation을 요청하고 Stage가 안전�
 영구 입력 오류나 cancellation은 재시도하지 않는다. retry마다 attempt가 증가해 manifest와
 `run_summary.json`에 별도로 남는다.
 
-## 11단계 파이프라인
+## 12단계 파이프라인
 
 | 단계 | 처리 | 주요 출력 |
 |---|---|---|
@@ -318,7 +368,8 @@ timeout은 attempt의 cooperative cancellation을 요청하고 Stage가 안전�
 | `06_stt` | VAD 구간만 faster-whisper 전사 | `transcript.json` |
 | `07_diarize` | pyannote 화자 분리 | `diarization.json` |
 | `08_captions` | BLIP 키프레임 ordered chunk 캡셔닝과 씬별 그룹화 | `captions.json` |
-| `09_timeline` | 씬·전사·화자·다중 시각 캡션을 공통 시간축으로 병합 | `timeline.json`, `timeline.md` |
+| `08_ocr` | 선택 keyframe의 화면 문자열·word box·confidence 추출 | `ocr.json` |
+| `09_timeline` | 씬·전사·화자·다중 caption·OCR을 공통 시간축으로 병합 | `timeline.json`, `timeline.md` |
 | `10_index` | SQLite FTS5 + embedding 검색 인덱스 | `index.db`, `index_summary.json` |
 | `11_context` | LLM 입력 컨텍스트 최종본 조립 | `context.md`, `context.json` |
 
@@ -333,10 +384,13 @@ fingerprint에 기록한다. Caption Service는 Provider 최대 batch와 설정�
 아닌 배포 tuning 값이므로 benchmark에는 `--force-stage 08_captions`를 함께 사용한다. timeline scene
 card의 기존 `keyframe`·`caption`은 대표 경로와
 중복 제거된 ordered summary로 유지하고, 전체 정보는 additive `keyframes`·`visual_captions`에
-보존한다. 정확한 버전·호환 계약은
+보존한다. `ocr.json`은 기본 disabled sentinel 또는 실제 provider/model/revision/runtime, trigger,
+ordered frame text와 word confidence/pixel bbox를 기록한다. timeline은 `ocr_text`와 `visual_ocr`을
+추가하고 화면 텍스트를 index/context/query까지 전달한다. 정확한 버전·호환 계약은
 [ADR-0030](docs/adr/0030-duration-adaptive-keyframes-and-scene-caption-summary.md)과
 [ADR-0031](docs/adr/0031-within-scene-perceptual-keyframe-deduplication.md),
-[ADR-0032](docs/adr/0032-caption-device-selection-and-ordered-chunking.md)에 있다.
+[ADR-0032](docs/adr/0032-caption-device-selection-and-ordered-chunking.md),
+[ADR-0033](docs/adr/0033-optional-ocr-stage-and-provider-contract.md)에 있다.
 
 ## Cache와 재개
 
@@ -369,7 +423,7 @@ Local Run Store는 content cache key별 manifest 후보를 인덱싱한다. 따�
 ```text
 output/<video_stem>/
 ├── 00_input/                   # cache integrity 검증용 입력 영상 copy
-├── 01_probe/ … 11_context/     # 기존 단계별 산출물
+├── 01_probe/ … 11_context/     # 08_captions·08_ocr을 포함한 단계별 산출물
 ├── _manifests/                 # run/stage manifest, cache key, ArtifactRef
 ├── _pending/                   # 원자적 publish 전 비공개 임시 artifact
 ├── logs/run_<run_id>.log       # 상세 실행 로그
@@ -436,6 +490,7 @@ loopback port를 여는 HTTP contract와 production client integration test는 �
   tests/contracts/test_fake_inference_server.py \
   tests/inference/test_http_provider_integration.py \
   tests/inference/test_embedding_deployment_integration.py \
+  tests/inference/test_ocr_deployment_integration.py \
   tests/inference/test_http_server_integration.py
 
 .venv/bin/python -m pytest -m integration \
@@ -449,7 +504,7 @@ HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
   .venv/bin/python -m pytest -o addopts='' \
   tests/inference/test_http_server_model.py
 
-# 실제 sample의 11단계 REST run + artifact + query E2E
+# 실제 sample의 12단계 REST run + artifact + query E2E
 HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
   .venv/bin/python -m pytest -m 'integration and model' \
   tests/api/test_pipeline_api_model.py
@@ -496,7 +551,7 @@ ffmpeg -v error \
 
 ## 아직 없는 것 (다음 단계 후보)
 
-- OCR·내장 자막·챕터 활용
+- 내장 자막·챕터 활용
 - 오디오 이벤트 태깅 (박수·음악 등)
 - 한국어 캡셔닝 VLM 교체 (현재 BLIP은 영어 캡션)
 - 질의 기반 2-pass 고품질 재처리

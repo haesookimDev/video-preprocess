@@ -1,6 +1,6 @@
 # 영상(비주얼) 전처리 방법론
 
-목표: 프레임 시퀀스를 **"의미 단위(씬) + 대표 프레임 + 텍스트 캡션"**으로 압축하여
+목표: 프레임 시퀀스를 **"의미 단위(씬) + 대표 프레임 + 캡션·화면 문자"**로 압축하여
 LLM에 전달할 시각 정보의 양을 수십~수백 배 줄인다.
 
 ## 1. 샷/씬 경계 검출 (Shot & Scene Boundary Detection)
@@ -74,13 +74,26 @@ fallback을 하지 않으므로 더 작은 `--caption-batch-size` 또는 `--capt
 조정한다. 실행 batch/device와 chunk별 timing은 `captions.json`에 보존한다. 상세 계약은
 [`ADR-0032`](./adr/0032-caption-device-selection-and-ordered-chunking.md)를 따른다.
 
+### 현재 구현: 선택적 OCR Stage
+
+독립 `08_ocr` Stage는 기본 disabled이며 `all` 또는 `caption-hints` mode에서만 실행한다. `all`은
+pHash 중복 제거 후 남은 keyframe 전체를, `caption-hints`는 caption에 text/title/sign/screen/slide
+등의 고정 keyword가 있는 frame만 선택한다. 이는 2-pass 질의 기반 OCR이 아니라 전처리 시점의
+결정적 저비용 trigger다.
+
+OCR Service는 ordered ArtifactRef 입력을 Provider capability에 맞춰 나누고, LocalOCRProvider는
+Tesseract TSV를 전체 text와 word confidence·pixel bbox로 정규화한다. `ocr.default`를 HTTP
+Inference v1 endpoint로 바꿔도 Stage는 변경되지 않는다. 09 timeline은 전체 `visual_ocr`과 호환
+summary `ocr_text`를 만들고 10 index, 11 context와 query가 화면 문자를 사용한다. 상세 계약은
+[`ADR-0033`](./adr/0033-optional-ocr-stage-and-provider-contract.md)를 따른다.
+
 ## 4. 선택적 심화 분석 (Lazy / 2-Pass)
 
 비싼 연산은 전 구간이 아니라 **필요한 씬에만** 적용한다.
 
 | 연산 | 1차 트리거 조건 | 도구 예시 |
 |---|---|---|
-| OCR | 캡션에 "텍스트/자막/슬라이드" 감지 시 | PaddleOCR, Tesseract |
+| OCR 재처리 | 질의가 화면 문자 근거를 요구하거나 더 높은 해상도가 필요할 때 | PaddleOCR, Tesseract |
 | 객체 검출 | 질의가 특정 객체를 언급하거나 이벤트 분석 모드일 때 | YOLO 계열 |
 | 얼굴 인식/추적 | 인물 중심 질의일 때 | InsightFace 등 |
 | 고해상도 재캡셔닝 | 질의 시점에 해당 씬이 top-k로 선택됐을 때 | 상위 VLM |

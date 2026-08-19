@@ -1,6 +1,6 @@
 # 파이프라인 단계별 처리 로직·사용 모델
 
-구현된 11단계 파이프라인의 처리 흐름. **파란 계열 = 규칙 기반(모델 없음)**,
+구현된 12단계 파이프라인의 처리 흐름. **파란 계열 = 규칙 기반(모델 없음)**,
 **보라 계열 = ML 모델 사용** 단계이다.
 
 ```mermaid
@@ -16,7 +16,8 @@ flowchart TD
         S02["<b>02_scenes</b><br/>인접 프레임 색상 변화량(content_val)이<br/>임계값(27.0)을 넘는 지점을 씬 경계로 검출<br/><i>도구: PySceneDetect ContentDetector</i>"]
         S03["<b>03_keyframes</b><br/>씬 길이별 내부 균등 후보를 추출하고<br/>장면 내부 pHash 중복 제거<br/><i>도구: ffmpeg seek + Pillow DCT</i>"]
         S08["<b>08_captions</b><br/>키프레임을 capability 기반 ordered chunk로 처리해<br/>프레임 캡션 + 씬별 그룹 생성<br/><i>모델: BLIP image-captioning-base</i>"]
-        S02 --> S03 --> S08
+        S08O["<b>08_ocr</b><br/>선택한 키프레임의 문자열·word box·confidence 추출<br/><i>로컬: Tesseract / 원격: HTTP OCR</i>"]
+        S02 --> S03 --> S08 --> S08O
     end
 
     subgraph AUDIO ["오디오 경로"]
@@ -28,7 +29,7 @@ flowchart TD
         S04 --> S07
     end
 
-    S08 --> S09
+    S08O --> S09
     S07 --> S09
     S06 --> S09
 
@@ -51,7 +52,7 @@ flowchart TD
     classDef ml fill:#ede9fe,stroke:#8b5cf6,color:#3b2a6e
     classDef io fill:#f1f5f9,stroke:#64748b,color:#334155
     class S01,S02,S03,S04,S09,S11 rule
-    class S05,S06,S07,S08,S10,Q ml
+    class S05,S06,S07,S08,S08O,S10,Q ml
     class V,OUT io
 ```
 
@@ -67,15 +68,16 @@ flowchart TD
 | 06_stt | 인접 VAD 구간 병합(gap ≤ 0.5s) 후 WAV ArtifactRef와 구간을 STT Provider에 전달. Provider가 원본 시간축으로 보정 | Local faster-whisper Provider `base`(기본)/`small` (CTranslate2 int8) | 5.6s / 13.9s |
 | 07_diarize | WAV ArtifactRef를 Diarization Provider에 전달. Provider가 화자 임베딩·클러스터링 후 발화 턴별 라벨 반환 | Local pyannote Provider `speaker-diarization-community-1` (HF 게이트) | 27.9s |
 | 08_captions | ordered keyframe ArtifactRef 집합을 Provider capability·설정 batch로 순차 처리하고 flat frame caption과 씬별 group을 함께 생성 | Local BLIP Provider `image-captioning-base`, auto device | sample 4장 CPU batch 4 inference 2.45s |
-| 09_timeline | `[start,end)` 씬에 전사·화자를 단일 배정하고 모든 visual caption을 보존. 기존 scalar caption은 ordered unique join | 규칙 기반 | 0.0s |
-| 10_index | 씬 카드 텍스트(캡션+전사)를 ① NFKC 정규화 단어·문자 2~3-gram FTS5 역색인 ② 정규화 벡터로 이중 저장 | 주입된 `embedding.default` Local/HTTP Provider, SQLite FTS5 | local 기준 0.2s |
+| 08_ocr | 기본 disabled. 모든 keyframe 또는 caption hint 후보를 ordered OCR하고 word confidence·pixel bbox 보존 | 주입된 `ocr.default` Local Tesseract/HTTP Provider | sample 4장 local batch 4, 0.6s |
+| 09_timeline | `[start,end)` 씬에 전사·화자를 단일 배정하고 caption·OCR 전체를 보존. 기존 scalar caption과 OCR summary는 ordered unique join | 규칙 기반 | 0.0s |
+| 10_index | 씬 카드 텍스트(캡션+OCR+전사)를 ① NFKC 정규화 단어·문자 2~3-gram FTS5 역색인 ② 정규화 벡터로 이중 저장 | 주입된 `embedding.default` Local/HTTP Provider, SQLite FTS5 | local 기준 0.2s |
 | 11_context | 포맷 규칙·메타데이터·씬 카드를 조립하고 설정 시 target tokenizer 실제 token budget에 맞춰 축약·제외 | 규칙 기반 + tokenizer | 0.0s (+ 첫 tokenizer load) |
 | query.py | hybrid top-k/no-answer 뒤 인접 씬을 dedup 확장하고 실제 token budget에서 우선순위별 축약·제외 | index와 같은 `embedding.default` Local/HTTP Provider + target tokenizer | local cold start ~10s |
 
 ## 설계 대응 관계
 
 - **조기 압축**: 05_vad (무음 제거), 02_scenes (씬 단위 처리)
-- **텍스트화 우선**: 06_stt (음성→텍스트), 08_captions (이미지→텍스트)
+- **텍스트화 우선**: 06_stt (음성→텍스트), 08_captions (이미지→설명), 08_ocr (이미지→문자)
 - **질의 시점 선별**: 10_index + query.py (전처리는 전부, 입력은 top-k만)
 - **우아한 성능 저하**: 07_diarize는 토큰/오디오가 없으면 사유를 기록하고 스킵,
   나머지 파이프라인은 화자 라벨 없이 계속 동작
@@ -99,6 +101,15 @@ model load·inference 시간을 기록한다. local `auto`는 CUDA→MPS→CPU �
 `[1,1,1,1]`은 inference 3.141초, batch 4 `[4]`는 2.450초였다. 상세 결정은
 [`ADR-0032`](./adr/0032-caption-device-selection-and-ordered-chunking.md)를 따른다.
 
+`08_ocr/ocr.json`은 기본 `disabled`에서 `executed=false`와 `OCR_DISABLED`를 기록하고 빈 결과를
+publish한다. `all`은 최종 keyframe 전체를, `caption-hints`는 caption의 text/title/sign/screen/slide 등
+고정 keyword가 일치한 frame만 처리한다. 성공 결과는 model metadata, trigger/config, aggregate
+usage/timing과 scene/keyframe별 전체 text, image 크기, 0~1 word confidence와 pixel bbox를 보존한다.
+LocalOCRProvider는 Tesseract TSV를 parse하고 설치 version을 effective revision으로 사용한다.
+`ocr.default` endpoint 설정 시 같은 Stage가 HTTP Inference v1을 사용하며 자동 fallback하지 않는다.
+상세 결정은
+[`ADR-0033`](./adr/0033-optional-ocr-stage-and-provider-contract.md)를 따른다.
+
 `06_stt/transcript.json`은 기존 segment 구조를 유지하며 실제 `provider`, model `revision`,
 `runtime`, 감지 언어 확률인 `language_probability`를 추가로 기록한다.
 
@@ -106,9 +117,10 @@ model load·inference 시간을 기록한다. local `auto`는 CUDA→MPS→CPU �
 양의 겹침이 가장 큰 씬 하나에만 들어가며 정확한 동률에서는 세그먼트 중점을 포함하는 씬을 택한다.
 씬 카드의 전사 줄에는 `source_segment_id`, `vad_source_ids`, `avg_logprob`, `no_speech_prob`를 가능한
 범위에서 보존하고, 씬과 전혀 겹치지 않은 source ID는 최상위 통계에 기록한다. scene card의
-`keyframes`·`visual_captions`는 모든 시각 항목을 보존한다. 기존 `keyframe`은 중점에 가장 가까운
-frame, `caption`은 frame 순서의 중복 제거 문자열을 ` | `로 연결한 호환 요약이다. 단일 frame의
-기존 값은 바뀌지 않는다.
+`keyframes`·`visual_captions`·`visual_ocr`은 모든 시각 항목을 보존한다. 기존 `keyframe`은 중점에
+가장 가까운 frame, `caption`과 새 `ocr_text`는 frame 순서의 중복 제거 문자열을 ` | `로 연결한
+호환 요약이다. 단일 frame의 기존 값은 바뀌지 않는다. 10 index와 11 context/QueryService도 화면
+텍스트를 검색·컨텍스트에 포함한다.
 
 `07_diarize/diarization.json`은 기존 speaker·turn 구조를 유지하며 실제 `provider`, model
 `revision`, `runtime`을 추가로 기록한다. HF token은 Provider 설정에만 존재하며 산출물이나
@@ -152,6 +164,10 @@ PipelineEngine→LocalExecutor에서 실행한다. 입력 영상은 cache integr
 .venv/bin/python src/run_pipeline.py samples/sample.mp4 \
   --max-context-tokens 2048 \
   --context-tokenizer-model sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
+
+# 모든 최종 keyframe을 local Tesseract로 OCR
+.venv/bin/python src/run_pipeline.py samples/sample.mp4 \
+  --ocr-mode all --ocr-language eng
 ```
 
 `--force`는 선택된 plan 전체를 강제하고 `--force-stage`는 지정 단계만 강제한다. dry-run은
@@ -167,7 +183,7 @@ timeout과 run cancellation은 attempt별 `ExecutionControl`을 통해 Executor�
 함께 설정된 최대 attempt까지 bounded retry한다. 영구 Stage 실패와 cancellation은 retry하지 않는다.
 
 Engine은 plan 내부 dependency가 완료된 Stage를 ready set으로 만들고 LocalExecutor의 semaphore
-capacity 안에서 실행한다. 09 timeline은 03/06/07/08 결과가 모두 끝난 뒤에만 시작하며, 10 index와
+capacity 안에서 실행한다. 09 timeline은 03/06/07/08 caption/OCR 결과가 모두 끝난 뒤에만 시작하며, 10 index와
 11 context는 09 이후 서로 독립적으로 실행될 수 있다. 한 branch가 실패하면 active peer에 cooperative
 cancel을 전달하고 안전한 반환까지 기다린다. manifest Stage reference는 completion timing이 아니라
 plan/attempt 순서로 유지한다.
