@@ -77,7 +77,7 @@ def run(ctx: PipelineContext) -> dict:
         duration, summary["chapters"], summary["subtitle_tracks"],
     )
     if summary["subtitle_tracks"]:
-        log.info("내장 자막 발견 — 추후 STT 스킵 후보 (프로토타입에서는 미사용)")
+        log.info("내장 자막 발견 — 04_embedded_text 정규화 대상")
 
     ctx.save_json(out_dir / "metadata.json", {"summary": summary, "raw": raw})
     return summary
