@@ -397,6 +397,9 @@ static/API query context가 지정한 256 token 예산을 넘지 않음을 확�
 6. [x] 내장 자막·챕터 활용
 7. [x] 오디오 이벤트 provider — 공통 계약·local AST/HTTP/disabled Stage 완료
 8. [ ] 질의 기반 2-pass 고품질 재처리
+   - [x] submission/profile/plan, 1-pass provenance와 cache/version 계약
+   - [ ] source Artifact import와 selected-scene keyframe/caption/OCR overlay
+   - [ ] 파생 run 실행·상태 저장과 별도 CLI/API mutation adapter
 9. [ ] 필요 시 RemoteExecutor와 분산 worker
 
 첫 slice는 완료했다. Engine은 dependency-ready set을 스케줄하고 LocalExecutor는
@@ -461,10 +464,18 @@ resolved Hub commit을 소유한다. composition root는 endpoint가 없으면 l
 기본 disabled는 모델을 구성하거나 다운로드하지 않는다. fake·실제 CPU model과 local/HTTP Stage,
 14-stage sample/query 경계로 검증했다.
 
-다음 slice는 8번 질의 기반 2-pass 고품질 재처리다. 먼저 QueryService 결과가 재처리 후보 scene과
-요청 품질 profile을 표현하는 Application 계약, 1-pass artifact provenance, 재실행 가능한 Stage 범위와
-cache/version 정책을 ADR/fake test로 고정한다. 기존 query는 read-only를 유지하고 명시적인 재처리
-command/API만 mutation을 일으켜야 한다.
+8번의 첫 planning slice도 완료했다. `PipelineReprocessingSubmission`과
+`QueryReprocessingApplicationService`는 read-only QueryService의 direct match를 후보로 선택하고,
+`visual-detail-v1` profile, 03/08 selected-scene 범위, 09/10/11 full-materialization 범위와 13개 source
+ArtifactRef provenance를 고정한다. request/plan fingerprint는 idempotency key를 제외하되 source
+checksum, 선택 scene, profile과 Stage version을 포함한다. 부모를 덮어쓰지 않는 파생 run 정책과
+별도 mutation command/API 경계를
+[`ADR-0036`](./adr/0036-query-guided-derived-run-reprocessing-plan.md)에 기록했다. 현재 plan은 source
+import와 selected-scene overlay capability가 없어 `execution.ready=false`다.
+
+다음 slice는 source Artifact를 파생 namespace로 checksum 검증 후 import하고 03 keyframe,
+08 caption/OCR이 선택 scene만 새로 만들며 비선택 scene은 source 결과를 결정적으로 복사하는 overlay
+계약을 구현한다. 그 후 09/10/11 전체 materialization과 parent 불변성을 fake Engine/Store로 검증한다.
 
 ## 12. 테스트 전략
 

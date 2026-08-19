@@ -231,6 +231,15 @@ CLI/API의 검색은 같은 `QueryService`를 사용한다. media ID, API snapsh
 [`ADR-0025`](./adr/0025-durable-public-pipeline-api.md)에 기록한다. queue adapter는 실제 배포 요구가
 생길 때 이 service boundary에 추가한다.
 
+질의 기반 2-pass 재처리는 검색 mutation이 아니라 별도
+`QueryReprocessingApplicationService` 유스케이스다. service는 read-only QueryService 결과를 후보로
+사용하고 1-pass ArtifactRef/checksum, quality profile과 Stage version을 고정한 파생 run plan을 만든다.
+파생 run은 부모 workspace와 manifest를 수정하지 않으며, 선택 scene의 03/08 visual 산출물만 고품질
+overlay하고 09/10/11 전체 산출물을 다시 물질화하는 것이 목표다. 현재 planning 계약은 구현됐지만
+source namespace import와 selected-scene overlay가 남아 있어 실행 adapter에는 연결하지 않았다.
+소유권과 cache/version 결정은
+[`ADR-0036`](./adr/0036-query-guided-derived-run-reprocessing-plan.md)에 기록한다.
+
 local model fingerprint는 optional Provider capability와 Gateway adapter로 resolve한다. 이미 로드된
 모델, immutable/offline Hub snapshot과 packaged VAD asset처럼 실제 실행과 동일함을 증명할 수 있는
 경우만 반환하고 나머지는 안전한 cache miss로 둔다. 결정은

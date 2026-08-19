@@ -52,10 +52,12 @@ flowchart LR
 - FFmpeg 기반 text subtitle cue·chapter Artifact와 timeline·검색·context 병합
 - 기본 disabled의 오디오 이벤트 Stage, local AudioSet AST/HTTP 전환과 downstream 병합
 - 기존 JSON·Markdown·SQLite 출력 구조와 공통 QueryService 기반 query CLI
+- 질의 결과·품질 profile·1-pass Artifact provenance를 고정하는 2-pass 재처리 planning 계약
 
 아직 구현되지 않은 범위:
 
 - caption/STT/diarization/VAD alias의 HTTP 배포 연결
+- 2-pass source Artifact import, selected-scene overlay와 파생 run CLI/API 실행
 - 직접 media upload, queue adapter와 RemoteExecutor
 
 정확한 완료 상태와 다음 작업은 [docs/STATUS.md](docs/STATUS.md)를 기준으로 한다.

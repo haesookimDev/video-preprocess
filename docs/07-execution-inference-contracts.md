@@ -18,7 +18,7 @@ Executor Port와 bounded LocalExecutor는
 [`src/video_preprocess/executors/`](../src/video_preprocess/executors/)에 구현됐다. dependency-ready
 PipelineEngine과 상태 머신은
 [`src/video_preprocess/engine/`](../src/video_preprocess/engine/)에 구현됐다. manifest cache key와
-decision, RunStore journal, 같은 run resume와 Store 범위 global cache index도 구현됐다. 전체 13개
+decision, RunStore journal, 같은 run resume와 Store 범위 global cache index도 구현됐다. 전체 14개
 legacy Stage binding과 기본 CLI/cache-aware preview도 구현됐다. HTTP Inference v1 transport는
 [`openapi/inference-v1.yaml`](./openapi/inference-v1.yaml)로 확정했고 stdlib 기반 HTTP Provider
 client와 reference server가 구현됐다. 배포별 local/HTTP binding 설정은 composition root에 연결됐다.
@@ -95,6 +95,37 @@ excluded/truncated scene ID를 기록한다.
 local reference server는 `--retain-terminal-runs`로 최근 terminal API snapshot 수를 제한한다. 이
 정리는 API 조회/idempotency control record에만 적용하며 Engine manifest와 artifact body를 삭제하지
 않는다. 보존 범위를 지난 run은 `404`이고 같은 idempotency key는 새 실행으로 사용할 수 있다.
+
+## 1.2 질의 기반 2-pass 재처리 planning 계약
+
+현재 구현된 `PipelineReprocessingSubmission`은 source run, query, `visual-detail-v1` profile,
+`max_scenes`, `min_similarity`와 idempotency key를 받는다. 별도
+`QueryReprocessingApplicationService`가 기존 read-only `QueryService`를
+`top_k=max_scenes`, `adjacent_scenes=0`으로 호출하고 direct match를 rank 순서로 선택한다. query의
+neighbor 확장은 context 조립용이며 재처리 후보에는 포함하지 않는다. 후보가 없으면 파생 run을 만들지
+않는다.
+
+`visual-detail-v1`은 선택 scene에 keyframe 상한 3과 OCR all을 적용하는 server-owned profile이다.
+선택 scene 범위는 `03_keyframes`, `08_captions`, `08_ocr`이고, 완성된 overlay 전체를 소비하는
+`09_timeline`, `10_index`, `11_context`는 full-materialization 범위다. 현재
+`from_stage=03_keyframes` plan의 boundary input은 `audio_events`, `diarization`, `embedded_text`,
+`metadata`, `scenes`, `transcript`, `video`다. source provenance에는 이 7개와 overlay base인
+`keyframes`, `keyframe_images`, `captions`, `ocr`, query evidence인 `timeline`, `search_index`
+ArtifactRef/checksum을 모두 포함한다.
+
+재처리는 source run을 덮어쓰지 않고 새 run/workspace를 만드는
+`derived-run-no-parent-overwrite-v1` 정책을 따른다. request fingerprint는 idempotency key를 제외하고,
+plan fingerprint는 정규화 query, 선택 scene, profile 정책, Stage version과 source Artifact checksum을
+포함한다. 선택/overlay 의미가 바뀌면 profile 또는 Stage version을 올리고, 09/10/11은 overlay 결과
+checksum으로 cache를 판정한다.
+
+현재 plan은 source namespace import와 선택 scene별 03/08 overlay capability가 없어
+`execution.ready=false`를 명시한다. 따라서 아직 실행 CLI/API/OpenAPI에는 노출하지 않는다. 다음
+slice에서 `source-artifact-import-v1`, keyframe/caption/OCR overlay를 구현하고 부모 불변성을 검증한
+뒤 별도 mutation command와
+`POST /v1/pipeline-runs/{source_run_id}/reprocessing-runs`를 공개한다. `/queries`는 계속 read-only다.
+세부 결정은
+[`ADR-0036`](./adr/0036-query-guided-derived-run-reprocessing-plan.md)에 기록한다.
 
 ## 2. 공통 식별자
 

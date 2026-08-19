@@ -1,8 +1,8 @@
 # 개발 상태와 세션 인수인계
 
 - 마지막 갱신: **2026-08-19**
-- 현재 단계: **Phase 7 진행 중 — 오디오 이벤트 local/HTTP Provider 완료**
-- 다음 작업: **질의 기반 2-pass 고품질 재처리 계약·범위 설계**
+- 현재 단계: **Phase 7 진행 중 — 질의 기반 2-pass 재처리 planning 계약 완료**
+- 다음 작업: **source Artifact import와 selected-scene visual overlay 구현**
 
 이 문서는 개발 진행 상황의 단일 진입점이다. 새로운 세션은 이 문서를 먼저 읽고, 실제 코드와
 Git 상태를 확인한 뒤 작업을 시작한다.
@@ -127,6 +127,8 @@ Git 상태를 확인한 뒤 작업을 시작한다.
   [`ADR-0034`](./adr/0034-embedded-subtitle-and-chapter-artifact.md)
 - 선택적 오디오 이벤트 Provider·Stage 결정:
   [`ADR-0035`](./adr/0035-optional-audio-event-provider-and-stage.md)
+- 질의 기반 파생 run 재처리 planning 결정:
+  [`ADR-0036`](./adr/0036-query-guided-derived-run-reprocessing-plan.md)
 
 ## 3. 완료된 작업
 
@@ -180,6 +182,7 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - [x] 장면 내부 perceptual hash keyframe 중복 제거
 - [x] caption device 자동 선택과 capability 기반 ordered batch tuning
 - [x] local AudioSet audio event Provider와 local/HTTP composition
+- [x] 질의 기반 2-pass submission/profile/plan과 source provenance 계약
 
 ## 4. 아직 구현되지 않은 작업
 
@@ -217,6 +220,9 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - [x] OCR Provider와 pipeline/timeline/index/context 통합
 - [x] 내장 자막·챕터 Artifact와 timeline/index/context 통합
 - [x] 오디오 이벤트 Provider와 pipeline/timeline/index/context 통합
+- [x] 질의 기반 2-pass 재처리 planning Application 계약
+- [ ] source Artifact import와 selected-scene keyframe/caption/OCR overlay
+- [ ] 파생 재처리 run 실행·상태·CLI/API adapter
 
 문서가 존재한다고 구현된 것으로 간주하지 않는다. 완료 여부는 코드와 자동 테스트를 기준으로
 이 체크리스트에서 갱신한다.
@@ -339,9 +345,17 @@ endpoint 또는 local MIT AudioSet AST로 활성화된다. local Provider는 527
 device/effective revision과 cache-first lazy lifecycle을 소유한다. 09/10/11과 QueryService가 source
 window/confidence를 보존해 소비하고 기본 DAG는 14개 Stage다.
 
-다음 slice는 질의 결과를 선택 scene의 고품질 재처리 요청으로 바꾸는 2-pass 계약이다. read-only query와
-명시적 mutation command/API 경계, 대상 Stage·artifact provenance, quality profile, cache/version 정책을
-ADR과 fake Application Service test로 먼저 고정한다.
+Phase 7 여덟 번째 planning slice는 질의 결과를 선택 scene의 고품질 재처리 요청으로 바꾸는
+`PipelineReprocessingSubmission`, `visual-detail-v1` profile과
+`QueryReprocessingApplicationService`를 구현했다. read-only query와 별도 mutation 경계, 03/08
+selected-scene·09/10/11 full-materialization 범위, 13개 source ArtifactRef provenance와
+request/plan fingerprint를 ADR-0036과 fake Application test로 고정했다. 부모 run은 수정하지 않는
+파생 run이며, 현재 source import와 visual overlay capability가 없어 plan은 `execution.ready=false`다.
+
+다음 slice는 source Artifact를 파생 namespace에 checksum 검증 후 import하고, 03 keyframe과 08
+caption/OCR이 선택 scene만 새로 처리하면서 비선택 scene의 1-pass 결과를 결정적으로 복사하는 overlay를
+구현한다. 09/10/11 전체 materialization과 parent manifest/artifact 불변성도 fake Engine/Store로 먼저
+검증한다. 이 경계가 완료될 때까지 실행 CLI/API/OpenAPI는 공개하지 않는다.
 
 ## 6. 알려진 중요 문제
 
@@ -445,6 +459,26 @@ ADR과 fake Application Service test로 먼저 고정한다.
 
 최신 기록을 위에 추가한다. 긴 구현 설명은 PR이나 ADR에 두고 여기에는 다음 세션이 재개하는 데
 필요한 정보만 적는다.
+
+### 2026-08-19 — Phase 7 질의 기반 2-pass 재처리 planning 계약
+
+- 목표: read-only 검색 결과를 부모 run을 손상하지 않는 고품질 파생 run 요청으로 바꾸기 전에 후보,
+  profile, Stage 범위, 1-pass provenance와 cache/version 의미를 고정
+- 완료: `PipelineReprocessingSubmission`, `visual-detail-v1`,
+  `QueryReprocessingApplicationService`, 후보/Stage/provenance를 직렬화하는 deterministic plan;
+  direct query match만 최대 1~20개 선택하고 no-answer는 stable 오류로 종료
+- 범위: 03 keyframe·08 caption/OCR은 selected-scene, 09 timeline·10 index·11 context는
+  full-materialization; DAG boundary 7개, overlay base 4개와 query evidence 2개 등 source ArtifactRef
+  13개를 checksum provenance로 고정; ADR-0036
+- cache/안전: request fingerprint는 idempotency key를 제외하고 plan fingerprint는 정규화 query,
+  selected scene, profile, Stage version과 source checksum을 포함; 부모 workspace/manifest는 read-only인
+  파생 run 정책. 미구현 capability 4개를 공개하고 `execution.ready=false`로 실행을 차단
+- 검증: reprocessing fake Application 5 passed; Query/Pipeline/Run/API/OpenAPI 관련 81 passed;
+  default suite 493 passed/20 deselected; service compileall과 `git diff --check` 성공
+- 호환성: 기존 query CLI와 `/queries`, pipeline 실행·OpenAPI에는 변화가 없다. planning-only라 실제
+  media/model sample을 재실행하지 않았고 API/CLI mutation도 아직 공개하지 않았다.
+- 다음 작업: source Artifact checksum 검증/import port와 파생 namespace adapter를 만든 뒤 03/08
+  selected-scene overlay의 결정적 merge·parent 불변성 fake test를 구현한다.
 
 ### 2026-08-19 — Phase 7 local AudioSet 오디오 이벤트 Provider
 
