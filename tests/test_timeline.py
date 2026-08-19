@@ -247,6 +247,31 @@ def test_timeline_preserves_multi_visuals_and_legacy_scene_summary(
             ],
         },
     )
+    context.save_json(
+        context.stage_dir("05_audio_events") / "audio_events.json",
+        {
+            "events": [
+                {
+                    "event_id": 1,
+                    "label": "music",
+                    "confidence": 0.92,
+                    "start_sec": 1.0,
+                    "end_sec": 7.0,
+                    "duration_sec": 6.0,
+                    "source_window_ids": [1, 2],
+                },
+                {
+                    "event_id": 2,
+                    "label": "applause",
+                    "confidence": 0.88,
+                    "start_sec": 20.0,
+                    "end_sec": 22.0,
+                    "duration_sec": 2.0,
+                    "source_window_ids": [8],
+                },
+            ]
+        },
+    )
 
     metrics = s09_timeline.run(context)
 
@@ -265,6 +290,8 @@ def test_timeline_preserves_multi_visuals_and_legacy_scene_summary(
         "maximum_overlap_single_midpoint_tiebreak"
     )
     assert timeline["assigned_subtitle_count"] == 2
+    assert timeline["assigned_audio_event_count"] == 1
+    assert timeline["unassigned_audio_event_ids"] == [2]
     assert timeline["unassigned_subtitle_source_ids"] == [
         "subtitle:stream:2:cue:3"
     ]
@@ -298,11 +325,17 @@ def test_timeline_preserves_multi_visuals_and_legacy_scene_summary(
     assert first["subtitle_text"] == "Welcome"
     assert second["subtitle_text"] == "Boundary subtitle"
     assert first["subtitles"][0]["source_stream_id"] == "subtitle:stream:2"
+    assert first["audio_event_text"] == "music"
+    assert first["audio_events"][0]["confidence"] == 0.92
+    assert first["audio_events"][0]["source_window_ids"] == [1, 2]
+    assert second["audio_event_text"] is None
     assert metrics["scenes_with_ocr"] == 1
     assert metrics["assigned_subtitle_count"] == 2
     assert metrics["unassigned_subtitle_count"] == 1
     assert metrics["scenes_with_subtitles"] == 2
     assert metrics["scenes_with_chapter"] == 2
+    assert metrics["scenes_with_audio_events"] == 1
+    assert metrics["unassigned_audio_event_count"] == 1
     markdown = (
         context.out_root / "09_timeline" / "timeline.md"
     ).read_text(encoding="utf-8")
@@ -311,4 +344,6 @@ def test_timeline_preserves_multi_visuals_and_legacy_scene_summary(
     assert "- 화면 텍스트: OPENAI" in markdown
     assert "- 챕터: Opening" in markdown
     assert "- 내장 자막 [00:01] (eng): Welcome" in markdown
+    assert "- 내장 자막 [00:09] (eng): Boundary subtitle" in markdown
+    assert "- 오디오 이벤트 [00:01]: music (0.92)" in markdown
     assert "- 시각: a closing frame" in markdown

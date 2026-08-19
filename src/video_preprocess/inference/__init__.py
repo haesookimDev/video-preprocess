@@ -14,6 +14,7 @@ from .diarization import DiarizationBatch, DiarizationService, SpeakerTurn
 from .deployment import (
     HTTPProviderSettings,
     InferenceDeploymentSettings,
+    create_configured_audio_event_service,
     create_configured_embedding_service,
     create_configured_ocr_service,
 )
@@ -69,6 +70,7 @@ __all__ = [
     "TranscriptionBatch",
     "VADBatch",
     "VADService",
+    "create_configured_audio_event_service",
     "create_configured_embedding_service",
     "create_configured_ocr_service",
 ]

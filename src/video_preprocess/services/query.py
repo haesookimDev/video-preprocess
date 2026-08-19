@@ -825,6 +825,7 @@ def _render_legacy_context(
             or card.get("ocr_text")
             or chapter_title
             or card.get("subtitle_text")
+            or card.get("audio_event_text")
             or (
                 card["transcript"][0]["text"][:30]
                 if card["transcript"]
@@ -883,6 +884,12 @@ def _render_scene_card(card: Mapping[str, object]) -> str:
         lines.append(f"시각: {card['caption']}")
     if card.get("ocr_text"):
         lines.append(f"화면 텍스트: {card['ocr_text']}")
+    if card.get("audio_events"):
+        values = ", ".join(
+            f"{event['label']} ({float(event['confidence']):.2f})"
+            for event in card["audio_events"]
+        )
+        lines.append(f"오디오 이벤트: {values}")
     for transcript in card["transcript"]:
         speaker = (
             f" ({transcript['speaker']})"
@@ -911,6 +918,7 @@ def _compact_scene_card(card: Mapping[str, object]) -> str:
         or card.get("ocr_text")
         or chapter_title
         or card.get("subtitle_text")
+        or card.get("audio_event_text")
         or (
             card["transcript"][0]["text"]
             if card["transcript"]

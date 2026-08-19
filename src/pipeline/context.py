@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from video_preprocess.tokenization import TokenCounter
     from video_preprocess.inference import (
+        AudioEventService,
         CaptionService,
         DiarizationService,
         EmbeddingService,
@@ -32,6 +33,23 @@ class PipelineContext:
     keyframes_per_scene: int = 1
     vad_min_silence_ms: int = 500
     vad_speech_pad_ms: int = 200
+    audio_event_mode: str = "disabled"
+    audio_event_model: str = "audio-event-classifier"
+    audio_event_labels: tuple[str, ...] = (
+        "music",
+        "applause",
+        "laughter",
+        "alarm",
+        "siren",
+        "vehicle",
+        "animal",
+        "door",
+        "impact",
+        "noise",
+    )
+    audio_event_min_confidence: float = 0.5
+    audio_event_window_sec: float = 5.0
+    audio_event_hop_sec: float = 2.5
     stt_merge_gap_sec: float = 0.5  # VAD 세그먼트 병합 최대 간격
     whisper_model: str = "base"
     language: str | None = None  # None이면 자동 감지
@@ -63,6 +81,10 @@ class PipelineContext:
         repr=False,
     )
     vad_service: VADService | None = field(
+        default=None,
+        repr=False,
+    )
+    audio_event_service: AudioEventService | None = field(
         default=None,
         repr=False,
     )

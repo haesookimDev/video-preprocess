@@ -1,4 +1,4 @@
-"""Stable StageSpec registry for the current thirteen-stage pipeline."""
+"""Stable StageSpec registry for the current fourteen-stage pipeline."""
 
 from video_preprocess.domain import ResourceHints, StageSpec
 
@@ -44,6 +44,19 @@ DEFAULT_STAGE_SPECS = (
         required_inputs=("video", "metadata"),
         outputs=("embedded_text",),
         resource_hints=ResourceHints(cpu=0.5, memory_mb=128),
+    ),
+    StageSpec(
+        name="05_audio_events",
+        stage_version="1.0.0",
+        dependencies=("04_audio",),
+        required_inputs=("audio", "audio_metadata"),
+        outputs=("audio_events",),
+        model_slots=("audio_event",),
+        resource_hints=ResourceHints(
+            cpu=0.5,
+            memory_mb=256,
+            gpu_optional=False,
+        ),
     ),
     StageSpec(
         name="05_vad",
@@ -112,11 +125,12 @@ DEFAULT_STAGE_SPECS = (
     ),
     StageSpec(
         name="09_timeline",
-        stage_version="1.4.0",
+        stage_version="1.5.0",
         dependencies=(
             "02_scenes",
             "03_keyframes",
             "04_embedded_text",
+            "05_audio_events",
             "06_stt",
             "07_diarize",
             "08_captions",
@@ -126,6 +140,7 @@ DEFAULT_STAGE_SPECS = (
             "scenes",
             "keyframes",
             "embedded_text",
+            "audio_events",
             "transcript",
             "diarization",
             "captions",
@@ -136,7 +151,7 @@ DEFAULT_STAGE_SPECS = (
     ),
     StageSpec(
         name="10_index",
-        stage_version="1.3.0",
+        stage_version="1.4.0",
         dependencies=("09_timeline",),
         required_inputs=("timeline",),
         outputs=("search_index", "index_summary"),
@@ -149,7 +164,7 @@ DEFAULT_STAGE_SPECS = (
     ),
     StageSpec(
         name="11_context",
-        stage_version="1.3.0",
+        stage_version="1.4.0",
         dependencies=("01_probe", "07_diarize", "09_timeline"),
         required_inputs=("metadata", "diarization", "timeline"),
         outputs=("context", "context_json"),

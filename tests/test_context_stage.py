@@ -101,6 +101,10 @@ def test_context_stage_includes_ocr_text_in_markdown(tmp_path: Path) -> None:
                     "ocr_text": "OPENAI 화면",
                     "chapter": {"title": "Opening"},
                     "subtitle_text": "Welcome subtitle",
+                    "audio_event_text": "music",
+                    "audio_events": [
+                        {"label": "music", "confidence": 0.91}
+                    ],
                     "transcript": [],
                 }
             ]
@@ -115,6 +119,7 @@ def test_context_stage_includes_ocr_text_in_markdown(tmp_path: Path) -> None:
     assert "화면 텍스트: OPENAI 화면" in markdown
     assert "챕터: Opening" in markdown
     assert "내장 자막: Welcome subtitle" in markdown
+    assert "오디오 이벤트: music (0.91)" in markdown
 
 
 def test_context_stage_requires_counter_when_budget_is_enabled(

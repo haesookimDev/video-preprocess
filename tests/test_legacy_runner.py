@@ -3,9 +3,11 @@
 from pipeline.runner import STAGES
 
 
-def test_legacy_runner_keeps_embedded_text_before_timeline() -> None:
+def test_legacy_runner_keeps_new_sources_before_timeline() -> None:
     names = tuple(stage.NAME for stage in STAGES)
 
-    assert len(names) == 13
+    assert len(names) == 14
     assert names.index("04_audio") < names.index("04_embedded_text")
     assert names.index("04_embedded_text") < names.index("09_timeline")
+    assert names.index("04_audio") < names.index("05_audio_events")
+    assert names.index("05_audio_events") < names.index("09_timeline")

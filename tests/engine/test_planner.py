@@ -19,6 +19,7 @@ EXPECTED_ORDER = (
     "03_keyframes",
     "04_audio",
     "04_embedded_text",
+    "05_audio_events",
     "05_vad",
     "06_stt",
     "07_diarize",
@@ -30,17 +31,19 @@ EXPECTED_ORDER = (
 )
 
 
-def test_default_registry_has_stable_thirteen_stage_plan() -> None:
+def test_default_registry_has_stable_fourteen_stage_plan() -> None:
     registry = create_default_registry()
     planner = DAGPlanner(registry)
 
     plan = planner.plan()
 
-    assert len(registry) == 13
+    assert len(registry) == 14
     assert planner.ordered_stage_names == EXPECTED_ORDER
     assert plan.stage_names == EXPECTED_ORDER
     assert plan.boundary_inputs == ("video",)
     assert registry.get("05_vad").model_slots == ("vad",)
+    assert registry.get("05_audio_events").dependencies == ("04_audio",)
+    assert registry.get("05_audio_events").model_slots == ("audio_event",)
     assert registry.get("06_stt").model_slots == ("stt",)
     assert registry.get("07_diarize").dependencies == ("04_audio",)
     assert registry.get("08_captions").dependencies == ("03_keyframes",)
@@ -65,11 +68,13 @@ def test_default_registry_has_stable_thirteen_stage_plan() -> None:
         "08_captions",
     )
     assert registry.get("08_ocr").model_slots == ("ocr",)
-    assert registry.get("09_timeline").stage_version == "1.4.0"
+    assert registry.get("09_timeline").stage_version == "1.5.0"
     assert "04_embedded_text" in registry.get("09_timeline").dependencies
+    assert "05_audio_events" in registry.get("09_timeline").dependencies
     assert "embedded_text" in registry.get("09_timeline").required_inputs
-    assert registry.get("10_index").stage_version == "1.3.0"
-    assert registry.get("11_context").stage_version == "1.3.0"
+    assert "audio_events" in registry.get("09_timeline").required_inputs
+    assert registry.get("10_index").stage_version == "1.4.0"
+    assert registry.get("11_context").stage_version == "1.4.0"
 
 
 def test_topological_order_is_independent_of_registration_order() -> None:
@@ -181,6 +186,7 @@ def test_from_stage_selects_all_descendants_in_topological_order() -> None:
     )
     assert plan.boundary_inputs == (
         "audio",
+        "audio_events",
         "captions",
         "diarization",
         "embedded_text",
@@ -197,7 +203,7 @@ def test_to_stage_selects_all_ancestors() -> None:
 
     plan = planner.plan(to_stage="09_timeline")
 
-    assert plan.stage_names == EXPECTED_ORDER[:11]
+    assert plan.stage_names == EXPECTED_ORDER[:12]
     assert plan.boundary_inputs == ("video",)
 
 
@@ -208,6 +214,7 @@ def test_from_and_to_stage_select_dependency_path_intersection() -> None:
 
     assert plan.stage_names == (
         "04_audio",
+        "05_audio_events",
         "05_vad",
         "06_stt",
         "07_diarize",

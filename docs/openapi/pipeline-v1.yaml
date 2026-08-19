@@ -211,7 +211,8 @@ components:
           items: {$ref: '#/components/schemas/StageName'}
     StageName:
       type: string
-      enum: [01_probe, 02_scenes, 03_keyframes, 04_audio, 05_vad, 06_stt,
+      enum: [01_probe, 02_scenes, 03_keyframes, 04_audio, 04_embedded_text,
+             05_audio_events, 05_vad, 06_stt,
              07_diarize, 08_captions, 08_ocr, 09_timeline, 10_index, 11_context]
     PipelineSettings:
       type: object
@@ -227,6 +228,37 @@ components:
           description: 씬 길이별 adaptive 키프레임 수의 상한
         vad_min_silence_ms: {type: integer, minimum: 0, default: 500}
         vad_speech_pad_ms: {type: integer, minimum: 0, default: 200}
+        audio_event_mode:
+          type: string
+          enum: [disabled, all]
+          default: disabled
+        audio_event_model:
+          type: string
+          minLength: 1
+          default: audio-event-classifier
+        audio_event_labels:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            type: string
+            enum: [music, applause, laughter, alarm, siren, vehicle, animal,
+                   door, impact, noise]
+          default: [music, applause, laughter, alarm, siren, vehicle, animal,
+                    door, impact, noise]
+        audio_event_min_confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+          default: 0.5
+        audio_event_window_sec:
+          type: number
+          exclusiveMinimum: 0
+          default: 5.0
+        audio_event_hop_sec:
+          type: number
+          exclusiveMinimum: 0
+          default: 2.5
         stt_merge_gap_sec: {type: number, minimum: 0, default: 0.5}
         whisper_model: {type: string, minLength: 1, default: base}
         language: {type: [string, 'null'], minLength: 1}

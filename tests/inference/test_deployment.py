@@ -12,6 +12,8 @@ from video_preprocess.inference import (
     HTTPInferenceProvider,
     HTTPProviderSettings,
     InferenceDeploymentSettings,
+    ProviderConfigurationError,
+    create_configured_audio_event_service,
     create_configured_embedding_service,
     create_configured_ocr_service,
 )
@@ -82,17 +84,46 @@ def test_ocr_alias_selects_local_or_http_provider(tmp_path: Path) -> None:
     assert remote.timeout_sec == 15
 
 
-def test_environment_adapter_composes_embedding_and_ocr_aliases() -> None:
+def test_audio_event_alias_requires_endpoint_and_selects_http() -> None:
+    with pytest.raises(ProviderConfigurationError, match="HTTP endpoint"):
+        create_configured_audio_event_service("example/audio-event")
+    deployments = InferenceDeploymentSettings(
+        http_providers={
+            "audio_event.default": HTTPProviderSettings(
+                endpoint="https://audio.example.test",
+                request_timeout_sec=20,
+            )
+        }
+    )
+
+    service = create_configured_audio_event_service(
+        "example/audio-event",
+        deployments=deployments,
+        max_batch_size=6,
+    )
+
+    assert isinstance(
+        bound_provider(service, "audio_event.default"),
+        HTTPInferenceProvider,
+    )
+    assert service.timeout_sec == 20
+    assert service.batch_size == 6
+
+
+def test_environment_adapter_composes_inference_aliases() -> None:
     deployments = inference_deployments_from_environment(
         endpoints={
+            "audio_event.default": "https://audio.example.test",
             "embedding.default": "https://models.example.test",
             "ocr.default": "https://ocr.example.test",
         },
         token_envs={
+            "audio_event.default": None,
             "embedding.default": None,
             "ocr.default": "OCR_TOKEN",
         },
         artifact_namespaces={
+            "audio_event.default": ("run-artifacts",),
             "embedding.default": (),
             "ocr.default": ("run-artifacts",),
         },
@@ -100,6 +131,7 @@ def test_environment_adapter_composes_embedding_and_ocr_aliases() -> None:
     )
 
     assert set(deployments.http_providers) == {
+        "audio_event.default",
         "embedding.default",
         "ocr.default",
     }

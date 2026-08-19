@@ -1,8 +1,8 @@
 # 개발 상태와 세션 인수인계
 
 - 마지막 갱신: **2026-08-19**
-- 현재 단계: **Phase 7 진행 중 — 내장 자막·챕터 Artifact·timeline 통합 완료**
-- 다음 작업: **오디오 이벤트 Provider 공통 계약·disabled Stage 설계**
+- 현재 단계: **Phase 7 진행 중 — 오디오 이벤트 계약·HTTP/disabled Stage 통합 완료**
+- 다음 작업: **같은 계약의 local 오디오 이벤트 Provider·label mapping 구현**
 
 이 문서는 개발 진행 상황의 단일 진입점이다. 새로운 세션은 이 문서를 먼저 읽고, 실제 코드와
 Git 상태를 확인한 뒤 작업을 시작한다.
@@ -16,18 +16,18 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - `src/serve_pipeline.py`: 영속 상태·artifact·query를 제공하는 Pipeline REST API v1 server
 - `src/pipeline/runner.py`: 이전 파일 marker 방식의 compatibility runner
 - `src/pipeline/context.py`: 경로·설정·JSON I/O 공유
-- `src/pipeline/stages/s01_*`~`s11_*`: `04_embedded_text`·`08_captions`·`08_ocr` 포함 13개 단계
+- `src/pipeline/stages/s01_*`~`s11_*`: embedded text·audio events·caption·OCR 포함 14개 단계
 - `src/video_preprocess/domain/`: 버전이 있는 Artifact·Stage 공개 계약
 - `src/video_preprocess/storage/`: Artifact·Run Store Port와 로컬 구현
 - `src/video_preprocess/engine/`: planner, PipelineEngine, manifest cache와 RunStore journal
 - `src/video_preprocess/executors/`: async Executor Port, Stage binding과 bounded LocalExecutor
-- `src/video_preprocess/adapters/`: legacy 01~11 + embedded text/OCR StageTask compatibility binding
+- `src/video_preprocess/adapters/`: legacy 01~11 + embedded text/audio events/OCR compatibility binding
 - `src/video_preprocess/services/`: pipeline Application Service와 local composition root
 - 기본 CLI는 manifest·checksum·설정·model binding 기반 cache 사용
 - VAD, STT, diarization, caption, OCR과 embedding이 `InferenceGateway`와 Local Provider로 실행
 - 모든 모델 Stage에서 구체 ML library import와 model lifecycle 제거 완료
-- 기본 CLI는 Application Service를 통해 새 Engine과 13개 binding을 실행
-- embedding과 OCR은 설정에 따라 local 또는 HTTP provider client를 사용하며 기본값은 local
+- 기본 CLI는 Application Service를 통해 새 Engine과 14개 binding을 실행
+- embedding/OCR은 local 또는 HTTP, audio event는 현재 explicit HTTP provider client를 사용
 - production embedding inference server adapter와 실행 CLI 구현 완료
 - pipeline REST API와 durable control snapshot, QueryService 구현 완료
 - timeline 반개구간·단일 배정과 source/confidence 보존 구현 완료
@@ -40,6 +40,8 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - local caption CUDA→MPS→CPU 자동 선택과 capability 기반 ordered chunking 구현 완료
 - 기본 disabled의 독립 OCR Stage, local Tesseract/HTTP alias와 timeline/index/context 병합 완료
 - FFmpeg text subtitle·chapter Artifact와 timeline/index/static·query context 병합 완료
+- 오디오 이벤트 공통 계약, HTTP alias와 기본 disabled Stage·downstream 병합 완료
+- `audio_event.default` local model Provider는 아직 미구현
 - queue consumer, direct upload와 RemoteExecutor는 아직 미구현
 - Local Store가 input copy, 단계 산출물과 run/stage manifest를 관리
 
@@ -124,6 +126,8 @@ Git 상태를 확인한 뒤 작업을 시작한다.
   [`ADR-0033`](./adr/0033-optional-ocr-stage-and-provider-contract.md)
 - 내장 자막·챕터 Artifact·scene 병합 결정:
   [`ADR-0034`](./adr/0034-embedded-subtitle-and-chapter-artifact.md)
+- 선택적 오디오 이벤트 Provider·Stage 결정:
+  [`ADR-0035`](./adr/0035-optional-audio-event-provider-and-stage.md)
 
 ## 3. 완료된 작업
 
@@ -156,7 +160,7 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - [x] audio ArtifactRef와 local STT provider·s06 adapter
 - [x] audio ArtifactRef와 local diarization provider·s07 adapter
 - [x] audio ArtifactRef와 local VAD provider·s05 adapter
-- [x] embedded text·OCR을 포함한 13개 Stage registry와 deterministic DAG planner
+- [x] embedded text·audio events·OCR을 포함한 14개 Stage registry와 deterministic DAG planner
 - [x] Executor Port와 순차 LocalExecutor
 - [x] 순차 PipelineEngine과 run/stage 상태 머신
 - [x] manifest cache key와 artifact 검증 기반 cache decision
@@ -328,9 +332,14 @@ stable skipped Artifact를 만든다. 09 version `1.4.0`은 subtitle cue와 chap
 겹침·중점 규칙으로 scene에 단일 배정하고, 10/11 version `1.3.0`과 QueryService가 additive하게
 검색·context에 전달한다. 기본 DAG는 13개 Stage다.
 
-다음 slice는 오디오 이벤트 Provider다. 비음성 event label taxonomy·confidence·구간 겹침,
-audio ArtifactRef task/result와 local/HTTP 배포 경계를 fake contract/ADR로 고정하고, 기본 모델·비용을
-강제하지 않는 disabled Stage와 09/10/11 additive 병합부터 구현한다.
+Phase 7 일곱 번째 slice의 첫 부분은 `audio_event_detection`, `audio-events-v1` taxonomy와
+`merge-same-label-overlap-v1`을 고정했다. `05_audio_events`는 기본 disabled이며 explicit HTTP
+endpoint로만 활성화되고, 09/10/11과 QueryService가 source window/confidence를 보존해 소비한다.
+기본 DAG는 14개 Stage다.
+
+다음 slice는 같은 계약의 local Provider다. 후보 모델의 라이선스·AudioSet→canonical mapping,
+WAV decode, device/resource profile과 effective revision을 검증하고 lazy load·offline 단위 테스트와
+명시적 실제 모델 통합 테스트를 추가한다. 기본 disabled 정책은 유지한다.
 
 ## 6. 알려진 중요 문제
 
@@ -434,6 +443,32 @@ audio ArtifactRef task/result와 local/HTTP 배포 경계를 fake contract/ADR�
 
 최신 기록을 위에 추가한다. 긴 구현 설명은 PR이나 ADR에 두고 여기에는 다음 세션이 재개하는 데
 필요한 정보만 적는다.
+
+### 2026-08-19 — Phase 7 오디오 이벤트 공통 계약·HTTP/disabled Stage 통합
+
+- 목표: 음악·박수·경보 같은 비음성 시간 단서를 모델 고유 label·배포 위치와 분리하고 기본 실행에는
+  새 모델 비용을 강제하지 않은 채 timeline·검색·context에 additive하게 전달
+- 완료: `audio_event_detection`, `audio-events-v1` 10-label taxonomy, WAV ArtifactRef+ordered window
+  batch, confidence validation, `merge-same-label-overlap-v1`, deterministic idempotency/deadline/model
+  consistency/all-or-nothing aggregate; ADR-0035
+- Stage/DAG: 기본 disabled·`AUDIO_EVENTS_DISABLED`, no-audio sentinel의 독립 `05_audio_events`
+  version `1.0.0`; explicit `audio_event.default` HTTP deployment만 활성화, 14-stage registry/legacy runner와
+  strict binding, CLI/server/OpenAPI 설정
+- downstream: 09 `1.5.0` maximum-overlap single assignment, 전체 `audio_events`의 event/source window/
+  confidence 보존과 `audio_event_text`; 10/11 `1.4.0`, QueryService index/static/query context 전파
+- 계약 검증: fake Provider의 2+1 capability chunk, window ordering, taxonomy/confidence/duplicate 오류,
+  same-label merge·cross-label overlap, disabled/enabled/no-audio Stage, planner boundary와 binding, timeline
+  unassigned ID, index/context; loopback HTTP Artifact namespace와 effective model
+- 실제 검증: offline `sample.mp4 --force` 전체 14단계 `ok`, `05_audio_events`는 모델 호출 없이
+  `AUDIO_EVENTS_DISABLED`, SQLite integrity `ok`, query `음성 구간 검출 --topk 2` scene 02 top-1
+- 회귀: default 471 passed/19 deselected, audio-event HTTP integration 1 passed, `git diff --check` 성공
+- 호환성: 기존 scene card field를 유지하고 `audio_events`, `audio_event_text`만 추가한다. 신규 Stage와
+  09/10/11 version 상승으로 관련 cache는 한 번 무효화된다. 활성화에는 endpoint와 공유 Artifact
+  namespace가 필요하며 자동 local/HTTP fallback은 없다
+- 관찰: sample 실행의 macOS OpenCV/PyAV/FFmpeg dylib 중복, Matplotlib/font cache warning은 실패로
+  이어지지 않았다. sandbox에서는 loopback bind가 제한돼 허용된 실행으로 integration을 검증했다
+- 다음 작업: 같은 Service 계약을 쓰는 local Provider 후보의 라이선스·AudioSet→canonical mapping,
+  WAV decode/device/resource/effective revision을 조사한 뒤 lazy implementation과 offline/model test 추가
 
 ### 2026-08-19 — Phase 7 내장 자막·챕터 Artifact·timeline 통합
 

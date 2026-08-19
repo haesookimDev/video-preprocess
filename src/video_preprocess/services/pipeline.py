@@ -19,7 +19,10 @@ from video_preprocess.engine import (
     RetryPolicy,
 )
 from video_preprocess.executors import CancellationToken
-from video_preprocess.inference import InferenceDeploymentSettings
+from video_preprocess.inference import (
+    AUDIO_EVENT_LABELS,
+    InferenceDeploymentSettings,
+)
 from video_preprocess.engine.planner import ExecutionPlan
 from video_preprocess.tokenization import sentence_transformer_tokenizer_model
 
@@ -40,6 +43,12 @@ class PipelineSettings:
     keyframes_per_scene: int = 1
     vad_min_silence_ms: int = 500
     vad_speech_pad_ms: int = 200
+    audio_event_mode: str = "disabled"
+    audio_event_model: str = "audio-event-classifier"
+    audio_event_labels: tuple[str, ...] = AUDIO_EVENT_LABELS
+    audio_event_min_confidence: float = 0.5
+    audio_event_window_sec: float = 5.0
+    audio_event_hop_sec: float = 2.5
     stt_merge_gap_sec: float = 0.5
     whisper_model: str = "base"
     language: str | None = None
@@ -55,6 +64,57 @@ class PipelineSettings:
     context_tokenizer_model: str | None = None
 
     def __post_init__(self) -> None:
+        if (
+            not isinstance(self.audio_event_mode, str)
+            or self.audio_event_mode not in {"disabled", "all"}
+        ):
+            raise ValueError("audio_event_mode must be disabled or all")
+        if (
+            not isinstance(self.audio_event_model, str)
+            or not self.audio_event_model.strip()
+        ):
+            raise ValueError("audio_event_model must be a non-empty string")
+        normalized_audio_labels = []
+        if (
+            isinstance(self.audio_event_labels, (str, bytes))
+            or not isinstance(self.audio_event_labels, Sequence)
+        ):
+            raise ValueError("audio_event_labels must be a sequence")
+        for label in self.audio_event_labels:
+            if label not in AUDIO_EVENT_LABELS:
+                raise ValueError("audio_event_labels must use taxonomy v1")
+            if label not in normalized_audio_labels:
+                normalized_audio_labels.append(label)
+        if not normalized_audio_labels:
+            raise ValueError("audio_event_labels must not be empty")
+        object.__setattr__(
+            self,
+            "audio_event_labels",
+            tuple(normalized_audio_labels),
+        )
+        for field_name in (
+            "audio_event_min_confidence",
+            "audio_event_window_sec",
+            "audio_event_hop_sec",
+        ):
+            value = getattr(self, field_name)
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(float(value))
+            ):
+                raise ValueError(f"{field_name} must be a finite number")
+            object.__setattr__(self, field_name, float(value))
+        if not 0 <= self.audio_event_min_confidence <= 1:
+            raise ValueError(
+                "audio_event_min_confidence must be between 0 and 1"
+            )
+        if self.audio_event_window_sec <= 0:
+            raise ValueError("audio_event_window_sec must be positive")
+        if not 0 < self.audio_event_hop_sec <= self.audio_event_window_sec:
+            raise ValueError(
+                "audio_event_hop_sec must be positive and not exceed window"
+            )
         if (
             not isinstance(self.ocr_mode, str)
             or self.ocr_mode not in {"disabled", "all", "caption-hints"}
@@ -133,6 +193,16 @@ class PipelineSettings:
                 "vad_min_silence_ms": self.vad_min_silence_ms,
                 "vad_speech_pad_ms": self.vad_speech_pad_ms,
             },
+            "05_audio_events": {
+                "audio_event_mode": self.audio_event_mode,
+                "audio_event_model": self.audio_event_model,
+                "audio_event_labels": list(self.audio_event_labels),
+                "audio_event_min_confidence": (
+                    self.audio_event_min_confidence
+                ),
+                "audio_event_window_sec": self.audio_event_window_sec,
+                "audio_event_hop_sec": self.audio_event_hop_sec,
+            },
             "06_stt": {
                 "stt_merge_gap_sec": self.stt_merge_gap_sec,
                 "language": self.language,
@@ -160,6 +230,9 @@ class PipelineSettings:
     @staticmethod
     def model_bindings() -> dict[str, dict[str, str]]:
         return {
+            "05_audio_events": {
+                "audio_event": "audio_event.default",
+            },
             "05_vad": {"vad": "vad.default"},
             "06_stt": {"stt": "stt.default"},
             "07_diarize": {"diarization": "diarization.default"},

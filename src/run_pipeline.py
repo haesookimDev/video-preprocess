@@ -84,6 +84,57 @@ def main() -> int:
         help="local caption ordered chunk 크기 (기본: 4)",
     )
     parser.add_argument(
+        "--audio-event-mode",
+        choices=("disabled", "all"),
+        default="disabled",
+        help="비음성 오디오 이벤트 검출 (기본: disabled)",
+    )
+    parser.add_argument(
+        "--audio-event-model",
+        default="audio-event-classifier",
+        help="audio_event.default가 제공할 model 이름",
+    )
+    parser.add_argument(
+        "--audio-event-label",
+        action="append",
+        default=[],
+        help="audio-events-v1 label. 여러 번 지정 가능 (기본: 전체)",
+    )
+    parser.add_argument(
+        "--audio-event-min-confidence",
+        type=float,
+        default=0.5,
+        help="오디오 이벤트 confidence 하한 0~1 (기본: 0.5)",
+    )
+    parser.add_argument(
+        "--audio-event-window-sec",
+        type=float,
+        default=5.0,
+        help="오디오 이벤트 분류 window 초 (기본: 5.0)",
+    )
+    parser.add_argument(
+        "--audio-event-hop-sec",
+        type=float,
+        default=2.5,
+        help="오디오 이벤트 분류 hop 초 (기본: 2.5)",
+    )
+    parser.add_argument(
+        "--audio-event-batch-size",
+        type=int,
+        default=8,
+        help="오디오 이벤트 HTTP ordered chunk 크기 (기본: 8)",
+    )
+    parser.add_argument("--audio-event-endpoint", default=None,
+                        help="audio_event.default HTTP Inference v1 endpoint")
+    parser.add_argument("--audio-event-token-env", default=None,
+                        help="오디오 이벤트 HTTP bearer token 환경변수 이름")
+    parser.add_argument(
+        "--audio-event-artifact-namespace",
+        action="append",
+        default=[],
+        help="원격 오디오 이벤트 Provider가 접근할 Artifact namespace",
+    )
+    parser.add_argument(
         "--ocr-mode",
         choices=("disabled", "all", "caption-hints"),
         default="disabled",
@@ -175,9 +226,19 @@ def main() -> int:
     if not args.video.exists():
         print(f"오류: 영상 파일이 없습니다: {args.video}", file=sys.stderr)
         return 1
+    if args.audio_event_mode != "disabled" and (
+        args.audio_event_endpoint is None
+    ):
+        print(
+            "오류: 오디오 이벤트 활성화에는 "
+            "--audio-event-endpoint가 필요합니다",
+            file=sys.stderr,
+        )
+        return 2
 
     # 무거운 단계 모듈은 runtime factory가 실제 실행 시점에만 로드한다.
     from video_preprocess.engine import DAGPlanner, create_default_registry
+    from video_preprocess.inference import AUDIO_EVENT_LABELS
     from pipeline.deployment import inference_deployments_from_environment
     from video_preprocess.services import (
         LocalPipelineRuntimeFactory,
@@ -191,14 +252,19 @@ def main() -> int:
     try:
         deployments = inference_deployments_from_environment(
             endpoints={
+                "audio_event.default": args.audio_event_endpoint,
                 "embedding.default": args.embedding_endpoint,
                 "ocr.default": args.ocr_endpoint,
             },
             token_envs={
+                "audio_event.default": args.audio_event_token_env,
                 "embedding.default": args.embedding_token_env,
                 "ocr.default": args.ocr_token_env,
             },
             artifact_namespaces={
+                "audio_event.default": (
+                    args.audio_event_artifact_namespace
+                ),
                 "embedding.default": args.embedding_artifact_namespace,
                 "ocr.default": args.ocr_artifact_namespace,
             },
@@ -217,6 +283,16 @@ def main() -> int:
             retry_backoff_sec=args.retry_backoff_sec,
             deployments=deployments,
             settings=PipelineSettings(
+                audio_event_mode=args.audio_event_mode,
+                audio_event_model=args.audio_event_model,
+                audio_event_labels=tuple(
+                    args.audio_event_label
+                ) or AUDIO_EVENT_LABELS,
+                audio_event_min_confidence=(
+                    args.audio_event_min_confidence
+                ),
+                audio_event_window_sec=args.audio_event_window_sec,
+                audio_event_hop_sec=args.audio_event_hop_sec,
                 whisper_model=args.whisper_model,
                 language=args.language,
                 scene_threshold=args.scene_threshold,
@@ -241,6 +317,7 @@ def main() -> int:
                 executor_max_concurrency=args.executor_max_concurrency,
                 caption_device=args.caption_device,
                 caption_batch_size=args.caption_batch_size,
+                audio_event_batch_size=args.audio_event_batch_size,
                 ocr_command=args.ocr_command,
                 ocr_batch_size=args.ocr_batch_size,
             ),
@@ -271,6 +348,9 @@ def main() -> int:
                     "local_inference": {
                         "caption_device": args.caption_device,
                         "caption_batch_size": args.caption_batch_size,
+                        "audio_event_batch_size": (
+                            args.audio_event_batch_size
+                        ),
                         "ocr_command": args.ocr_command,
                         "ocr_batch_size": args.ocr_batch_size,
                     },

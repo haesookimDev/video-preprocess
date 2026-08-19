@@ -319,7 +319,7 @@ RunStore가 주입되면 Engine은 시작, 각 Stage terminal과 run terminal �
 [`ADR-0013`](./adr/0013-pipeline-engine-run-journal-and-cache-resume.md),
 [`ADR-0029`](./adr/0029-dependency-ready-bounded-local-concurrency.md)에 기록한다.
 
-### 4.6 Legacy 01~11 + embedded text/OCR compatibility binding
+### 4.6 Legacy 01~11 + embedded text/audio events/OCR compatibility binding
 
 `LegacyStageTaskRunner`는 기존 `run(ctx)` Stage를 LocalExecutor에 연결하는 migration adapter다.
 task의 Stage/version, logical input, config와 model binding key를 exact match하고, legacy Stage가
@@ -336,6 +336,7 @@ task의 Stage/version, logical input, config와 model binding key를 exact match
 | `03_keyframes` | `keyframes` JSON, deterministic `keyframe_images` ZIP |
 | `04_audio` | `audio` WAV와 `audio_metadata` JSON |
 | `04_embedded_text` | `embedded_text` JSON |
+| `05_audio_events` | `audio_events` JSON |
 
 no-audio에서는 `audio`가 `audio_metadata` JSON sentinel과 같은 ArtifactRef를 사용한다. 03의 가변
 JPEG sidecar는 정렬·고정 metadata ZIP으로 묶어 manifest에서 누락/변조를 검증한다. 이 계약
@@ -366,7 +367,7 @@ version 상승이 기존 cache를 무효화하고 새 input checksum이 downstre
 version은 기존 가변 집합 계약을 유지한다. adaptive 결정은 [`ADR-0030`](./adr/0030-duration-adaptive-keyframes-and-scene-caption-summary.md),
 중복 제거 결정은 [`ADR-0031`](./adr/0031-within-scene-perceptual-keyframe-deduplication.md)에 기록한다.
 
-05~08 model Stage는 task config와 `vad.default`, `stt.default`, `diarization.default`,
+05~08 model Stage는 task config와 `audio_event.default`, `vad.default`, `stt.default`, `diarization.default`,
 `caption.default`, `ocr.default` binding을 exact match한다. 성공 JSON의
 provider/model/revision/runtime을 slot별
 `ModelExecution`으로 변환하고 필수 metadata가 없으면 실패한다. no-audio, no-speech, optional
@@ -408,7 +409,7 @@ skipped result를 반환한다. `all`은 모든 최종 keyframe, `caption-hints`
 
 10은 `embedding.default`를 exact match하고 `embed_model` config를 task/cache semantics에 포함한다.
 성공한 index summary의 embed provider/model/revision/runtime은 `embedding` slot의
-`ModelExecution`으로 변환한다. 세 binding 묶음과 전체 13단계 binding은 각각 생성할 수 있고,
+`ModelExecution`으로 변환한다. 세 binding 묶음과 전체 14단계 binding은 각각 생성할 수 있고,
 전체 registry는 서로 다른 Stage가 사용하는 config field를 분리하고 binding별 잠금으로 적용·복원을
 보호해 독립 Stage 본문을 병렬 실행할 수 있다. 상세 결정은
 [`ADR-0016`](./adr/0016-legacy-final-stage-and-pipeline-bindings.md)에 기록한다.
@@ -452,6 +453,15 @@ scene card의 `subtitles`는 source field 전체를, `subtitle_text`는 ordered 
 static/query context에 additive하게 포함한다. 09/10/11 version 상승으로 기존 cache는 한 번
 무효화되며 이 slice는 자막 품질을 근거로 STT를 자동 skip하지 않는다.
 
+독립 `05_audio_events` version `1.0.0`은 `audio`, `audio_metadata`를 입력으로 받고
+`audio_event.default`를 exact match한다. 기본 disabled와 no-audio는 각각
+`AUDIO_EVENTS_DISABLED`, `NO_AUDIO` skipped Artifact를 만들며 Provider를 호출하지 않는다. 성공
+JSON의 effective model은 `audio_event` slot로 정규화한다. 현재 09 version `1.5.0`은 event를 같은
+최대 겹침·중점 규칙으로 scene 하나에 배정하고 전체 `audio_events`와 ordered unique
+`audio_event_text`를 추가한다. 10/11 version `1.4.0`과 QueryService는 label을 검색하고 context에
+label/confidence를 표시한다. 상세 결정은
+[`ADR-0035`](./adr/0035-optional-audio-event-provider-and-stage.md)에 기록한다.
+
 ### 4.7 Pipeline Application Service
 
 `PipelineRunRequest`는 local video/output 경로, pipeline 설정, 선택 실행 범위, 선택적 run/trace ID와
@@ -469,6 +479,11 @@ Artifact namespace는 composition 배포 설정이며 PipelineSettings에 넣지
 `--ocr-mode`, 반복 가능한 `--ocr-language`, `--ocr-model`, confidence/orientation과 local 또는 HTTP
 배포 option을 제공한다. 공개 Pipeline API는 settings만 받고 서버 운영자가 alias deployment를
 결정한다.
+
+`PipelineSettings.audio_event_mode`은 `disabled|all`, label은 `audio-events-v1`의 중복 없는 부분집합,
+confidence는 0~1이며 positive `hop_sec <= window_sec`를 요구한다. 이 값과 model은 task/cache 의미다.
+service batch, endpoint, token과 Artifact namespace는 composition 배포 설정이다. 활성화에는 현재
+endpoint가 필수이고 기본 disabled에서는 local Provider나 모델 다운로드가 필요 없다.
 
 local runtime은 video bytes를 `00_input/`에 원자적으로 publish하고 output root별 stable artifact
 namespace를 사용한다. 부분 실행 boundary는 명시한 같은 `run_id`의 RunManifest와 StageManifest에서
@@ -948,8 +963,9 @@ network-free suite와 분리한다.
 
 `PipelineSettings`의 model 이름은 Stage 알고리즘 설정이고 `PipelineRunRequest.deployments`는 실행
 환경 설정이다. `InferenceDeploymentSettings.http_providers`에 alias가 있으면 HTTP, 없으면 local
-binding을 조합한다. 현재 pipeline composition에 적용한 alias는 `embedding.default`와
-`ocr.default`다.
+binding을 조합한다. 현재 pipeline composition에 적용한 alias는 `embedding.default`,
+`ocr.default`, `audio_event.default`다. 다만 audio event는 local Provider가 아직 없어 mode를
+활성화할 때 explicit HTTP endpoint가 필수다.
 
 `HTTPProviderSettings`는 endpoint, remote Artifact namespace allowlist, request/operation timeout,
 poll 간격, capability TTL과 retry policy를 가진다. bearer token은 runtime field로만 주입하며
@@ -957,7 +973,7 @@ poll 간격, capability TTL과 retry policy를 가진다. bearer token은 runtim
 수는 있지만 URL credential, query와 fragment는 허용하지 않는다. 상세 결정은
 [`ADR-0023`](./adr/0023-alias-based-inference-deployment-settings.md)에 기록한다.
 
-CLI와 pipeline server의 환경 adapter는 embedding/OCR endpoint, token environment variable과
+CLI와 pipeline server의 환경 adapter는 embedding/OCR/audio-event endpoint, token environment variable과
 Artifact namespace를 alias map 하나로 합친다. 원격 OCR을 선택하면 local Tesseract command 검사를
 건너뛰지만 endpoint capability가 OCR task와 `ocr.default`를 제공하지 않으면 추론 전에 명확히
 실패한다. local/HTTP 사이의 조용한 fallback은 하지 않는다.

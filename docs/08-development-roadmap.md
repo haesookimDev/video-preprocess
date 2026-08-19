@@ -1,6 +1,6 @@
 # 엔진·실행기 분리 개발 로드맵
 
-상태: **Phase 7 진행 중 — 내장 자막·챕터 통합 완료, 다음 오디오 이벤트 provider**
+상태: **Phase 7 진행 중 — 오디오 이벤트 계약·HTTP Stage 통합 완료, 다음 local Provider**
 기준일: 2026-08-19
 대상 설계: [`06-target-architecture.md`](./06-target-architecture.md)  
 공개 계약: [`07-execution-inference-contracts.md`](./07-execution-inference-contracts.md)
@@ -15,7 +15,7 @@
 
 - 기존 로컬 CLI와 산출물 호환
 - Engine과 LocalExecutor 분리
-- STT, diarization, caption, OCR, embedding의 local/HTTP provider 선택
+- STT, diarization, caption, OCR, audio event, embedding의 local/HTTP provider 선택
 - manifest 기반 캐시와 단계별 선택 실행
 - 다른 서비스가 API 또는 queue adapter로 실행·상태·결과 조회
 - 검색·긴 영상 개선이 새 계약을 통해 확장 가능
@@ -395,7 +395,7 @@ static/API query context가 지정한 256 token 예산을 넘지 않음을 확�
 4. [x] caption device 자동 선택과 batch 크기 tuning
 5. [x] OCR provider
 6. [x] 내장 자막·챕터 활용
-7. [ ] 오디오 이벤트 provider
+7. [ ] 오디오 이벤트 provider — 공통 계약·HTTP/disabled Stage 완료, local Provider 남음
 8. [ ] 질의 기반 2-pass 고품질 재처리
 9. [ ] 필요 시 RemoteExecutor와 분산 worker
 
@@ -446,11 +446,17 @@ context에 전달한다. 기본 DAG는 13개 Stage이며 실제 FFmpeg 합성 fi
 검증했다. 결정은
 [`ADR-0034`](./adr/0034-embedded-subtitle-and-chapter-artifact.md)에 기록한다.
 
-다음 slice는 오디오 이벤트 provider다. 먼저 음악·박수·경보처럼 음성이 아닌 시간 구간의 공통
-InferenceTask/result schema, label taxonomy·confidence·겹침 정책, audio ArtifactRef batch와
-local/HTTP 배포 경계를 fake contract/ADR로 고정한다. 독립 Stage는 `04_audio` 뒤에서 실행하고
-09/10/11에는 source/confidence를 잃지 않는 additive field로 병합해야 하며, 기본 모델 의존성·실행
-비용을 강제하지 않는 disabled sentinel부터 구현한다.
+일곱 번째 slice의 첫 부분도 완료했다. `audio_event_detection` task, `audio-events-v1` taxonomy,
+window ArtifactRef batch와 `merge-same-label-overlap-v1`을 Service/fake contract로 고정했다. 독립
+`05_audio_events` version `1.0.0`은 기본 disabled sentinel이며 explicit `audio_event.default` endpoint를
+HTTP Inference v1로 호출한다. 09 version `1.5.0`, 10/11 version `1.4.0`은 source window/confidence를
+보존해 timeline·index·static/query context에 additive하게 전달하고 기본 DAG는 14개 Stage다. 결정은
+[`ADR-0035`](./adr/0035-optional-audio-event-provider-and-stage.md)에 기록한다.
+
+다음 slice는 같은 계약의 local audio event Provider다. 후보 모델의 라이선스·AudioSet label mapping,
+16 kHz WAV decode, device/resource profile과 effective revision을 먼저 검증하고 lazy load·offline fake와
+명시적 model integration test를 추가한다. local/HTTP 선택은 composition root에만 두며 기본 disabled를
+유지한다.
 
 ## 12. 테스트 전략
 

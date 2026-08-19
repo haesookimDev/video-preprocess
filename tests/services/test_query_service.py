@@ -87,6 +87,10 @@ def write_query_fixture(root: Path) -> None:
             "ocr_text": "OPENAI dashboard",
             "chapter": {"title": "Dashboard chapter"},
             "subtitle_text": "Embedded welcome",
+            "audio_event_text": "music",
+            "audio_events": [
+                {"label": "music", "confidence": 0.94}
+            ],
             "transcript": [
                 {
                     "start_sec": 11.0,
@@ -179,6 +183,7 @@ def test_query_service_returns_ranked_matches_and_context(tmp_path: Path) -> Non
     assert "화면 텍스트: OPENAI dashboard" in result.context
     assert "챕터: Dashboard chapter" in result.context
     assert "내장 자막: Embedded welcome" in result.context
+    assert "오디오 이벤트: music (0.94)" in result.context
     assert result.to_dict()["matches"][0]["scene_id"] == 2
     assert str(tmp_path) not in str(result.to_dict())
 

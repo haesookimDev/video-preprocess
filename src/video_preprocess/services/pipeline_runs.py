@@ -199,6 +199,9 @@ class PipelineRunSubmission:
             name: getattr(self.settings, name)
             for name in self.settings.__dataclass_fields__
         }
+        settings["audio_event_labels"] = list(
+            self.settings.audio_event_labels
+        )
         settings["ocr_languages"] = list(self.settings.ocr_languages)
         return {
             "schema_version": SCHEMA_VERSION,
@@ -1129,6 +1132,7 @@ def _validate_pipeline_settings(settings: PipelineSettings) -> None:
     for field_name in (
         "whisper_model",
         "caption_model",
+        "audio_event_model",
         "ocr_model",
         "embed_model",
         "diarize_model",
@@ -1136,6 +1140,28 @@ def _validate_pipeline_settings(settings: PipelineSettings) -> None:
         _required_text(getattr(settings, field_name), field_name)
     _optional_text(settings.language, "language")
     _optional_text(settings.context_tokenizer_model, "context_tokenizer_model")
+    if settings.audio_event_mode not in {"disabled", "all"}:
+        raise ValueError("audio_event_mode is invalid")
+    if not settings.audio_event_labels:
+        raise ValueError("audio_event_labels must not be empty")
+    for label in settings.audio_event_labels:
+        _required_text(label, "audio_event_labels")
+    confidence = _non_negative_number(
+        settings.audio_event_min_confidence,
+        "audio_event_min_confidence",
+    )
+    if confidence > 1:
+        raise ValueError("audio_event_min_confidence must be at most 1")
+    window = _positive_number(
+        settings.audio_event_window_sec,
+        "audio_event_window_sec",
+    )
+    hop = _positive_number(
+        settings.audio_event_hop_sec,
+        "audio_event_hop_sec",
+    )
+    if hop > window:
+        raise ValueError("audio_event_hop_sec must not exceed window")
     if settings.ocr_mode not in {"disabled", "all", "caption-hints"}:
         raise ValueError("ocr_mode is invalid")
     if not settings.ocr_languages:

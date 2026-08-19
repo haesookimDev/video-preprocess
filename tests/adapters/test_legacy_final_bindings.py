@@ -24,6 +24,11 @@ from video_preprocess.storage import LocalArtifactStore, LegacyOutputAdapter
 
 
 MODEL_METADATA = {
+    "05_audio_events": (
+        "http.audio-event",
+        "audio-event/model",
+        "audio-event-rev",
+    ),
     "05_vad": ("local.vad", "silero-vad-v6", "vad-rev"),
     "06_stt": ("local.stt", "base", "stt-rev"),
     "07_diarize": (
@@ -136,6 +141,16 @@ def full_fake_modules():
         )
         return {"segment_count": 1}
 
+    def audio_events(ctx):
+        write_model_output(
+            ctx,
+            "05_audio_events",
+            "audio_events.json",
+            executed=True,
+            events=[],
+        )
+        return {"audio_event_count": 0}
+
     def stt(ctx):
         write_model_output(
             ctx,
@@ -234,6 +249,7 @@ def full_fake_modules():
         keyframes,
         audio,
         embedded_text,
+        audio_events,
         vad,
         stt,
         diarize,
@@ -249,6 +265,7 @@ def full_fake_modules():
         "03_keyframes",
         "04_audio",
         "04_embedded_text",
+        "05_audio_events",
         "05_vad",
         "06_stt",
         "07_diarize",
@@ -276,6 +293,14 @@ def pipeline_options():
                 "vad_min_silence_ms": 500,
                 "vad_speech_pad_ms": 200,
             },
+            "05_audio_events": {
+                "audio_event_mode": "all",
+                "audio_event_model": "audio-event/model",
+                "audio_event_labels": ["music", "applause"],
+                "audio_event_min_confidence": 0.5,
+                "audio_event_window_sec": 5.0,
+                "audio_event_hop_sec": 2.5,
+            },
             "06_stt": {
                 "stt_merge_gap_sec": 0.5,
                 "language": None,
@@ -300,6 +325,9 @@ def pipeline_options():
             },
         },
         "model_bindings": {
+            "05_audio_events": {
+                "audio_event": "audio_event.default",
+            },
             "05_vad": {"vad": "vad.default"},
             "06_stt": {"stt": "stt.default"},
             "07_diarize": {"diarization": "diarization.default"},
@@ -354,8 +382,8 @@ def test_full_default_dag_runs_through_one_legacy_binding_registry(
         ref for name, ref in result.artifacts.items() if name != "video"
     )
     assert all(store.verify(ref).ok for ref in generated)
-    assert result.stages[11].result.models[0].slot == "embedding"
-    assert result.stages[11].result.models[0].model == "embedding/model"
+    assert result.stages[12].result.models[0].slot == "embedding"
+    assert result.stages[12].result.models[0].model == "embedding/model"
     assert context.embed_model == "paraphrase-multilingual-MiniLM-L12-v2"
 
 
@@ -429,6 +457,7 @@ def test_timeline_requires_json_and_markdown_outputs(tmp_path: Path) -> None:
         "scenes": "02_scenes/scenes.json",
         "keyframes": "03_keyframes/keyframes.json",
         "embedded_text": "04_embedded_text/embedded_text.json",
+        "audio_events": "05_audio_events/audio_events.json",
         "transcript": "06_stt/transcript.json",
         "diarization": "07_diarize/diarization.json",
         "captions": "08_captions/captions.json",

@@ -1,6 +1,6 @@
 # 파이프라인 단계별 처리 로직·사용 모델
 
-구현된 13단계 파이프라인의 처리 흐름. **파란 계열 = 규칙 기반(모델 없음)**,
+구현된 14단계 파이프라인의 처리 흐름. **파란 계열 = 규칙 기반(모델 없음)**,
 **보라 계열 = ML 모델 사용** 단계이다.
 
 ```mermaid
@@ -28,12 +28,15 @@ flowchart TD
         S05["<b>05_vad</b><br/>음성 확률로 발화 구간만 검출<br/>무음·비음성 제거 → STT 대상 축소<br/><i>모델: Silero VAD (ONNX)</i>"]
         S06["<b>06_stt</b><br/>VAD 구간을 병합(gap≤0.5s) 후<br/>구간별 전사, 타임스탬프 원본 보정<br/><i>모델: faster-whisper base/small</i>"]
         S07["<b>07_diarize</b><br/>화자 임베딩 클러스터링으로<br/>발화 턴별 화자 라벨 부여<br/><i>모델: pyannote community-1</i>"]
+        S05E["<b>05_audio_events</b><br/>선택적 비음성 event window 분류<br/><i>HTTP audio_event.default, 기본 disabled</i>"]
         S04 --> S05 --> S06
+        S04 --> S05E
         S04 --> S07
     end
 
     S08O --> S09
     S04T --> S09
+    S05E --> S09
     S07 --> S09
     S06 --> S09
 
@@ -56,7 +59,7 @@ flowchart TD
     classDef ml fill:#ede9fe,stroke:#8b5cf6,color:#3b2a6e
     classDef io fill:#f1f5f9,stroke:#64748b,color:#334155
     class S01,S02,S03,S04,S04T,S09,S11 rule
-    class S05,S06,S07,S08,S08O,S10,Q ml
+    class S05,S05E,S06,S07,S08,S08O,S10,Q ml
     class V,OUT io
 ```
 
@@ -69,13 +72,14 @@ flowchart TD
 | 03_keyframes | 8초·20초 경계로 1~3개 내부 균등 후보를 추출하고 같은 scene의 64-bit DCT pHash 거리가 6 이하면 제거. 최소 1장 보존 | ffmpeg `-ss`, Pillow | sample 후보 6장→4장 |
 | 04_audio | 오디오 트랙 분리 후 모든 음성 모델의 공통 입력인 16kHz mono PCM으로 정규화 | ffmpeg | 0.1s |
 | 04_embedded_text | text subtitle stream을 WebVTT cue로 변환하고 `[start,end)`·언어·source ID와 chapter를 정규화. bitmap/없음은 stable skip | ffmpeg, ffprobe metadata | 합성 MP4 cue 2·chapter 2 추출 |
+| 05_audio_events | 기본 disabled. WAV ArtifactRef와 ordered window batch로 canonical 비음성 event 검출·병합 | 주입된 `audio_event.default` HTTP Provider | disabled 0s |
 | 05_vad | WAV ArtifactRef와 silence/padding option을 VAD Provider에 전달. 음성 구간만 추출해 Whisper 무음 환각 방지 | Local Silero VAD Provider (faster-whisper 내장 ONNX) | 0.1s (+ 첫 session load) |
 | 06_stt | 인접 VAD 구간 병합(gap ≤ 0.5s) 후 WAV ArtifactRef와 구간을 STT Provider에 전달. Provider가 원본 시간축으로 보정 | Local faster-whisper Provider `base`(기본)/`small` (CTranslate2 int8) | 5.6s / 13.9s |
 | 07_diarize | WAV ArtifactRef를 Diarization Provider에 전달. Provider가 화자 임베딩·클러스터링 후 발화 턴별 라벨 반환 | Local pyannote Provider `speaker-diarization-community-1` (HF 게이트) | 27.9s |
 | 08_captions | ordered keyframe ArtifactRef 집합을 Provider capability·설정 batch로 순차 처리하고 flat frame caption과 씬별 group을 함께 생성 | Local BLIP Provider `image-captioning-base`, auto device | sample 4장 CPU batch 4 inference 2.45s |
 | 08_ocr | 기본 disabled. 모든 keyframe 또는 caption hint 후보를 ordered OCR하고 word confidence·pixel bbox 보존 | 주입된 `ocr.default` Local Tesseract/HTTP Provider | sample 4장 local batch 4, 0.6s |
-| 09_timeline | `[start,end)` 씬에 전사·자막을 단일 배정하고 chapter 하나와 caption·OCR 전체를 보존. scalar summary는 ordered unique join | 규칙 기반 | 0.0s |
-| 10_index | 씬 카드 텍스트(캡션+OCR+챕터+내장 자막+전사)를 ① NFKC 정규화 단어·문자 2~3-gram FTS5 역색인 ② 정규화 벡터로 이중 저장 | 주입된 `embedding.default` Local/HTTP Provider, SQLite FTS5 | local 기준 0.2s |
+| 09_timeline | `[start,end)` 씬에 전사·자막·오디오 event를 단일 배정하고 chapter, caption·OCR 전체를 보존 | 규칙 기반 | 0.0s |
+| 10_index | 씬 카드 텍스트(캡션+OCR+챕터+내장 자막+오디오 event+전사)를 FTS5·embedding으로 이중 저장 | 주입된 `embedding.default` Local/HTTP Provider, SQLite FTS5 | local 기준 0.2s |
 | 11_context | 포맷 규칙·메타데이터·씬 카드를 조립하고 설정 시 target tokenizer 실제 token budget에 맞춰 축약·제외 | 규칙 기반 + tokenizer | 0.0s (+ 첫 tokenizer load) |
 | query.py | hybrid top-k/no-answer 뒤 인접 씬을 dedup 확장하고 실제 token budget에서 우선순위별 축약·제외 | index와 같은 `embedding.default` Local/HTTP Provider + target tokenizer | local cold start ~10s |
 
@@ -123,6 +127,13 @@ language와 구간을 보존한다. bitmap/unknown codec은 `UNSUPPORTED_SUBTITL
 없으면 `NO_EMBEDDED_TEXT`로 Artifact를 publish한 뒤 skipped가 된다. 상세 결정은
 [`ADR-0034`](./adr/0034-embedded-subtitle-and-chapter-artifact.md)를 따른다.
 
+`05_audio_events/audio_events.json`은 기본 `disabled`에서 `AUDIO_EVENTS_DISABLED` sentinel을
+publish한다. 활성화하면 16 kHz WAV ArtifactRef와 반개구간 window batch를 `audio_event.default`에
+전달한다. `audio-events-v1` canonical label/confidence 응답에서 동일 label의 겹치거나 맞닿은 window만
+합치고 source window ID를 보존한다. 현재 활성화에는 explicit HTTP endpoint가 필요하며 local model은
+후속 구현이다. 상세 결정은
+[`ADR-0035`](./adr/0035-optional-audio-event-provider-and-stage.md)를 따른다.
+
 `06_stt/transcript.json`은 기존 segment 구조를 유지하며 실제 `provider`, model `revision`,
 `runtime`, 감지 언어 확률인 `language_probability`를 추가로 기록한다.
 
@@ -131,12 +142,14 @@ language와 구간을 보존한다. bitmap/unknown codec은 `UNSUPPORTED_SUBTITL
 씬 카드의 전사 줄에는 `source_segment_id`, `vad_source_ids`, `avg_logprob`, `no_speech_prob`를 가능한
 범위에서 보존하고, 씬과 전혀 겹치지 않은 source ID는 최상위 통계에 기록한다. 내장 자막 cue도
 같은 최대 겹침·중점 동률 규칙으로 씬 하나에만 들어가며 scene은 가장 많이 겹치는 chapter 하나를
-가진다. `subtitles`와 `chapter`는 원본 source identity를 보존하고 `subtitle_text`는 cue 순서의
+가진다. 오디오 event도 같은 규칙으로 scene 하나에 배정하며 전체 `audio_events`가 confidence와
+source window ID를 보존하고 `audio_event_text`는 ordered unique label 요약이다.
+`subtitles`와 `chapter`는 원본 source identity를 보존하고 `subtitle_text`는 cue 순서의
 중복 제거 문자열을 ` | `로 연결한다. scene card의
 `keyframes`·`visual_captions`·`visual_ocr`은 모든 시각 항목을 보존한다. 기존 `keyframe`은 중점에
 가장 가까운 frame, `caption`과 새 `ocr_text`는 frame 순서의 중복 제거 문자열을 ` | `로 연결한
 호환 요약이다. 단일 frame의 기존 값은 바뀌지 않는다. 10 index와 11 context/QueryService도 화면
-텍스트와 chapter title·내장 자막을 검색·컨텍스트에 포함한다.
+텍스트와 chapter title·내장 자막·오디오 event label/confidence를 검색·컨텍스트에 포함한다.
 
 `07_diarize/diarization.json`은 기존 speaker·turn 구조를 유지하며 실제 `provider`, model
 `revision`, `runtime`을 추가로 기록한다. HF token은 Provider 설정에만 존재하며 산출물이나

@@ -9,7 +9,9 @@ from urllib.parse import urlparse
 
 from video_preprocess.storage import ArtifactStore
 
+from .audio_event import AudioEventService
 from .embedding import EmbeddingService
+from .errors import ProviderConfigurationError
 from .gateway import InferenceGateway
 from .http import HTTPInferenceProvider, HTTPRetryPolicy
 from .ocr import OCRService
@@ -112,7 +114,7 @@ class HTTPProviderSettings:
 
 @dataclass(frozen=True, slots=True)
 class InferenceDeploymentSettings:
-    """Alias map; aliases absent from this map use their local provider."""
+    """Remote alias map; each task composer defines its local fallback."""
 
     http_providers: Mapping[str, HTTPProviderSettings] = field(
         default_factory=dict
@@ -227,6 +229,51 @@ def create_configured_ocr_service(
     gateway = InferenceGateway({alias: provider})
     return OCRService(
         gateway,
+        alias=alias,
+        model_name=model_name,
+        revision=revision or "default",
+        timeout_sec=remote.request_timeout_sec,
+        batch_size=max_batch_size,
+    )
+
+
+def create_configured_audio_event_service(
+    model_name: str,
+    *,
+    deployments: InferenceDeploymentSettings | None = None,
+    alias: str = "audio_event.default",
+    revision: str | None = None,
+    max_batch_size: int | None = None,
+) -> AudioEventService:
+    """Compose the current HTTP audio-event alias.
+
+    The service boundary is also valid for an in-process Provider. The default
+    runtime intentionally requires an explicit endpoint until a local model and
+    its taxonomy mapping are implemented.
+    """
+
+    selected = deployments or InferenceDeploymentSettings()
+    if not isinstance(selected, InferenceDeploymentSettings):
+        raise TypeError("deployments must be InferenceDeploymentSettings")
+    remote = selected.http_provider(alias)
+    if remote is None:
+        raise ProviderConfigurationError(
+            "audio_event.default requires an HTTP endpoint until a local "
+            "audio event provider is configured"
+        )
+    provider = HTTPInferenceProvider(
+        alias=alias,
+        endpoint=remote.endpoint,
+        auth_token=remote.auth_token,
+        allowed_artifact_namespaces=remote.allowed_artifact_namespaces,
+        operation_timeout_sec=remote.operation_timeout_sec,
+        poll_interval_sec=remote.poll_interval_sec,
+        max_poll_interval_sec=remote.max_poll_interval_sec,
+        capability_ttl_sec=remote.capability_ttl_sec,
+        retry_policy=remote.retry_policy,
+    )
+    return AudioEventService(
+        InferenceGateway({alias: provider}),
         alias=alias,
         model_name=model_name,
         revision=revision or "default",

@@ -47,6 +47,14 @@ def main() -> int:
     parser.add_argument("--executor-max-concurrency", type=int, default=1)
     parser.add_argument("--caption-device", default="auto")
     parser.add_argument("--caption-batch-size", type=int, default=4)
+    parser.add_argument("--audio-event-batch-size", type=int, default=8)
+    parser.add_argument("--audio-event-endpoint", default=None)
+    parser.add_argument("--audio-event-token-env", default=None)
+    parser.add_argument(
+        "--audio-event-artifact-namespace",
+        action="append",
+        default=[],
+    )
     parser.add_argument("--ocr-command", default="tesseract")
     parser.add_argument("--ocr-batch-size", type=int, default=4)
     parser.add_argument("--ocr-endpoint", default=None)
@@ -77,14 +85,19 @@ def main() -> int:
         token = _token_from_environment(args.auth_token_env, os.environ)
         deployments = inference_deployments_from_environment(
             endpoints={
+                "audio_event.default": args.audio_event_endpoint,
                 "embedding.default": args.embedding_endpoint,
                 "ocr.default": args.ocr_endpoint,
             },
             token_envs={
+                "audio_event.default": args.audio_event_token_env,
                 "embedding.default": args.embedding_token_env,
                 "ocr.default": args.ocr_token_env,
             },
             artifact_namespaces={
+                "audio_event.default": (
+                    args.audio_event_artifact_namespace
+                ),
                 "embedding.default": args.embedding_artifact_namespace,
                 "ocr.default": args.ocr_artifact_namespace,
             },
@@ -97,6 +110,7 @@ def main() -> int:
                 executor_max_concurrency=args.executor_max_concurrency,
                 caption_device=args.caption_device,
                 caption_batch_size=args.caption_batch_size,
+                audio_event_batch_size=args.audio_event_batch_size,
                 ocr_command=args.ocr_command,
                 ocr_batch_size=args.ocr_batch_size,
             ),

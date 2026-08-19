@@ -103,6 +103,53 @@ def test_pipeline_settings_normalizes_ocr_contract() -> None:
     assert settings.model_bindings()["08_ocr"] == {"ocr": "ocr.default"}
 
 
+def test_pipeline_settings_normalizes_audio_event_contract() -> None:
+    settings = PipelineSettings(
+        audio_event_mode="all",
+        audio_event_model="custom/audio",
+        audio_event_labels=("music", "music", "alarm"),
+        audio_event_min_confidence=0.7,
+        audio_event_window_sec=4,
+        audio_event_hop_sec=2,
+    )
+
+    assert settings.audio_event_labels == ("music", "alarm")
+    assert settings.stage_configs()["05_audio_events"] == {
+        "audio_event_mode": "all",
+        "audio_event_model": "custom/audio",
+        "audio_event_labels": ["music", "alarm"],
+        "audio_event_min_confidence": 0.7,
+        "audio_event_window_sec": 4.0,
+        "audio_event_hop_sec": 2.0,
+    }
+    assert settings.model_bindings()["05_audio_events"] == {
+        "audio_event": "audio_event.default"
+    }
+
+
+@pytest.mark.parametrize(
+    ("options", "message"),
+    [
+        ({"audio_event_mode": []}, "audio_event_mode"),
+        ({"audio_event_mode": "sometimes"}, "audio_event_mode"),
+        ({"audio_event_labels": ()}, "audio_event_labels"),
+        ({"audio_event_labels": ("speech",)}, "taxonomy"),
+        ({"audio_event_min_confidence": 1.1}, "min_confidence"),
+        ({"audio_event_window_sec": 0}, "window_sec"),
+        (
+            {"audio_event_window_sec": 1, "audio_event_hop_sec": 2},
+            "hop_sec",
+        ),
+    ],
+)
+def test_pipeline_settings_rejects_invalid_audio_event_contract(
+    options,
+    message,
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        PipelineSettings(**options)
+
+
 @pytest.mark.parametrize(
     ("options", "message"),
     [
@@ -285,6 +332,7 @@ def test_local_runtime_ingests_video_and_composes_all_bindings(
         "03_keyframes",
         "04_audio",
         "04_embedded_text",
+        "05_audio_events",
         "05_vad",
         "06_stt",
         "07_diarize",

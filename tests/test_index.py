@@ -51,6 +51,7 @@ def test_index_stage_keeps_sqlite_schema_with_provider_metadata(
                 "ocr_text": "OPENAI 화면",
                 "chapter": {"title": "시작 챕터"},
                 "subtitle_text": "내장 자막 내용",
+                "audio_event_text": "music | applause",
                 "transcript": [{"text": "첫 내용"}],
             },
             {
@@ -86,7 +87,8 @@ def test_index_stage_keeps_sqlite_schema_with_provider_metadata(
         db.close()
     assert result == {"card_count": 2, "embed_dim": 2}
     assert service.texts == [
-        "첫 장면\nOPENAI 화면\n시작 챕터\n내장 자막 내용\n첫 내용",
+        "첫 장면\nOPENAI 화면\n시작 챕터\n내장 자막 내용\n"
+        "music | applause\n첫 내용",
         "둘째 장면\n둘째 내용",
     ]
     assert meta["embed_model"] == "fake/model"

@@ -84,7 +84,7 @@ def test_force_dry_run_marks_every_planned_stage(
     assert run_pipeline.main() == 0
     payload = json.loads(capsys.readouterr().out)
 
-    assert len(payload["stages"]) == 13
+    assert len(payload["stages"]) == 14
     assert payload["force_stages"] == payload["stages"]
     assert payload["cache_decisions"][0]["status"] == "forced"
     assert payload["cache_decisions"][0]["will_execute"] is True
@@ -194,6 +194,7 @@ def test_caption_tuning_is_reported_by_dry_run(
     assert payload["local_inference"] == {
         "caption_device": "cpu",
         "caption_batch_size": 2,
+        "audio_event_batch_size": 8,
         "ocr_command": "tesseract",
         "ocr_batch_size": 4,
     }

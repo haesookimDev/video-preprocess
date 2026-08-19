@@ -17,6 +17,7 @@ from video_preprocess.executors import LocalExecutor
 from video_preprocess.inference import (
     GatewayEffectiveModelResolver,
     InferenceDeploymentSettings,
+    create_configured_audio_event_service,
     create_configured_embedding_service,
     create_configured_ocr_service,
 )
@@ -77,6 +78,7 @@ class LocalPipelineRuntimeFactory:
         executor_max_concurrency: int = 1,
         caption_device: str = "auto",
         caption_batch_size: int = 4,
+        audio_event_batch_size: int = 8,
         ocr_command: str = "tesseract",
         ocr_batch_size: int = 4,
     ) -> None:
@@ -109,6 +111,15 @@ class LocalPipelineRuntimeFactory:
             raise ValueError("caption_batch_size must be a positive integer")
         self.caption_device = caption_device.strip().lower()
         self.caption_batch_size = caption_batch_size
+        if (
+            isinstance(audio_event_batch_size, bool)
+            or not isinstance(audio_event_batch_size, int)
+            or audio_event_batch_size < 1
+        ):
+            raise ValueError(
+                "audio_event_batch_size must be a positive integer"
+            )
+        self.audio_event_batch_size = audio_event_batch_size
         if not isinstance(ocr_command, str) or not ocr_command.strip():
             raise ValueError("ocr_command must be a non-empty string")
         if (
@@ -156,6 +167,14 @@ class LocalPipelineRuntimeFactory:
             keyframes_per_scene=settings.keyframes_per_scene,
             vad_min_silence_ms=settings.vad_min_silence_ms,
             vad_speech_pad_ms=settings.vad_speech_pad_ms,
+            audio_event_mode=settings.audio_event_mode,
+            audio_event_model=settings.audio_event_model,
+            audio_event_labels=settings.audio_event_labels,
+            audio_event_min_confidence=(
+                settings.audio_event_min_confidence
+            ),
+            audio_event_window_sec=settings.audio_event_window_sec,
+            audio_event_hop_sec=settings.audio_event_hop_sec,
             stt_merge_gap_sec=settings.stt_merge_gap_sec,
             whisper_model=settings.whisper_model,
             language=settings.language,
@@ -189,6 +208,7 @@ class LocalPipelineRuntimeFactory:
             self.context_configurer(context, artifact_store)
         model_resolver = self._model_resolver(
             context.caption_service,
+            context.audio_event_service,
             context.ocr_service,
             context.stt_service,
             context.diarization_service,
@@ -243,6 +263,10 @@ class LocalPipelineRuntimeFactory:
         model_resolver = None
         if self._uses_default_inference:
             settings = request.settings
+            audio_event_service = self._audio_event_service(
+                settings,
+                request.deployments,
+            )
             model_resolver = self._model_resolver(
                 create_local_caption_service(
                     settings.caption_model,
@@ -250,6 +274,7 @@ class LocalPipelineRuntimeFactory:
                     device=self.caption_device,
                     max_batch_size=self.caption_batch_size,
                 ),
+                audio_event_service,
                 create_configured_ocr_service(
                     settings.ocr_model,
                     artifact_store,
@@ -292,6 +317,10 @@ class LocalPipelineRuntimeFactory:
             device=self.caption_device,
             max_batch_size=self.caption_batch_size,
         )
+        context.audio_event_service = self._audio_event_service(
+            context,
+            deployments,
+        )
         context.ocr_service = create_configured_ocr_service(
             context.ocr_model,
             artifact_store,
@@ -312,6 +341,15 @@ class LocalPipelineRuntimeFactory:
         context.embedding_service = create_configured_embedding_service(
             context.embed_model,
             deployments=deployments,
+        )
+
+    def _audio_event_service(self, settings, deployments):
+        if settings.audio_event_mode == "disabled":
+            return None
+        return create_configured_audio_event_service(
+            settings.audio_event_model,
+            deployments=deployments,
+            max_batch_size=self.audio_event_batch_size,
         )
 
     @staticmethod

@@ -19,6 +19,12 @@ from video_preprocess.storage import LocalArtifactStore, LegacyOutputAdapter
 
 
 MODEL_DATA = {
+    "05_audio_events": (
+        "audio_event",
+        "http.audio-event",
+        "audio-event/model",
+        "audio-event-rev",
+    ),
     "05_vad": ("vad", "local.vad", "silero-vad-v6", "vad-rev"),
     "06_stt": ("stt", "local.stt", "base", "stt-rev"),
     "07_diarize": (
@@ -59,6 +65,16 @@ def task(
 
 
 def fake_modules(restored: list[bool]):
+    def audio_events(ctx):
+        write_model_json(
+            ctx,
+            "05_audio_events/audio_events.json",
+            "05_audio_events",
+            executed=True,
+            events=[{"event_id": 1, "label": "music"}],
+        )
+        return {"audio_event_count": 1}
+
     def vad(ctx):
         write_model_json(
             ctx,
@@ -118,6 +134,10 @@ def fake_modules(restored: list[bool]):
         return {"ocr_image_count": 2}
 
     return {
+        "05_audio_events": SimpleNamespace(
+            NAME="05_audio_events",
+            run=audio_events,
+        ),
         "05_vad": SimpleNamespace(NAME="05_vad", run=vad),
         "06_stt": SimpleNamespace(NAME="06_stt", run=stt),
         "07_diarize": SimpleNamespace(NAME="07_diarize", run=diarize),
@@ -249,6 +269,23 @@ def test_model_bindings_publish_effective_models_and_restore_keyframes(
 
     async def scenario():
         executor = LocalExecutor(bindings)
+        audio_event_task = task(
+            "05_audio_events",
+            "1.0.0",
+            {"audio": audio, "audio_metadata": audio_metadata},
+            {
+                "audio_event_mode": "all",
+                "audio_event_model": "audio-event/model",
+                "audio_event_labels": ["music", "applause"],
+                "audio_event_min_confidence": 0.5,
+                "audio_event_window_sec": 5.0,
+                "audio_event_hop_sec": 2.5,
+            },
+            {"audio_event": "audio_event.default"},
+        )
+        audio_events = await executor.result(
+            await executor.submit(audio_event_task)
+        )
         vad_task = task(
             "05_vad",
             "1.0.0",
@@ -308,11 +345,12 @@ def test_model_bindings_publish_effective_models_and_restore_keyframes(
             {"ocr": "ocr.default"},
         )
         ocr = await executor.result(await executor.submit(ocr_task))
-        return vad, stt, diarization, captions, ocr
+        return audio_events, vad, stt, diarization, captions, ocr
 
     results = asyncio.run(scenario())
 
     assert bindings.names == (
+        "05_audio_events",
         "05_vad",
         "06_stt",
         "07_diarize",

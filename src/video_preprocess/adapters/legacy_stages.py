@@ -231,7 +231,7 @@ def create_legacy_model_bindings(
     *,
     stage_modules: Mapping[str, LegacyStageModule] | None = None,
 ) -> StageBindingRegistry:
-    """Bind provider-backed legacy Stages 05-08, including OCR."""
+    """Bind provider-backed legacy Stages 05-08, including audio events."""
 
     modules = (
         _load_model_modules()
@@ -239,6 +239,7 @@ def create_legacy_model_bindings(
         else dict(stage_modules)
     )
     expected_names = {
+        "05_audio_events",
         "05_vad",
         "06_stt",
         "07_diarize",
@@ -304,6 +305,7 @@ def create_legacy_pipeline_bindings(
         "03_keyframes",
         "04_audio",
         "04_embedded_text",
+        "05_audio_events",
         "05_vad",
         "06_stt",
         "07_diarize",
@@ -315,7 +317,7 @@ def create_legacy_pipeline_bindings(
     }
     if set(modules) != expected_names:
         raise ValueError(
-            "stage_modules must define the thirteen legacy pipeline Stages"
+            "stage_modules must define the fourteen legacy pipeline Stages"
         )
     _validate_modules(modules, expected_names)
     definitions = (
@@ -446,6 +448,23 @@ def _model_definitions(
     )
     return (
         LegacyStageDefinition(
+            name="05_audio_events",
+            stage_version="1.0.0",
+            module=modules["05_audio_events"],
+            inputs=(audio, audio_metadata),
+            config_fields=(
+                "audio_event_mode",
+                "audio_event_model",
+                "audio_event_labels",
+                "audio_event_min_confidence",
+                "audio_event_window_sec",
+                "audio_event_hop_sec",
+            ),
+            model_bindings={"audio_event": "audio_event.default"},
+            output_resolver=_audio_event_outputs,
+            outcome_resolver=_audio_event_outcome,
+        ),
+        LegacyStageDefinition(
             name="05_vad",
             stage_version="1.0.0",
             module=modules["05_vad"],
@@ -556,6 +575,12 @@ def _final_definitions(
             ctx.out_root / "04_embedded_text" / "embedded_text.json"
         ),
     )
+    audio_events = LegacyInputBinding(
+        "audio_events",
+        lambda ctx, task: (
+            ctx.out_root / "05_audio_events" / "audio_events.json"
+        ),
+    )
     timeline = LegacyInputBinding(
         "timeline",
         lambda ctx, task: ctx.out_root / "09_timeline" / "timeline.json",
@@ -563,12 +588,13 @@ def _final_definitions(
     return (
         LegacyStageDefinition(
             name="09_timeline",
-            stage_version="1.4.0",
+            stage_version="1.5.0",
             module=modules["09_timeline"],
             inputs=(
                 scenes,
                 keyframes,
                 embedded_text,
+                audio_events,
                 transcript,
                 diarization,
                 captions,
@@ -580,7 +606,7 @@ def _final_definitions(
         ),
         LegacyStageDefinition(
             name="10_index",
-            stage_version="1.3.0",
+            stage_version="1.4.0",
             module=modules["10_index"],
             inputs=(timeline,),
             config_fields=("embed_model",),
@@ -590,7 +616,7 @@ def _final_definitions(
         ),
         LegacyStageDefinition(
             name="11_context",
-            stage_version="1.3.0",
+            stage_version="1.4.0",
             module=modules["11_context"],
             inputs=(metadata, diarization, timeline),
             config_fields=("max_context_tokens", "context_tokenizer_model"),
@@ -723,6 +749,23 @@ def _vad_outputs(
             task,
             "vad_segments",
             "05_vad/vad_segments.json",
+            kind="json",
+            media_type="application/json",
+        )
+    }
+
+
+def _audio_event_outputs(
+    ctx: PipelineContext,
+    registrar: LegacyArtifactRegistrar,
+    task: StageTask,
+) -> Mapping[str, ArtifactRef]:
+    return {
+        "audio_events": _register(
+            registrar,
+            task,
+            "audio_events",
+            "05_audio_events/audio_events.json",
             kind="json",
             media_type="application/json",
         )
@@ -884,6 +927,32 @@ def _vad_outcome(
             reason="audio input has no audio stream",
         )
     return _model_outcome(payload, "vad")
+
+
+def _audio_event_outcome(
+    ctx: PipelineContext,
+    metrics: Mapping[str, object],
+) -> LegacyStageOutcome:
+    payload = ctx.load_json(
+        ctx.out_root / "05_audio_events" / "audio_events.json"
+    )
+    if not payload.get("executed"):
+        reason_code = payload.get("reason_code")
+        reason = payload.get("reason")
+        return LegacyStageOutcome(
+            status=StageStatus.SKIPPED,
+            reason_code=(
+                reason_code
+                if isinstance(reason_code, str) and reason_code.strip()
+                else "AUDIO_EVENTS_NOT_EXECUTED"
+            ),
+            reason=(
+                reason
+                if isinstance(reason, str) and reason.strip()
+                else "audio event detection was not executed"
+            ),
+        )
+    return _model_outcome(payload, "audio_event")
 
 
 def _embedded_text_outcome(
@@ -1250,6 +1319,7 @@ def _load_default_modules() -> dict[str, LegacyStageModule]:
 
 def _load_model_modules() -> dict[str, LegacyStageModule]:
     from pipeline.stages import (
+        s05_audio_events,
         s05_vad,
         s06_stt,
         s07_diarize,
@@ -1260,6 +1330,7 @@ def _load_model_modules() -> dict[str, LegacyStageModule]:
     return {
         module.NAME: module
         for module in (
+            s05_audio_events,
             s05_vad,
             s06_stt,
             s07_diarize,

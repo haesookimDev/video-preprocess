@@ -36,6 +36,8 @@ def _card_text(card: dict) -> str:
         parts.append(chapter["title"])
     if card.get("subtitle_text"):
         parts.append(card["subtitle_text"])
+    if card.get("audio_event_text"):
+        parts.append(card["audio_event_text"])
     parts.extend(line["text"] for line in card["transcript"])
     return "\n".join(parts)
 
