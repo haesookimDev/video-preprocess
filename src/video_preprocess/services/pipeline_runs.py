@@ -1107,13 +1107,16 @@ def _validate_pipeline_settings(settings: PipelineSettings) -> None:
         "stt_merge_gap_sec",
     ):
         _non_negative_number(getattr(settings, field_name), field_name)
-    for field_name in (
-        "min_scene_len_frames",
-        "keyframes_per_scene",
+    value = settings.min_scene_len_frames
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise ValueError("min_scene_len_frames must be a positive integer")
+    value = settings.keyframes_per_scene
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int)
+        or not 1 <= value <= 3
     ):
-        value = getattr(settings, field_name)
-        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
-            raise ValueError(f"{field_name} must be a positive integer")
+        raise ValueError("keyframes_per_scene must be between 1 and 3")
     if settings.max_context_tokens is not None:
         value = settings.max_context_tokens
         if isinstance(value, bool) or not isinstance(value, int) or value < 128:

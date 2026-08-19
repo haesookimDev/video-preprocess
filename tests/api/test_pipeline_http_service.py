@@ -138,6 +138,7 @@ def test_submission_parser_rejects_unknown_fields_and_invalid_settings() -> None
     for changes in (
         {**valid, "output_root": "/tmp/output"},
         {**valid, "settings": {"keyframes_per_scene": 0}},
+        {**valid, "settings": {"keyframes_per_scene": 4}},
         {**valid, "schema_version": "2"},
     ):
         try:

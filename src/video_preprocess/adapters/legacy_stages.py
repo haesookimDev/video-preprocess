@@ -374,7 +374,7 @@ def _media_definitions(
         ),
         LegacyStageDefinition(
             name="03_keyframes",
-            stage_version="1.1.0",
+            stage_version="1.2.0",
             module=modules["03_keyframes"],
             inputs=(video, scenes),
             config_fields=("keyframes_per_scene",),

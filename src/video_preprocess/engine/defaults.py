@@ -23,7 +23,7 @@ DEFAULT_STAGE_SPECS = (
     ),
     StageSpec(
         name="03_keyframes",
-        stage_version="1.1.0",
+        stage_version="1.2.0",
         dependencies=("02_scenes",),
         required_inputs=("video", "scenes"),
         outputs=("keyframes", "keyframe_images"),

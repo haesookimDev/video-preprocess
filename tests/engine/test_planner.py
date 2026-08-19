@@ -46,6 +46,7 @@ def test_default_registry_has_stable_eleven_stage_plan() -> None:
         "keyframes",
         "keyframe_images",
     )
+    assert registry.get("03_keyframes").stage_version == "1.2.0"
     assert registry.get("08_captions").required_inputs == (
         "keyframes",
         "keyframe_images",

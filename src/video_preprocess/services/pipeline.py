@@ -45,6 +45,12 @@ class PipelineSettings:
     context_tokenizer_model: str | None = None
 
     def __post_init__(self) -> None:
+        if (
+            isinstance(self.keyframes_per_scene, bool)
+            or not isinstance(self.keyframes_per_scene, int)
+            or not 1 <= self.keyframes_per_scene <= 3
+        ):
+            raise ValueError("keyframes_per_scene must be between 1 and 3")
         if self.max_context_tokens is not None and (
             isinstance(self.max_context_tokens, bool)
             or not isinstance(self.max_context_tokens, int)

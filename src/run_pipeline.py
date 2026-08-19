@@ -31,6 +31,12 @@ def main() -> int:
     parser.add_argument("--scene-threshold", type=float, default=27.0,
                         help="씬 검출 임계값 (기본: 27.0)")
     parser.add_argument(
+        "--keyframes-per-scene",
+        type=int,
+        default=1,
+        help="씬 길이별 adaptive 키프레임 최대 수, 1~3 (기본: 1)",
+    )
+    parser.add_argument(
         "--max-context-tokens",
         type=int,
         default=None,
@@ -132,6 +138,7 @@ def main() -> int:
                 whisper_model=args.whisper_model,
                 language=args.language,
                 scene_threshold=args.scene_threshold,
+                keyframes_per_scene=args.keyframes_per_scene,
                 max_context_tokens=args.max_context_tokens,
                 context_tokenizer_model=args.context_tokenizer_model,
             ),

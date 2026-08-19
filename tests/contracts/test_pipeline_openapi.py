@@ -107,3 +107,10 @@ def test_mutating_request_schemas_are_closed_and_versioned() -> None:
         assert "schema_version" in schema["required"]
         assert schema["properties"]["schema_version"]["const"] == "1"
 
+
+def test_keyframe_setting_is_bounded_to_adaptive_policy_range() -> None:
+    settings = load_spec()["components"]["schemas"]["PipelineSettings"]
+    keyframes = settings["properties"]["keyframes_per_scene"]
+
+    assert keyframes["minimum"] == 1
+    assert keyframes["maximum"] == 3

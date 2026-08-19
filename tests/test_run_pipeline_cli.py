@@ -165,6 +165,30 @@ def test_invalid_executor_concurrency_is_a_cli_input_error(
     assert "executor_max_concurrency" in capsys.readouterr().err
 
 
+def test_invalid_keyframe_maximum_is_a_cli_input_error(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    ready_preflight(monkeypatch)
+    video = tmp_path / "video.mp4"
+    video.write_bytes(b"video")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_pipeline.py",
+            str(video),
+            "--keyframes-per-scene",
+            "4",
+            "--dry-run",
+        ],
+    )
+
+    assert run_pipeline.main() == 2
+    assert "keyframes_per_scene" in capsys.readouterr().err
+
+
 def test_compatibility_summary_preserves_status_metrics_and_outputs(
     tmp_path: Path,
 ) -> None:
