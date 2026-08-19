@@ -808,6 +808,52 @@ command 누락과 language data 누락은 각각 stable detail `OCR_COMMAND_NOT_
 표시하고 OCR을 활성화한 local 실행에서만 command를 필수화한다. 상세 결정은
 [`ADR-0033`](./adr/0033-optional-ocr-stage-and-provider-contract.md)를 따른다.
 
+현재 오디오 이벤트 요청·응답 규칙:
+
+```json
+{
+  "task": "audio_event_detection",
+  "model": {
+    "alias": "audio_event.default",
+    "name": "deployment-selected-model",
+    "revision": "main"
+  },
+  "inputs": {
+    "audio": {"artifact_id": "audio_16k", "uri": "artifact://..."},
+    "windows": [
+      {"window_id": 1, "start_sec": 0.0, "end_sec": 5.0}
+    ]
+  },
+  "parameters": {
+    "taxonomy_version": "audio-events-v1",
+    "labels": ["music", "applause", "alarm"],
+    "min_confidence": 0.5,
+    "sampling_rate": 16000,
+    "interval": "half-open"
+  }
+}
+```
+
+- `inputs.audio`: publish된 16 kHz mono WAV `ArtifactRef`. host 절대 경로와 audio bytes는 경계를
+  넘지 않는다.
+- `inputs.windows`: 1부터 연속인 `window_id`와 절대 초 단위 반개구간을 가진 ordered inline batch다.
+  Service는 `window_sec`·`hop_sec`로 전체 audio를 windowing하고
+  `min(configured_batch_size, provider.max_batch_size)`로 나눈다.
+- taxonomy `audio-events-v1`의 canonical label은 `music`, `applause`, `laughter`, `alarm`,
+  `siren`, `vehicle`, `animal`, `door`, `impact`, `noise`다. 모델 고유 label을 이 taxonomy로
+  바꾸는 책임은 Provider에 있고, 요청하지 않은 label은 계약 위반이다.
+- `outputs.results`는 입력 window와 같은 개수·ID·순서이며 각 원소의 `labels`는 중복 없는
+  `{label, confidence}` 배열이다. confidence는 유한한 0~1 수이고 Service가 설정 하한을 다시
+  적용한다.
+- `merge-same-label-overlap-v1`은 동일 label의 겹치거나 맞닿은 양성 window만 하나의 event로
+  합친다. 합친 구간은 합집합, confidence는 최댓값, `source_window_ids`는 ordered provenance다.
+  다른 label의 시간 중첩은 보존한다.
+- Service는 chunk마다 audio ArtifactRef를 재사용하고 deterministic idempotency, 단일 total
+  deadline, effective model 일치와 all-or-nothing aggregate를 적용한다. 최종 event는
+  `(start_sec, end_sec, label)` 순서와 1부터 연속인 `event_id`를 사용한다.
+- 이 계약과 HTTP alias 경계는 구현됐지만 기본 pipeline mode는 disabled이며 local model
+  Provider는 아직 연결하지 않는다. 따라서 새 모델 다운로드나 기본 실행 비용은 없다.
+
 ## 7. Provider 계약
 
 ```python

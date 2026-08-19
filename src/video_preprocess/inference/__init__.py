@@ -1,5 +1,14 @@
 """Inference provider ports, routing, and task-specific services."""
 
+from .audio_event import (
+    AUDIO_EVENT_LABELS,
+    AUDIO_EVENT_OVERLAP_POLICY,
+    AUDIO_EVENT_TAXONOMY_VERSION,
+    AudioEvent,
+    AudioEventBatch,
+    AudioEventService,
+    AudioWindow,
+)
 from .caption import CaptionBatch, CaptionService
 from .diarization import DiarizationBatch, DiarizationService, SpeakerTurn
 from .deployment import (
@@ -24,6 +33,13 @@ from .stt import SpeechChunk, STTService, TranscriptSegment, TranscriptionBatch
 from .vad import SpeechSegment, VADBatch, VADService
 
 __all__ = [
+    "AUDIO_EVENT_LABELS",
+    "AUDIO_EVENT_OVERLAP_POLICY",
+    "AUDIO_EVENT_TAXONOMY_VERSION",
+    "AudioEvent",
+    "AudioEventBatch",
+    "AudioEventService",
+    "AudioWindow",
     "CaptionBatch",
     "CaptionService",
     "DiarizationBatch",
