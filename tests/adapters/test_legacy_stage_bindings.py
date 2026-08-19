@@ -183,7 +183,7 @@ def test_media_bindings_execute_legacy_stages_and_publish_artifacts(
         second = await executor.result(await executor.submit(second_task))
         third_task = task(
             "03_keyframes",
-            "1.2.0",
+            "1.3.0",
             {"video": video, "scenes": second.outputs["scenes"]},
             config={"keyframes_per_scene": 2},
         )
@@ -488,7 +488,7 @@ def test_keyframe_bundle_is_deterministic_for_same_images(
     runner = bindings.get("03_keyframes")
     stage_task = task(
         "03_keyframes",
-        "1.2.0",
+        "1.3.0",
         {"video": video, "scenes": scenes},
         config={"keyframes_per_scene": 1},
     )

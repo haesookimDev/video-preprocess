@@ -14,7 +14,7 @@ flowchart TD
 
     subgraph VIDEO ["비주얼 경로"]
         S02["<b>02_scenes</b><br/>인접 프레임 색상 변화량(content_val)이<br/>임계값(27.0)을 넘는 지점을 씬 경계로 검출<br/><i>도구: PySceneDetect ContentDetector</i>"]
-        S03["<b>03_keyframes</b><br/>씬 길이별 내부 균등 시각으로 시크해<br/>대표 프레임 1~3장 추출<br/><i>도구: ffmpeg seek</i>"]
+        S03["<b>03_keyframes</b><br/>씬 길이별 내부 균등 후보를 추출하고<br/>장면 내부 pHash 중복 제거<br/><i>도구: ffmpeg seek + Pillow DCT</i>"]
         S08["<b>08_captions</b><br/>모든 키프레임을 VLM에 넣어<br/>프레임 캡션 + 씬별 그룹 생성<br/><i>모델: BLIP image-captioning-base</i>"]
         S02 --> S03 --> S08
     end
@@ -61,7 +61,7 @@ flowchart TD
 |---|---|---|---|
 | 01_probe | 컨테이너 메타데이터 추출. 챕터·내장 자막 유무를 감지해 후속 단계 최적화 근거 제공 | ffprobe | 0.02s |
 | 02_scenes | 인접 프레임 간 HSV 색상 변화량이 임계값(27.0)을 넘으면 씬 경계로 판정. 프레임별 통계를 CSV로 저장해 임계값 튜닝 지원 | PySceneDetect `ContentDetector` | 0.9s |
-| 03_keyframes | 8초·20초 경계로 1~3장을 고르고 씬 내부 균등 timestamp만 시크. 설정 1~3은 상한이며 기본 1은 중앙 프레임 | ffmpeg `-ss` | sample 6장 기준 0.3s 미만 |
+| 03_keyframes | 8초·20초 경계로 1~3개 내부 균등 후보를 추출하고 같은 scene의 64-bit DCT pHash 거리가 6 이하면 제거. 최소 1장 보존 | ffmpeg `-ss`, Pillow | sample 후보 6장→4장 |
 | 04_audio | 오디오 트랙 분리 후 모든 음성 모델의 공통 입력인 16kHz mono PCM으로 정규화 | ffmpeg | 0.1s |
 | 05_vad | WAV ArtifactRef와 silence/padding option을 VAD Provider에 전달. 음성 구간만 추출해 Whisper 무음 환각 방지 | Local Silero VAD Provider (faster-whisper 내장 ONNX) | 0.1s (+ 첫 session load) |
 | 06_stt | 인접 VAD 구간 병합(gap ≤ 0.5s) 후 WAV ArtifactRef와 구간을 STT Provider에 전달. Provider가 원본 시간축으로 보정 | Local faster-whisper Provider `base`(기본)/`small` (CTranslate2 int8) | 5.6s / 13.9s |
@@ -81,9 +81,13 @@ flowchart TD
   나머지 파이프라인은 화자 라벨 없이 계속 동작
 
 `03_keyframes/keyframes.json`은 `duration-adaptive-v1`, 설정 상한, `[8.0, 20.0]` 경계와
-내부 균등 timestamp 전략을 기록한다. 각 항목의 `keyframe_index`·`keyframe_count`는 1부터 시작한다.
-단일 파일은 기존 `scene_NNN.jpg`, 다중 파일은 `scene_NNN_II.jpg`이며 JSON에 없는 이전 JPEG는
-새 집합 추출 성공 후 정리된다. JSON에 열거된 파일만 deterministic ZIP에 들어간다.
+내부 균등 timestamp 전략을 기록한다. `phash-64-dct-v1`은 같은 scene의 후보를 시간순으로 보존
+후보 전체와 비교하고 Hamming 거리 6 이하를 제거한다. 각 보존 항목의
+`keyframe_index`·`keyframe_count`는 1부터 다시 시작하며 `perceptual_hash`를 포함한다.
+`deduplication`에는 전체·scene별 후보/보존/제거 수와 제거된 후보의 timestamp/hash, 대표 path,
+거리와 stable reason이 기록된다. 단일 파일은 기존 `scene_NNN.jpg`, 다중 파일은
+`scene_NNN_II.jpg`이며 JSON에 없는 이전 JPEG는 새 집합 추출 성공 후 정리된다. 최종 JSON에 열거된
+파일만 deterministic ZIP과 08 caption batch에 들어간다.
 
 `08_captions/captions.json`은 기존 `model`, flat `captions`와 실제 실행 정보를 나타내는
 `provider`, `revision`, `runtime`을 유지한다. `caption_policy`, `scene_count`와

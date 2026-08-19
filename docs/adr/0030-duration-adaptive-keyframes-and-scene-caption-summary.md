@@ -122,7 +122,9 @@ scalar summary를 함께 제공해 단계적으로 migration한다.
 비용과 제약:
 
 - 최대값 3에서는 caption 추론량과 JPEG 저장량이 최대 세 배가 된다.
-- 시간 기반 선택은 화면 내용 중복을 제거하지 않는다. 다음 slice에서 perceptual hash를 추가한다.
+- 시간 기반 선택만으로는 화면 내용 중복을 제거하지 않는다. 후속
+  [`ADR-0031`](./0031-within-scene-perceptual-keyframe-deduplication.md)이 scene 내부 perceptual
+  hash 중복 제거를 추가한다.
 - 현재 caption Stage는 전체 이미지 배열을 한 batch로 요청한다. Provider batch tuning은 후속 항목이다.
 
 ## 구현 위치

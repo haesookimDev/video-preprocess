@@ -1,0 +1,59 @@
+{
+  "scenes": [
+    {
+      "scene_id": 1,
+      "candidates": [
+        {
+          "candidate_index": 1,
+          "timestamp_sec": 2.0,
+          "path": "scene_001_01.jpg",
+          "perceptual_hash": "0000000000000000"
+        },
+        {
+          "candidate_index": 2,
+          "timestamp_sec": 4.0,
+          "path": "scene_001_02.jpg",
+          "perceptual_hash": "000000000000003f"
+        },
+        {
+          "candidate_index": 3,
+          "timestamp_sec": 6.0,
+          "path": "scene_001_03.jpg",
+          "perceptual_hash": "000000000000007f"
+        }
+      ]
+    },
+    {
+      "scene_id": 2,
+      "candidates": [
+        {
+          "candidate_index": 1,
+          "timestamp_sec": 10.0,
+          "path": "scene_002_01.jpg",
+          "perceptual_hash": "aaaaaaaaaaaaaaaa"
+        },
+        {
+          "candidate_index": 2,
+          "timestamp_sec": 12.0,
+          "path": "scene_002_02.jpg",
+          "perceptual_hash": "aaaaaaaaaaaaaaab"
+        }
+      ]
+    }
+  ],
+  "retained": [[1, 1], [1, 3], [2, 1]],
+  "removed": [
+    {
+      "scene_id": 1,
+      "candidate_index": 2,
+      "duplicate_of_candidate_index": 1,
+      "hamming_distance": 6
+    },
+    {
+      "scene_id": 2,
+      "candidate_index": 2,
+      "duplicate_of_candidate_index": 1,
+      "hamming_distance": 1
+    }
+  ]
+}

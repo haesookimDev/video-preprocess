@@ -44,7 +44,8 @@ flowchart LR
 - 반개구간·최대 겹침 기반 timeline 단일 배정과 source/confidence 보존
 - 한국어 정규화·문자 n-gram hybrid 검색, no-answer 판정과 고정 평가 dataset
 - 실제 target tokenizer 기반 static/query context 예산·인접 scene·제외 통계
-- 씬 길이 기반 1~3장 adaptive keyframe, 씬별 다중 caption과 호환 timeline 요약
+- 씬 길이 기반 adaptive keyframe과 장면 내부 pHash 중복 제거
+- 씬별 다중 caption과 호환 timeline 요약
 - 기존 JSON·Markdown·SQLite 출력 구조와 공통 QueryService 기반 query CLI
 
 아직 구현되지 않은 범위:
@@ -202,7 +203,7 @@ bind할 때는 Bearer 인증과 reverse proxy/service mesh의 TLS 종료를 사�
 # 명시적인 run ID로 실행·재개
 .venv/bin/python src/run_pipeline.py samples/sample.mp4 --run-id experiment-01
 
-# 씬 길이에 따라 최대 3장의 adaptive keyframe 추출
+# 씬 길이에 따라 최대 3개 후보를 추출하고 장면 내부 pHash 중복 제거
 .venv/bin/python src/run_pipeline.py samples/sample.mp4 \
   --keyframes-per-scene 3
 ```
@@ -241,10 +242,12 @@ Engine은 dependency가 끝난 Stage만 ready로 만들고 `--executor-max-concu
 메모리 사용도 동시에 증가한다. 기본값 1은 기존 순차 resource 동작을 유지한다. 완료 결과와 manifest는
 실제 완료 순서가 아니라 deterministic plan 순서로 기록된다.
 
-`--keyframes-per-scene`은 고정 추출 수가 아니라 상한이다. 8초 미만 씬은 1장, 8초 이상
+`--keyframes-per-scene`은 고정 최종 수가 아니라 후보 상한이다. 8초 미만 씬은 1장, 8초 이상
 20초 미만은 2장, 20초 이상은 3장을 선택한 뒤 설정 상한을 적용한다. 시각은 씬 경계를 피한
 균등 내부 지점이며 기본값 1에서는 기존 중앙 프레임과 `scene_NNN.jpg`를 유지한다. 다중 프레임은
-`scene_NNN_01.jpg` 형식이고 JSON에 index/count가 기록된다.
+장면 내부 64-bit DCT pHash Hamming 거리 6 이하의 후보를 제거한 뒤 `scene_NNN_01.jpg` 형식으로
+다시 인덱싱한다. JSON에 최종 index/count/hash, 전체·scene별 후보/보존/제거 통계와 제거 근거가
+기록된다. 제거된 후보는 ZIP과 caption 추론 입력에 포함되지 않는다.
 
 `--dry-run`은 output·manifest를 만들지 않는 read-only 경로다. 각 Stage를 `hit`, `miss`,
 `forced`, `blocked`로 표시하고 `will_execute`와 stable reason code를 출력한다. 상위 Stage가
@@ -298,7 +301,7 @@ timeout은 attempt의 cooperative cancellation을 요청하고 Stage가 안전�
 |---|---|---|
 | `01_probe` | ffprobe 메타데이터 추출 | `metadata.json` |
 | `02_scenes` | PySceneDetect 씬 경계 검출 | `scenes.json`, `scene_stats.csv` |
-| `03_keyframes` | 씬 길이 기반 1~3장 adaptive 키프레임 추출 | `keyframes.json`, `frames/*.jpg`, `keyframe_images.zip` |
+| `03_keyframes` | 씬 길이 기반 후보 추출과 장면 내부 pHash 중복 제거 | `keyframes.json`, `frames/*.jpg`, `keyframe_images.zip` |
 | `04_audio` | 오디오 디먹싱·16kHz mono 정규화 | `audio.json`, `audio_16k.wav` |
 | `05_vad` | Silero VAD 음성 구간 검출 | `vad_segments.json` |
 | `06_stt` | VAD 구간만 faster-whisper 전사 | `transcript.json` |
@@ -310,12 +313,14 @@ timeout은 attempt의 cooperative cancellation을 요청하고 Stage가 안전�
 
 의존 관계와 상세 처리 규칙은 [docs/05-pipeline.md](docs/05-pipeline.md)에 정리되어 있다.
 
-`keyframes.json`은 `duration-adaptive-v1` 정책과 각 frame의 `keyframe_index`,
-`keyframe_count`를 기록한다. `captions.json`은 기존 flat `captions`에 더해 씬별
+`keyframes.json`은 `duration-adaptive-v1` 선택 정책과 `phash-64-dct-v1` 중복 제거 정책,
+각 frame의 `keyframe_index`, `keyframe_count`, `perceptual_hash`, 제거 통계·근거를 기록한다.
+`captions.json`은 기존 flat `captions`에 더해 씬별
 `scene_captions`를 제공한다. timeline scene card의 기존 `keyframe`·`caption`은 대표 경로와
 중복 제거된 ordered summary로 유지하고, 전체 정보는 additive `keyframes`·`visual_captions`에
 보존한다. 정확한 버전·호환 계약은
-[ADR-0030](docs/adr/0030-duration-adaptive-keyframes-and-scene-caption-summary.md)에 있다.
+[ADR-0030](docs/adr/0030-duration-adaptive-keyframes-and-scene-caption-summary.md)과
+[ADR-0031](docs/adr/0031-within-scene-perceptual-keyframe-deduplication.md)에 있다.
 
 ## Cache와 재개
 
@@ -475,12 +480,11 @@ ffmpeg -v error \
 
 ## 아직 없는 것 (다음 단계 후보)
 
-- adaptive keyframe의 perceptual hash 중복 제거
 - caption device 자동 선택과 provider batch tuning
+- OCR·내장 자막·챕터 활용
 - 오디오 이벤트 태깅 (박수·음악 등)
 - 한국어 캡셔닝 VLM 교체 (현재 BLIP은 영어 캡션)
-- 긴 영상 대응: 컨텍스트 최종본의 토큰 예산 관리 (씬 수가 많을 때 목차 + 선별
-  씬 카드로 축약하는 예산 배분 로직)
+- 질의 기반 2-pass 고품질 재처리
 
 아키텍처 마이그레이션과 위 기능의 정확한 구현 순서는
 [`docs/08-development-roadmap.md`](docs/08-development-roadmap.md)를 기준으로 하며, 실제

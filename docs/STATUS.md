@@ -1,8 +1,8 @@
 # 개발 상태와 세션 인수인계
 
 - 마지막 갱신: **2026-08-19**
-- 현재 단계: **Phase 7 진행 중 — adaptive keyframe·다중 caption 완료**
-- 다음 작업: **perceptual hash 기반 keyframe 중복 제거**
+- 현재 단계: **Phase 7 진행 중 — perceptual keyframe dedup 완료**
+- 다음 작업: **caption device 자동 선택과 provider batch tuning**
 
 이 문서는 개발 진행 상황의 단일 진입점이다. 새로운 세션은 이 문서를 먼저 읽고, 실제 코드와
 Git 상태를 확인한 뒤 작업을 시작한다.
@@ -35,7 +35,8 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - 실제 tokenizer 기반 static/query context 예산과 포함·제외 통계 구현 완료
 - Engine dependency-ready scheduling, plan-order manifest와 branch fail/cancel 전파 구현 완료
 - 기본 1·설정 가능 bounded LocalExecutor와 legacy Stage 실제 병렬 실행 구현 완료
-- 씬 길이 기반 1~3장 adaptive keyframe, 씬별 다중 caption과 호환 timeline 요약 구현 완료
+- 씬 길이 기반 adaptive keyframe과 장면 내부 pHash 중복 제거 구현 완료
+- 씬별 다중 caption과 호환 timeline 요약 구현 완료
 - queue consumer, direct upload와 RemoteExecutor는 아직 미구현
 - Local Store가 input copy, 단계 산출물과 run/stage manifest를 관리
 
@@ -112,6 +113,8 @@ Git 상태를 확인한 뒤 작업을 시작한다.
   [`ADR-0029`](./adr/0029-dependency-ready-bounded-local-concurrency.md)
 - adaptive keyframe·다중 caption scene summary 결정:
   [`ADR-0030`](./adr/0030-duration-adaptive-keyframes-and-scene-caption-summary.md)
+- 장면 내부 perceptual keyframe 중복 제거 결정:
+  [`ADR-0031`](./adr/0031-within-scene-perceptual-keyframe-deduplication.md)
 
 ## 3. 완료된 작업
 
@@ -162,6 +165,7 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - [x] Engine Stage timeout·run cancellation·bounded retry policy
 - [x] dependency-ready Engine·bounded LocalExecutor와 branch fail/cancel 전파
 - [x] duration-adaptive keyframe·다중 caption·timeline 호환 summary
+- [x] 장면 내부 perceptual hash keyframe 중복 제거
 
 ## 4. 아직 구현되지 않은 작업
 
@@ -194,7 +198,7 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - [x] 실제 token budget
 - [x] visual/audio·index/context 분기 병렬 실행
 - [x] 씬 길이 기반 adaptive keyframe 1~3장과 다중 caption
-- [ ] perceptual hash keyframe 중복 제거
+- [x] perceptual hash keyframe 중복 제거
 
 문서가 존재한다고 구현된 것으로 간주하지 않는다. 완료 여부는 코드와 자동 테스트를 기준으로
 이 체크리스트에서 갱신한다.
@@ -282,16 +286,25 @@ index/count와 `scene_NNN_II.jpg`를 사용한다. 성공한 선택 집합 밖�
 deterministic ZIP member를 일치시킨다. 08은 flat caption과 `scene_captions`를 함께 제공하며 09는
 기존 scalar `keyframe`·`caption`과 전체 `keyframes`·`visual_captions`를 함께 제공한다.
 
-다음 slice는 시간 기반으로 선택된 frame의 perceptual hash 중복 제거 정책을 고정하는 것이다.
-hash·distance threshold, 동일 scene 내 비교 순서, 최소 1장 보장, 제거 통계/근거 schema와 Stage version,
-ZIP·caption batch 제외를 network-free fixture와 실제 sample에서 검증한다.
+Phase 7 세 번째 slice는 `phash-64-dct-v1` 64-bit hash와 inclusive Hamming threshold 6으로 같은
+scene의 시간순 후보를 보존 후보 전체와 비교한다. 첫 후보를 항상 유지하고 같은 최단 거리에서는
+먼저 보존한 후보를 대표로 사용한다. 최종 보존 수로 index/count와 filename을 다시 부여하고
+`keyframes.json`에 hash, 전체·scene별 통계와 stable 제거 사유를 기록한다. 제거 후보는 최종 JPEG,
+deterministic ZIP과 caption batch에 포함되지 않는다. Stage 03 version은 `1.3.0`이고 08/09는 기존
+가변 입력 계약 `1.2.0`을 유지한다.
+
+다음 slice는 caption device 자동 선택과 provider batch tuning이다. `LocalCaptionProvider`의 현재
+`device=None`, `max_batch_size=16` 계약과 Stage 08의 전체 배열 단일 요청을 기준으로 device 우선순위,
+fallback, provider limit보다 큰 ordered 입력의 chunking 소유권, OOM/부분 실패, metrics와 cache 의미를
+먼저 고정한다. fake provider로 chunk 경계·순서·실패를 검증한 뒤 local composition 설정과 실제
+CPU/MPS sample 성능을 비교한다.
 
 ## 6. 알려진 중요 문제
 
 | 우선순위 | 문제 | 영향 |
 |---|---|---|
 | P1 | 별도 query CLI 프로세스는 embedding 모델을 매번 로드 | 프로세스 간 cold query 지연 |
-| P1 | adaptive frame 사이 시각적 중복 미제거 | 불필요한 JPEG·caption 추론 증가 |
+| P1 | caption 전체 배열이 provider 최대 16장을 넘으면 요청 거부 | 긴 영상의 다중 frame caption 실패 |
 | P1 | cached Hugging Face 모델도 metadata HEAD 요청 | offline 환경에서 모델 로드 실패 가능 |
 | P2 | macOS에서 OpenCV·PyAV FFmpeg dylib 중복 경고 | 환경에 따라 충돌 또는 불안정 가능 |
 
@@ -389,11 +402,32 @@ ZIP·caption batch 제외를 network-free fixture와 실제 sample에서 검증�
 최신 기록을 위에 추가한다. 긴 구현 설명은 PR이나 ADR에 두고 여기에는 다음 세션이 재개하는 데
 필요한 정보만 적는다.
 
+### 2026-08-19 — Phase 7 perceptual keyframe dedup
+
+- 목표: adaptive 후보가 시간상 다르지만 시각적으로 같은 경우 JPEG·caption 비용에서 제외하면서
+  scene당 최소 1장과 legacy/downstream 계약 유지
+- 완료: `phash-64-dct-v1`, 64-bit Hamming 거리 `<= 6`, scene 내부 시간순 greedy 비교,
+  최단 거리 동률 시 먼저 보존한 후보 선택, 최종 index/count/filename 재부여, hash와 전체·scene별
+  후보/보존/제거 통계·stable reason; Stage 03 version `1.3.0`, ADR-0031
+- 계약 검증: 고정 `keyframe_deduplication.json` fixture의 threshold 포함 경계·scene 격리·최소 1장,
+  pHash 결정성/구조 구분, 제거 후 연속 filename과 stale 정리, planner/adapter cache version 회귀
+- 실제 검증: `sample.mp4 --keyframes-per-scene 3 --stage 03_keyframes --force-stage 03_keyframes`
+  후보 6장→4장·제거 2장, ZIP exact 4 member; 전체 11단계 `ok`, caption 4개, timeline 시각 수
+  `[2,1,1]`; query `음성 구간 검출 --topk 2` 성공
+- 회귀: default 385 passed/16 deselected; keyframe 10 passed; `git diff --check` 성공
+- 호환성: 기본 상한 1의 중앙 timestamp와 `scene_NNN.jpg` 유지; JSON hash/dedup metadata와 metrics는
+  additive. 03 version 상승과 output checksum으로 03 및 실제 영향 downstream cache 무효화
+- 관찰: sandbox network에서는 cached Hugging Face metadata HEAD가 실패해 full/query 첫 검증이
+  실패했고 허용된 network로 동일 명령 재실행해 성공. macOS FFmpeg dylib·pyannote warning은 기존과
+  동일하며 실패로 이어지지 않음
+- 다음 작업: caption device 우선순위/fallback, 16장 초과 ordered chunking 소유권, OOM/부분 실패와
+  metrics/cache 계약 fixture 후 LocalCaptionProvider/composition 구현
+
 ### 2026-08-19 — Phase 7 adaptive keyframe·다중 caption
 
 - 목표: 긴 씬의 시각 변화를 최대 3장에서 보존하면서 기본 1장 출력과 downstream 소비자 호환 유지
 - 완료: 8초·20초 경계/상한 1~3, 내부 균등 timestamp, single/multi filename, stale JPEG 정리,
-  deterministic ZIP, flat+scene caption, timeline scalar+array summary, Stage 03/08/09 version 1.2.0;
+  deterministic ZIP, flat+scene caption, timeline scalar+array summary, 당시 Stage 03/08/09 version 1.2.0;
   ADR-0030
 - 계약 검증: 정책 경계·설정/CLI/OpenAPI 범위, filename/index/count, legacy single output,
   frame별 unique ArtifactRef, fixed multi-visual fixture와 adapter/planner/downstream 회귀

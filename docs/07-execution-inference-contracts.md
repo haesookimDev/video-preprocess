@@ -339,16 +339,29 @@ JPEG sidecar는 정렬·고정 metadata ZIP으로 묶어 manifest에서 누락/�
 추가 당시 03과 해당 bundle을 required input으로 받는 08의 Stage version은 `1.1.0`이었다. 결정 근거는
 [`ADR-0014`](./adr/0014-legacy-media-stage-task-bindings.md)에 기록한다.
 
-현재 03 version `1.2.0`은 `duration-adaptive-v1`으로 씬 길이와 `keyframes_per_scene` 상한에 따라
+03 version `1.2.0`부터 `duration-adaptive-v1`으로 씬 길이와 `keyframes_per_scene` 상한에 따라
 1~3장을 선택한다. 설정은 1~3 정수이고 기본 1이다. 8초 미만은 1장, 8초 이상 20초 미만은 2장,
 20초 이상은 3장을 후보로 정한 뒤 설정 상한을 적용한다. N장의 timestamp는
 `start + duration * i / (N + 1)`을 millisecond로 반올림한 내부 균등 지점이다.
 
-단일 frame은 기존 `scene_NNN.jpg`, 다중 frame은 `scene_NNN_II.jpg`를 사용한다. 각 JSON entry는
-`keyframe_index`와 `keyframe_count`를 추가하며 최상위 `selection_policy`가 이름, 설정 상한,
-`[8.0,20.0]` 경계와 timestamp 전략을 기록한다. 새 집합에 없는 이전 Stage 소유 JPEG는 추출 성공 후
-제거되고 deterministic ZIP은 JSON path와 정확히 같은 member만 포함한다. 결정은
-[`ADR-0030`](./adr/0030-duration-adaptive-keyframes-and-scene-caption-summary.md)에 기록한다.
+현재 03 version `1.3.0`은 이 시간 기반 집합을 후보로 취급하고 장면 내부
+`phash-64-dct-v1` 중복 제거를 적용한다. 후보를 timestamp 순서로 순회하면서 이미 보존한 후보
+전체와 64-bit Hamming 거리를 비교하고 최단 거리가 6 이하면 제거한다. 같은 거리에서는 먼저
+보존한 후보를 대표로 사용하고 첫 후보는 항상 보존하므로 scene당 최소 한 장을 보장한다.
+
+후보는 임시 경로에 추출하고 최종 보존 수로 연속 index/count와 filename을 다시 부여한다. 단일
+frame은 기존 `scene_NNN.jpg`, 다중 frame은 `scene_NNN_II.jpg`를 사용한다. 각 JSON entry는
+`keyframe_index`, `keyframe_count`, `perceptual_hash`를 제공한다. 최상위 `selection_policy`는
+adaptive 선택 계약을, `deduplication`은 algorithm·hash bit 수·거리 threshold·비교 범위/순서,
+후보/보존/제거 총계, scene별 통계와 제거 항목을 기록한다. 제거 항목에는 candidate index/count,
+timestamp/hash, 대표 keyframe index/timestamp/path, 실제 거리와 stable reason
+`perceptual_hash_distance_lte_threshold`가 포함된다.
+
+새 집합에 없는 이전 Stage 소유 JPEG는 성공 후 제거되고 deterministic ZIP은 최종 JSON path와
+정확히 같은 member만 포함한다. 따라서 제거 후보는 08 caption batch에도 들어가지 않는다. 03의
+version 상승이 기존 cache를 무효화하고 새 input checksum이 downstream cache에 전파되며 08/09
+version은 기존 가변 집합 계약을 유지한다. adaptive 결정은 [`ADR-0030`](./adr/0030-duration-adaptive-keyframes-and-scene-caption-summary.md),
+중복 제거 결정은 [`ADR-0031`](./adr/0031-within-scene-perceptual-keyframe-deduplication.md)에 기록한다.
 
 05~08 model Stage는 task config와 `vad.default`, `stt.default`, `diarization.default`,
 `caption.default` binding을 exact match한다. 성공 JSON의 provider/model/revision/runtime을 slot별

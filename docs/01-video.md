@@ -27,7 +27,7 @@ LLM에 전달할 시각 정보의 양을 수십~수백 배 줄인다.
   - 슬라이드 발표 영상처럼 정적인 콘텐츠는 "변화가 생긴 순간"만 남기면 압축률 극대화
 - **효과**: 1시간 영상(1fps 기준 3,600장) → 씬 기반 샘플링 시 보통 100~300장 수준
 
-### 현재 구현: `duration-adaptive-v1`
+### 현재 구현: `duration-adaptive-v1` + `phash-64-dct-v1`
 
 현재 03단계는 화면 변화량 기반 frame 선택 전 단계로, 씬 길이와 설정 상한만 사용하는 결정적
 정책을 구현한다.
@@ -41,10 +41,14 @@ LLM에 전달할 시각 정보의 양을 수십~수백 배 줄인다.
 `keyframes_per_scene` 1~3을 최종 상한으로 적용한다. N장의 timestamp는
 `start + duration * i / (N + 1)`의 내부 균등 지점이라 씬 끝 경계에서 다음 씬 프레임을 읽지 않는다.
 기본 상한 1은 기존 중앙 프레임 동작을 유지한다. 각 frame의 순서와 수는 JSON에 보존되고 같은 씬의
-caption은 timeline에서 전체 배열과 호환용 ordered summary로 함께 제공한다. 상세 계약은
-[`ADR-0030`](./adr/0030-duration-adaptive-keyframes-and-scene-caption-summary.md)을 따른다.
+caption은 timeline에서 전체 배열과 호환용 ordered summary로 함께 제공한다.
 
-시간 기반 frame끼리 시각적으로 같을 수 있으므로 perceptual hash 중복 제거는 다음 구현 단계다.
+시간 기반 후보는 같은 scene 안에서 64-bit DCT perceptual hash Hamming 거리로 다시 비교한다. 첫
+후보를 항상 보존하고 이미 보존한 후보와의 최단 거리가 6 이하면 제거한다. 최종 보존 수에 맞춰
+index/count와 single/multi filename을 다시 부여하며, 후보·보존·제거 수와 제거 거리·대표 path를
+`keyframes.json`에 기록한다. 제거된 JPEG는 ZIP과 caption batch에 포함되지 않는다. 상세 계약은
+[`ADR-0030`](./adr/0030-duration-adaptive-keyframes-and-scene-caption-summary.md)과
+[`ADR-0031`](./adr/0031-within-scene-perceptual-keyframe-deduplication.md)을 따른다.
 
 ## 3. 프레임의 텍스트화 (Captioning)
 
