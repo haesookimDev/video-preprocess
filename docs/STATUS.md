@@ -1,8 +1,8 @@
 # 개발 상태와 세션 인수인계
 
 - 마지막 갱신: **2026-08-19**
-- 현재 단계: **Phase 7 진행 중 — OCR Provider·pipeline 통합 완료**
-- 다음 작업: **내장 자막·챕터 Artifact와 timeline 병합 계약 설계**
+- 현재 단계: **Phase 7 진행 중 — 내장 자막·챕터 Artifact·timeline 통합 완료**
+- 다음 작업: **오디오 이벤트 Provider 공통 계약·disabled Stage 설계**
 
 이 문서는 개발 진행 상황의 단일 진입점이다. 새로운 세션은 이 문서를 먼저 읽고, 실제 코드와
 Git 상태를 확인한 뒤 작업을 시작한다.
@@ -16,17 +16,17 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - `src/serve_pipeline.py`: 영속 상태·artifact·query를 제공하는 Pipeline REST API v1 server
 - `src/pipeline/runner.py`: 이전 파일 marker 방식의 compatibility runner
 - `src/pipeline/context.py`: 경로·설정·JSON I/O 공유
-- `src/pipeline/stages/s01_*`~`s11_*`: `08_captions`·`08_ocr`을 포함한 12개 단계 구현
+- `src/pipeline/stages/s01_*`~`s11_*`: `04_embedded_text`·`08_captions`·`08_ocr` 포함 13개 단계
 - `src/video_preprocess/domain/`: 버전이 있는 Artifact·Stage 공개 계약
 - `src/video_preprocess/storage/`: Artifact·Run Store Port와 로컬 구현
 - `src/video_preprocess/engine/`: planner, PipelineEngine, manifest cache와 RunStore journal
 - `src/video_preprocess/executors/`: async Executor Port, Stage binding과 bounded LocalExecutor
-- `src/video_preprocess/adapters/`: legacy 01~11 + OCR StageTask compatibility binding
+- `src/video_preprocess/adapters/`: legacy 01~11 + embedded text/OCR StageTask compatibility binding
 - `src/video_preprocess/services/`: pipeline Application Service와 local composition root
 - 기본 CLI는 manifest·checksum·설정·model binding 기반 cache 사용
 - VAD, STT, diarization, caption, OCR과 embedding이 `InferenceGateway`와 Local Provider로 실행
 - 모든 모델 Stage에서 구체 ML library import와 model lifecycle 제거 완료
-- 기본 CLI는 Application Service를 통해 새 Engine과 12개 binding을 실행
+- 기본 CLI는 Application Service를 통해 새 Engine과 13개 binding을 실행
 - embedding과 OCR은 설정에 따라 local 또는 HTTP provider client를 사용하며 기본값은 local
 - production embedding inference server adapter와 실행 CLI 구현 완료
 - pipeline REST API와 durable control snapshot, QueryService 구현 완료
@@ -39,6 +39,7 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - 씬별 다중 caption과 호환 timeline 요약 구현 완료
 - local caption CUDA→MPS→CPU 자동 선택과 capability 기반 ordered chunking 구현 완료
 - 기본 disabled의 독립 OCR Stage, local Tesseract/HTTP alias와 timeline/index/context 병합 완료
+- FFmpeg text subtitle·chapter Artifact와 timeline/index/static·query context 병합 완료
 - queue consumer, direct upload와 RemoteExecutor는 아직 미구현
 - Local Store가 input copy, 단계 산출물과 run/stage manifest를 관리
 
@@ -121,6 +122,8 @@ Git 상태를 확인한 뒤 작업을 시작한다.
   [`ADR-0032`](./adr/0032-caption-device-selection-and-ordered-chunking.md)
 - 선택적 OCR Stage·Provider 계약 결정:
   [`ADR-0033`](./adr/0033-optional-ocr-stage-and-provider-contract.md)
+- 내장 자막·챕터 Artifact·scene 병합 결정:
+  [`ADR-0034`](./adr/0034-embedded-subtitle-and-chapter-artifact.md)
 
 ## 3. 완료된 작업
 
@@ -153,7 +156,7 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - [x] audio ArtifactRef와 local STT provider·s06 adapter
 - [x] audio ArtifactRef와 local diarization provider·s07 adapter
 - [x] audio ArtifactRef와 local VAD provider·s05 adapter
-- [x] OCR을 포함한 12개 Stage registry와 deterministic DAG planner
+- [x] embedded text·OCR을 포함한 13개 Stage registry와 deterministic DAG planner
 - [x] Executor Port와 순차 LocalExecutor
 - [x] 순차 PipelineEngine과 run/stage 상태 머신
 - [x] manifest cache key와 artifact 검증 기반 cache decision
@@ -208,6 +211,7 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - [x] perceptual hash keyframe 중복 제거
 - [x] caption device 자동 선택과 provider batch tuning
 - [x] OCR Provider와 pipeline/timeline/index/context 통합
+- [x] 내장 자막·챕터 Artifact와 timeline/index/context 통합
 
 문서가 존재한다고 구현된 것으로 간주하지 않는다. 완료 여부는 코드와 자동 테스트를 기준으로
 이 체크리스트에서 갱신한다.
@@ -318,9 +322,15 @@ Phase 7 다섯 번째 slice는 `optical_character_recognition` task, ordered ima
 기본 DAG는 12개 Stage다. Tesseract command·language data 오류, chunk deadline/idempotency와
 all-or-nothing aggregate, local/HTTP composition을 fake와 loopback으로 검증했다.
 
-다음 slice는 내장 자막과 챕터다. ffprobe metadata에 이미 보이는 subtitle stream/chapter를
-Artifact 계약으로 승격하고 FFmpeg 추출, 시간 구간·언어·source identity, 없는 stream의 skip과
-09/10/11 additive 병합을 fixture와 ADR로 먼저 고정한다.
+Phase 7 여섯 번째 slice는 `04_embedded_text` version `1.0.0`을 추가해 지원 text codec을 FFmpeg
+WebVTT cue로 정규화하고 language/source ID·chapter를 보존한다. bitmap/unknown과 내장 텍스트 없음은
+stable skipped Artifact를 만든다. 09 version `1.4.0`은 subtitle cue와 chapter를 반개구간 최대
+겹침·중점 규칙으로 scene에 단일 배정하고, 10/11 version `1.3.0`과 QueryService가 additive하게
+검색·context에 전달한다. 기본 DAG는 13개 Stage다.
+
+다음 slice는 오디오 이벤트 Provider다. 비음성 event label taxonomy·confidence·구간 겹침,
+audio ArtifactRef task/result와 local/HTTP 배포 경계를 fake contract/ADR로 고정하고, 기본 모델·비용을
+강제하지 않는 disabled Stage와 09/10/11 additive 병합부터 구현한다.
 
 ## 6. 알려진 중요 문제
 
@@ -424,6 +434,33 @@ Artifact 계약으로 승격하고 FFmpeg 추출, 시간 구간·언어·source 
 
 최신 기록을 위에 추가한다. 긴 구현 설명은 PR이나 ADR에 두고 여기에는 다음 세션이 재개하는 데
 필요한 정보만 적는다.
+
+### 2026-08-19 — Phase 7 내장 자막·챕터 Artifact·timeline 통합
+
+- 목표: ffprobe에서 감지만 하던 제작자 자막·chapter를 media extraction과 join 책임을 분리한
+  Artifact로 승격하고 검색·context에 additive하게 전달
+- 완료: `04_embedded_text` version `1.0.0`, FFmpeg WebVTT text codec allowlist, cue/chapter
+  `[start,end)`·language·source identity, bitmap/unknown/no-input stable sentinel, 13-stage DAG와 legacy
+  runner/binding; ADR-0034
+- downstream: 09 `1.4.0`의 subtitle maximum-overlap single assignment, ordered unique
+  `subtitle_text`, single `chapter`, unassigned source 통계; 10/11 `1.3.0`과 QueryService의 chapter title·
+  내장 자막 index/static/query context 전파
+- 계약 검증: WebVTT timestamp/markup/Unicode/invalid payload, supported+bitmap stream metadata,
+  chapter title fallback, no-stream/bitmap-only skip, planner boundary, Stage binding, timeline 경계,
+  CLI 13-stage preview와 legacy runner 순서
+- 실제 검증: FFmpeg 8.1.2 합성 MP4에서 `mov_text` cue 2개(0.5초·2.0초)와 ffmetadata chapter 2개
+  probe→Artifact 성공; `sample.mp4 --force` 전체 13단계 `ok`, `04_embedded_text`는
+  `NO_EMBEDDED_TEXT`, SQLite integrity `ok`, query `음성 구간 검출 --topk 2` scene 02 top-1
+- 회귀: default 451 passed/18 deselected; native FFmpeg integration 1 passed; targeted timeline/index/
+  context/planner/binding 82 passed; `git diff --check` 성공
+- 호환성: 기존 scene field를 유지하고 `chapter`, `subtitles`, `subtitle_text`만 추가한다. 04 신규 Stage와
+  09/10/11 version 상승으로 관련 cache는 한 번 무효화된다. 자막 존재만으로 STT를 자동 skip하지 않는다
+- 관찰: bitmap subtitle는 기존 keyframe OCR과 packet 계약이 달라 미지원 상태로 보존한다. sandbox
+  network에서는 cached Hugging Face metadata HEAD가 실패해 sample/query 첫 검증이 중단됐고 허용된
+  network로 재실행해 성공했다. macOS OpenCV/PyAV/FFmpeg dylib·Matplotlib cache warning은 실패로
+  이어지지 않았다
+- 다음 작업: 오디오 이벤트의 label taxonomy, confidence/time schema, audio ArtifactRef batch,
+  local/HTTP alias와 disabled sentinel/DAG/timeline 병합 책임을 fake contract·ADR로 먼저 고정
 
 ### 2026-08-19 — Phase 7 선택적 OCR Provider·pipeline 통합
 

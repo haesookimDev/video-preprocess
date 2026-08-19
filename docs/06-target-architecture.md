@@ -166,12 +166,14 @@ flowchart LR
     S01[01 probe] --> S02[02 scenes] --> S03[03 keyframes] --> S08C[08 captions]
     S08C --> S08O[08 OCR]
     S01 --> S04[04 audio] --> S05[05 vad] --> S06[06 stt]
+    S01 --> S04T[04 embedded text]
     S04 --> S07[07 diarize]
     S02 --> S09[09 timeline]
     S03 --> S09
     S06 --> S09
     S07 --> S09
     S08O --> S09
+    S04T --> S09
     S09 --> S10[10 index]
     S01 --> S11[11 context]
     S07 --> S11
@@ -183,12 +185,13 @@ dependency-ready 판정·join·실패/취소 전파를, Executor는 실행 위�
 Stage는 둘 모두를 알지 못한다. 기본 concurrency는 1이고 명시적으로 늘리면 visual/audio와
 09 이후 10/11 분기가 bounded capacity 안에서 병렬 실행된다.
 
-현재 `StageRegistry`와 `DAGPlanner`가 이 12개 Stage의 logical input/output과 dependency를
+현재 `StageRegistry`와 `DAGPlanner`가 이 13개 Stage의 logical input/output과 dependency를
 검증하고 stable name 사전순 tie-break로 deterministic topological plan을 만든다. exact,
 from, to 선택과 plan 밖에서 필요한 `boundary_inputs` 규칙은
 [`ADR-0009`](./adr/0009-deterministic-stage-registry-and-dag-planner.md)에 기록한다. 기존 runner
-대신 01~11 compatibility binding이 `08_captions`와 `08_ocr`을 포함한 plan을 실행하며, 기존 runner는
-호환 구현으로만 남아 있다.
+대신 01~11 compatibility binding이 `04_embedded_text`, `08_captions`, `08_ocr`을 포함한 plan을
+실행하며, 기존 runner는 호환 구현으로만 남아 있다. `04_embedded_text`는 모델 Provider가 아니라
+FFmpeg media adapter를 사용하는 규칙 기반 Stage이며 `04_audio`와 독립적으로 ready가 된다.
 
 `LocalExecutor`는 injected Stage runner를 `StageTask`로 submit하고 검증된 semaphore capacity 안에서
 실행한다. async handle, idempotency, 결과 identity와 취소 경계는
@@ -200,7 +203,8 @@ Content-addressed Stage cache key와 manifest/artifact 검증 기반 cache decis
 결정은 [`ADR-0012`](./adr/0012-content-addressed-manifest-cache-decisions.md)에 기록한다.
 PipelineEngine은 선택적으로 RunStore journal과 cache evaluator를 연결해 같은 run/stage attempt를
 재개하며 결정은 [`ADR-0013`](./adr/0013-pipeline-engine-run-journal-and-cache-resume.md)에 기록한다.
-legacy 01~11 Stage와 독립 `08_ocr` Stage는 strict StageTask adapter로 LocalExecutor에 연결됐다.
+legacy 01~11 Stage와 독립 `04_embedded_text`·`08_ocr` Stage는 strict StageTask adapter로
+LocalExecutor에 연결됐다.
 keyframe sidecar는
 deterministic bundle로 추적하고 timeline/context companion 문서와 index DB도 logical output으로
 등록한다. 결정은
@@ -212,7 +216,7 @@ run 간 재사용은 [`ADR-0020`](./adr/0020-run-store-global-cache-index.md)에
 `PipelineApplicationService`는 adapter-neutral run request를 검증하고 planner 선택, run/trace ID,
 Stage config/model binding 필터와 boundary artifact 요구를 조정한다. `LocalPipelineRuntimeFactory`는
 입력 video를 local Artifact Store의 `00_input/`에 등록하고 Local Run Store, cache evaluator,
-LocalExecutor, 12-stage compatibility binding과 inference service를 조립한다. 같은 run의 부분
+LocalExecutor, 13-stage compatibility binding과 inference service를 조립한다. 같은 run의 부분
 실행은 이전 manifest에서 integrity가 확인된 boundary output만 복구한다. 결정은
 [`ADR-0017`](./adr/0017-pipeline-application-service-and-local-runtime.md)에 기록한다.
 
@@ -314,6 +318,13 @@ Caption Service가 Provider capability를 기준으로 전체 ordered 입력을 
 `all`과 caption keyword 기반 `caption-hints`를 명시적으로 선택할 수 있다. 09는 `ocr_text`와
 `visual_ocr`을 additive하게 병합하고 10/11과 QueryService가 화면 텍스트를 소비한다. 결정은
 [`ADR-0033`](./adr/0033-optional-ocr-stage-and-provider-contract.md)에 기록한다.
+
+내장 자막과 챕터는 모델 추론이 아니라 규칙 기반 media extraction 책임이다. `04_embedded_text`가
+ffprobe stream metadata와 video Artifact를 받아 지원 text subtitle codec을 FFmpeg WebVTT로
+정규화하고 chapter 구간을 함께 publish한다. bitmap subtitle은 stable unsupported reason으로
+보존하며, `09_timeline`은 concrete FFmpeg를 알지 않고 `embedded_text` Artifact만 join한다. 자막 cue와
+scene, scene과 chapter의 최대 겹침 단일 배정 및 downstream additive text 계약은
+[`ADR-0034`](./adr/0034-embedded-subtitle-and-chapter-artifact.md)에 기록한다.
 
 `stt.default`는 `LocalSTTProvider`에 연결되어 있다. `s06_stt`는 16kHz WAV ArtifactRef와
 병합된 VAD chunk를 전달하며 faster-whisper model lifecycle과 audio decode는 Provider가 맡는다.

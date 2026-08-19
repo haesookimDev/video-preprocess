@@ -1,8 +1,9 @@
 # video-preprocess
 
 긴 영상을 검색·요약·질의응답에 사용할 수 있는 타임라인과 LLM 컨텍스트로 변환하는 로컬
-전처리 파이프라인이다. 영상에서 씬, 키프레임, 음성 구간, 전사, 화자, 캡션과 선택적 OCR을 추출한 뒤
-SQLite 검색 인덱스와 자기완결형 `context.md`를 생성한다. LLM 호출 자체는 포함하지 않는다.
+전처리 파이프라인이다. 영상에서 씬, 키프레임, 내장 자막·챕터, 음성 구간, 전사, 화자, 캡션과
+선택적 OCR을 추출한 뒤 SQLite 검색 인덱스와 자기완결형 `context.md`를 생성한다. LLM 호출 자체는
+포함하지 않는다.
 
 ## 현재 구현 상태
 
@@ -15,7 +16,7 @@ flowchart LR
     RUNS --> APP
     APP --> ENGINE[Pipeline Engine]
     ENGINE --> EXECUTOR[LocalExecutor]
-    EXECUTOR --> STAGES[12 Stage bindings]
+    EXECUTOR --> STAGES[13 Stage bindings]
     STAGES --> GATEWAY[Inference Gateway]
     GATEWAY --> LOCAL[Local Providers]
     GATEWAY -. endpoint 설정 .-> HTTP[HTTP Inference Provider]
@@ -29,7 +30,7 @@ flowchart LR
 
 구현된 범위:
 
-- 12단계 DAG의 dependency-ready scheduling과 bounded `LocalExecutor` 실행
+- 13단계 DAG의 dependency-ready scheduling과 bounded `LocalExecutor` 실행
 - 입력·설정·모델 binding·산출물 checksum 기반 manifest cache
 - VAD, STT, diarization, caption, OCR, embedding Local Inference Provider
 - 전체·단계별·from/to 선택 실행과 같은 local run 재개
@@ -48,6 +49,7 @@ flowchart LR
 - 씬별 다중 caption과 호환 timeline 요약
 - local caption의 CUDA→MPS→CPU 자동 선택과 capability 기반 ordered batch 처리
 - 기본 disabled의 독립 OCR Stage, Tesseract text/word box/confidence와 timeline·검색·context 병합
+- FFmpeg 기반 text subtitle cue·chapter Artifact와 timeline·검색·context 병합
 - 기존 JSON·Markdown·SQLite 출력 구조와 공통 QueryService 기반 query CLI
 
 아직 구현되지 않은 범위:
@@ -75,7 +77,7 @@ python3 -m venv .venv
 .venv/bin/python src/run_pipeline.py --preflight-only
 ```
 
-`requirements.txt`에는 현재 12단계 로컬 실행에 필요한 Python 패키지와 diarization 의존성이 포함된다.
+`requirements.txt`에는 현재 13단계 로컬 실행에 필요한 Python 패키지와 diarization 의존성이 포함된다.
 OCR은 기본 disabled이므로 Tesseract가 없어도 기존 실행은 가능하고 preflight에는 warning만 남는다.
 한국어 OCR language data는 Homebrew 기준 `brew install tesseract-lang`으로 별도 설치한다.
 개발 환경은 pytest를 포함한 다음 파일을 사용한다.
@@ -356,7 +358,7 @@ timeout은 attempt의 cooperative cancellation을 요청하고 Stage가 안전�
 영구 입력 오류나 cancellation은 재시도하지 않는다. retry마다 attempt가 증가해 manifest와
 `run_summary.json`에 별도로 남는다.
 
-## 12단계 파이프라인
+## 13단계 파이프라인
 
 | 단계 | 처리 | 주요 출력 |
 |---|---|---|
@@ -364,12 +366,13 @@ timeout은 attempt의 cooperative cancellation을 요청하고 Stage가 안전�
 | `02_scenes` | PySceneDetect 씬 경계 검출 | `scenes.json`, `scene_stats.csv` |
 | `03_keyframes` | 씬 길이 기반 후보 추출과 장면 내부 pHash 중복 제거 | `keyframes.json`, `frames/*.jpg`, `keyframe_images.zip` |
 | `04_audio` | 오디오 디먹싱·16kHz mono 정규화 | `audio.json`, `audio_16k.wav` |
+| `04_embedded_text` | text subtitle을 WebVTT cue로 정규화하고 챕터 구조 보존 | `embedded_text.json` |
 | `05_vad` | Silero VAD 음성 구간 검출 | `vad_segments.json` |
 | `06_stt` | VAD 구간만 faster-whisper 전사 | `transcript.json` |
 | `07_diarize` | pyannote 화자 분리 | `diarization.json` |
 | `08_captions` | BLIP 키프레임 ordered chunk 캡셔닝과 씬별 그룹화 | `captions.json` |
 | `08_ocr` | 선택 keyframe의 화면 문자열·word box·confidence 추출 | `ocr.json` |
-| `09_timeline` | 씬·전사·화자·다중 caption·OCR을 공통 시간축으로 병합 | `timeline.json`, `timeline.md` |
+| `09_timeline` | 씬·내장 자막·챕터·전사·화자·다중 caption·OCR을 공통 시간축으로 병합 | `timeline.json`, `timeline.md` |
 | `10_index` | SQLite FTS5 + embedding 검색 인덱스 | `index.db`, `index_summary.json` |
 | `11_context` | LLM 입력 컨텍스트 최종본 조립 | `context.md`, `context.json` |
 
@@ -386,11 +389,16 @@ card의 기존 `keyframe`·`caption`은 대표 경로와
 중복 제거된 ordered summary로 유지하고, 전체 정보는 additive `keyframes`·`visual_captions`에
 보존한다. `ocr.json`은 기본 disabled sentinel 또는 실제 provider/model/revision/runtime, trigger,
 ordered frame text와 word confidence/pixel bbox를 기록한다. timeline은 `ocr_text`와 `visual_ocr`을
-추가하고 화면 텍스트를 index/context/query까지 전달한다. 정확한 버전·호환 계약은
+추가하고 화면 텍스트를 index/context/query까지 전달한다. `embedded_text.json`은 text subtitle
+stream을 반개구간 WebVTT cue로 정규화하고 language/source ID와 챕터를 보존한다. bitmap subtitle은
+`UNSUPPORTED_SUBTITLE_CODEC`, 내장 텍스트가 없으면 `NO_EMBEDDED_TEXT`로 스킵한다. timeline은 cue를
+최대 겹침 씬 하나에 배정하고 scene별 chapter 하나를 선택해 index/context/query로 전달한다. 정확한
+버전·호환 계약은
 [ADR-0030](docs/adr/0030-duration-adaptive-keyframes-and-scene-caption-summary.md)과
 [ADR-0031](docs/adr/0031-within-scene-perceptual-keyframe-deduplication.md),
 [ADR-0032](docs/adr/0032-caption-device-selection-and-ordered-chunking.md),
-[ADR-0033](docs/adr/0033-optional-ocr-stage-and-provider-contract.md)에 있다.
+[ADR-0033](docs/adr/0033-optional-ocr-stage-and-provider-contract.md),
+[ADR-0034](docs/adr/0034-embedded-subtitle-and-chapter-artifact.md)에 있다.
 
 ## Cache와 재개
 
@@ -423,7 +431,7 @@ Local Run Store는 content cache key별 manifest 후보를 인덱싱한다. 따�
 ```text
 output/<video_stem>/
 ├── 00_input/                   # cache integrity 검증용 입력 영상 copy
-├── 01_probe/ … 11_context/     # 08_captions·08_ocr을 포함한 단계별 산출물
+├── 01_probe/ … 11_context/     # 04_embedded_text·08_captions·08_ocr 포함
 ├── _manifests/                 # run/stage manifest, cache key, ArtifactRef
 ├── _pending/                   # 원자적 publish 전 비공개 임시 artifact
 ├── logs/run_<run_id>.log       # 상세 실행 로그
@@ -504,7 +512,7 @@ HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
   .venv/bin/python -m pytest -o addopts='' \
   tests/inference/test_http_server_model.py
 
-# 실제 sample의 12단계 REST run + artifact + query E2E
+# 실제 sample의 13단계 REST run + artifact + query E2E
 HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
   .venv/bin/python -m pytest -m 'integration and model' \
   tests/api/test_pipeline_api_model.py
@@ -551,7 +559,6 @@ ffmpeg -v error \
 
 ## 아직 없는 것 (다음 단계 후보)
 
-- 내장 자막·챕터 활용
 - 오디오 이벤트 태깅 (박수·음악 등)
 - 한국어 캡셔닝 VLM 교체 (현재 BLIP은 영어 캡션)
 - 질의 기반 2-pass 고품질 재처리

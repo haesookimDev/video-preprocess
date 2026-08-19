@@ -1,6 +1,6 @@
 # 엔진·실행기 분리 개발 로드맵
 
-상태: **Phase 7 진행 중 — OCR provider·pipeline 통합 완료, 다음 내장 자막·챕터 활용**
+상태: **Phase 7 진행 중 — 내장 자막·챕터 통합 완료, 다음 오디오 이벤트 provider**
 기준일: 2026-08-19
 대상 설계: [`06-target-architecture.md`](./06-target-architecture.md)  
 공개 계약: [`07-execution-inference-contracts.md`](./07-execution-inference-contracts.md)
@@ -394,7 +394,7 @@ static/API query context가 지정한 256 token 예산을 넘지 않음을 확�
 3. [x] perceptual hash 중복 제거
 4. [x] caption device 자동 선택과 batch 크기 tuning
 5. [x] OCR provider
-6. [ ] 내장 자막·챕터 활용
+6. [x] 내장 자막·챕터 활용
 7. [ ] 오디오 이벤트 provider
 8. [ ] 질의 기반 2-pass 고품질 재처리
 9. [ ] 필요 시 RemoteExecutor와 분산 worker
@@ -437,11 +437,20 @@ text/word confidence/pixel bbox 계약, capability 기반 chunking과 local Tess
 fake/default/loopback/실제 sample 경계에서 검증했다. 결정은
 [`ADR-0033`](./adr/0033-optional-ocr-stage-and-provider-contract.md)에 기록한다.
 
-다음 slice는 ffprobe가 이미 감지하는 내장 subtitle stream과 chapter metadata를 실제 Artifact와
-timeline 입력으로 승격한다. 먼저 subtitle codec별 추출 범위, 시간 구간·언어·source identity schema,
-chapter와 scene의 병합 우선순위, 없는 stream의 skip과 cache version을 fixture/ADR로 고정한다. 자막
-추출은 FFmpeg adapter가 담당하고 09/10/11은 수동 경로 선택 없이 additive text/source 필드를
-소비해야 한다.
+여섯 번째 slice도 완료했다. 독립 규칙 기반 `04_embedded_text` version `1.0.0`은
+`ass|ssa|subrip|srt|mov_text|text|ttml|webvtt` stream을 FFmpeg WebVTT cue로 정규화하고 chapter의
+원본 ID·구간·title·language를 보존한다. bitmap/미지원 codec과 없는 input은 stable skip reason을
+가진 Artifact로 남긴다. 09 version `1.4.0`은 cue와 chapter를 반개구간 최대 겹침·중점 규칙으로
+scene에 단일 배정하고, 10/11 version `1.3.0`과 QueryService가 chapter title·내장 자막을 검색과
+context에 전달한다. 기본 DAG는 13개 Stage이며 실제 FFmpeg 합성 fixture와 sample 전체 실행으로
+검증했다. 결정은
+[`ADR-0034`](./adr/0034-embedded-subtitle-and-chapter-artifact.md)에 기록한다.
+
+다음 slice는 오디오 이벤트 provider다. 먼저 음악·박수·경보처럼 음성이 아닌 시간 구간의 공통
+InferenceTask/result schema, label taxonomy·confidence·겹침 정책, audio ArtifactRef batch와
+local/HTTP 배포 경계를 fake contract/ADR로 고정한다. 독립 Stage는 `04_audio` 뒤에서 실행하고
+09/10/11에는 source/confidence를 잃지 않는 additive field로 병합해야 하며, 기본 모델 의존성·실행
+비용을 강제하지 않는 disabled sentinel부터 구현한다.
 
 ## 12. 테스트 전략
 

@@ -23,7 +23,7 @@
 | [`02-audio.md`](./02-audio.md) | 오디오 처리 방법론 | VAD·STT·화자 분리 전략 변경 시 |
 | [`03-metadata.md`](./03-metadata.md) | 메타데이터·시간축 방법론 | 산출물 스키마나 시간축 변경 시 |
 | [`04-integration.md`](./04-integration.md) | 검색·컨텍스트 방법론 | 검색·조립 전략 변경 시 |
-| [`05-pipeline.md`](./05-pipeline.md) | 현재 12단계 구현 설명 | 실제 단계 동작이 변경될 때 |
+| [`05-pipeline.md`](./05-pipeline.md) | 현재 13단계 구현 설명 | 실제 단계 동작이 변경될 때 |
 | [`06-target-architecture.md`](./06-target-architecture.md) | 목표 시스템 아키텍처 | 컴포넌트 책임이나 의존 방향 변경 시 |
 | [`07-execution-inference-contracts.md`](./07-execution-inference-contracts.md) | 실행·추론 인터페이스 계약 | API, 스키마, 오류 정책 변경 시 |
 | [`08-development-roadmap.md`](./08-development-roadmap.md) | 단계별 개발 계획 | 범위·순서·완료 조건 변경 시 |

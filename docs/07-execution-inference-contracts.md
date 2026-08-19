@@ -18,7 +18,7 @@ Executor Port와 bounded LocalExecutor는
 [`src/video_preprocess/executors/`](../src/video_preprocess/executors/)에 구현됐다. dependency-ready
 PipelineEngine과 상태 머신은
 [`src/video_preprocess/engine/`](../src/video_preprocess/engine/)에 구현됐다. manifest cache key와
-decision, RunStore journal, 같은 run resume와 Store 범위 global cache index도 구현됐다. 전체 12개
+decision, RunStore journal, 같은 run resume와 Store 범위 global cache index도 구현됐다. 전체 13개
 legacy Stage binding과 기본 CLI/cache-aware preview도 구현됐다. HTTP Inference v1 transport는
 [`openapi/inference-v1.yaml`](./openapi/inference-v1.yaml)로 확정했고 stdlib 기반 HTTP Provider
 client와 reference server가 구현됐다. 배포별 local/HTTP binding 설정은 composition root에 연결됐다.
@@ -275,8 +275,9 @@ Engine 내부 상태인 `pending`, `queued`, `running`은 최종 `StageResult`�
 - producer가 없거나 해당 Stage의 ancestor가 아닌 required input
 
 `DAGPlanner`는 등록 순서와 무관하게 dependency를 우선하고, 동시에 준비된 Stage는 stable
-name 사전순으로 정렬한다. 현재 12개 Stage는 기존 01~11 순서를 유지하면서
-`08_captions → 08_ocr → 09_timeline`으로 plan된다.
+name 사전순으로 정렬한다. 현재 13개 Stage는 기존 01~11 순서를 유지하면서
+`01_probe → 04_embedded_text → 09_timeline`과
+`08_captions → 08_ocr → 09_timeline` join을 plan한다.
 
 선택 규칙:
 
@@ -318,7 +319,7 @@ RunStore가 주입되면 Engine은 시작, 각 Stage terminal과 run terminal �
 [`ADR-0013`](./adr/0013-pipeline-engine-run-journal-and-cache-resume.md),
 [`ADR-0029`](./adr/0029-dependency-ready-bounded-local-concurrency.md)에 기록한다.
 
-### 4.6 Legacy 01~11 + OCR compatibility binding
+### 4.6 Legacy 01~11 + embedded text/OCR compatibility binding
 
 `LegacyStageTaskRunner`는 기존 `run(ctx)` Stage를 LocalExecutor에 연결하는 migration adapter다.
 task의 Stage/version, logical input, config와 model binding key를 exact match하고, legacy Stage가
@@ -334,6 +335,7 @@ task의 Stage/version, logical input, config와 model binding key를 exact match
 | `02_scenes` | `scenes` JSON, `scene_stats` CSV |
 | `03_keyframes` | `keyframes` JSON, deterministic `keyframe_images` ZIP |
 | `04_audio` | `audio` WAV와 `audio_metadata` JSON |
+| `04_embedded_text` | `embedded_text` JSON |
 
 no-audio에서는 `audio`가 `audio_metadata` JSON sentinel과 같은 ArtifactRef를 사용한다. 03의 가변
 JPEG sidecar는 정렬·고정 metadata ZIP으로 묶어 manifest에서 누락/변조를 검증한다. 이 계약
@@ -406,7 +408,7 @@ skipped result를 반환한다. `all`은 모든 최종 keyframe, `caption-hints`
 
 10은 `embedding.default`를 exact match하고 `embed_model` config를 task/cache semantics에 포함한다.
 성공한 index summary의 embed provider/model/revision/runtime은 `embedding` slot의
-`ModelExecution`으로 변환한다. 세 binding 묶음과 전체 12단계 binding은 각각 생성할 수 있고,
+`ModelExecution`으로 변환한다. 세 binding 묶음과 전체 13단계 binding은 각각 생성할 수 있고,
 전체 registry는 서로 다른 Stage가 사용하는 config field를 분리하고 binding별 잠금으로 적용·복원을
 보호해 독립 Stage 본문을 병렬 실행할 수 있다. 상세 결정은
 [`ADR-0016`](./adr/0016-legacy-final-stage-and-pipeline-bindings.md)에 기록한다.
@@ -424,12 +426,31 @@ speaker turn도 같은 규칙으로 하나를 고른다. timeline은 assignment 
 연결한다. 단일 frame에서는 기존 scalar 값과 Markdown 표현을 유지한다. top-level
 `visual_summary_policy`는 `ordered_unique_caption_join`이다.
 
-현재 09 version `1.3.0`은 `08_ocr` 결과를 scene별로 병합한다. `visual_ocr`은 frame 순서와
+09 version `1.3.0`은 `08_ocr` 결과를 scene별로 병합한다. `visual_ocr`은 frame 순서와
 word region confidence/pixel bbox를 보존하고 `ocr_text`는 비어 있지 않은 중복 문자열을 한 번만
 남긴 ` | ` 호환 summary다. top-level `ocr_summary_policy`는
 `ordered_unique_ocr_text_join`이다. 10 version `1.2.0`은 OCR text를 embedding/FTS card text에,
 11 version `1.2.0`과 QueryService는 `화면 텍스트:` context 줄에 포함한다. OCR이 disabled이거나
 text가 없으면 scalar는 `null`, 배열은 비어 기존 필드 의미를 바꾸지 않는다.
+
+`04_embedded_text` version `1.0.0`은 `video`와 `metadata`를 입력으로 받고 FFmpeg WebVTT를 통해
+text subtitle stream을 cue로 정규화한다. 지원 codec은 `ass|ssa|subrip|srt|mov_text|text|ttml|webvtt`다.
+그 밖의 stream은 `UNSUPPORTED_SUBTITLE_CODEC`으로 보존한다. cue의 반개구간과 plain text 외에
+`subtitle:stream:<index>:cue:<ordinal>` source ID, source stream, stream/cue index와 language를
+제공한다. chapter는 배열 위치 기반 `chapter:<index>` source ID, 원래 container ID, start/end,
+title과 language를 보존한다.
+
+subtitle/chapter가 없으면 빈 Artifact와 `NO_EMBEDDED_TEXT`, 지원 불가 stream만 있으면
+`NO_EXTRACTABLE_EMBEDDED_TEXT` skipped result를 반환한다. 지원 stream 변환 오류는 부분 publish 없이
+Stage를 실패시킨다. 상세 결정은
+[`ADR-0034`](./adr/0034-embedded-subtitle-and-chapter-artifact.md)에 기록한다.
+
+현재 09 version `1.4.0`은 `embedded_text`를 필수 logical input으로 받고 cue를 transcript와 같은
+최대 겹침·중점 tie-break로 scene 하나에만 배정한다. scene도 가장 많이 겹치는 chapter 하나를 갖는다.
+scene card의 `subtitles`는 source field 전체를, `subtitle_text`는 ordered unique join을, `chapter`는
+구조 source를 보존한다. 10/11 version `1.3.0`은 chapter title과 subtitle text를 index와
+static/query context에 additive하게 포함한다. 09/10/11 version 상승으로 기존 cache는 한 번
+무효화되며 이 slice는 자막 품질을 근거로 STT를 자동 skip하지 않는다.
 
 ### 4.7 Pipeline Application Service
 
