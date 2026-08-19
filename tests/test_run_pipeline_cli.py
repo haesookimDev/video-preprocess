@@ -194,6 +194,7 @@ def test_caption_tuning_is_reported_by_dry_run(
     assert payload["local_inference"] == {
         "caption_device": "cpu",
         "caption_batch_size": 2,
+        "audio_event_device": "auto",
         "audio_event_batch_size": 8,
         "ocr_command": "tesseract",
         "ocr_batch_size": 4,
@@ -222,6 +223,36 @@ def test_invalid_caption_batch_size_is_a_cli_input_error(
 
     assert run_pipeline.main() == 2
     assert "caption_batch_size" in capsys.readouterr().err
+
+
+def test_enabled_audio_events_use_local_provider_without_endpoint(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    ready_preflight(monkeypatch)
+    video = tmp_path / "video.mp4"
+    video.write_bytes(b"video")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_pipeline.py",
+            str(video),
+            "--stage",
+            "01_probe",
+            "--audio-event-mode",
+            "all",
+            "--audio-event-device",
+            "cpu",
+            "--dry-run",
+        ],
+    )
+
+    assert run_pipeline.main() == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["inference_deployments"] == {}
+    assert payload["local_inference"]["audio_event_device"] == "cpu"
 
 
 def test_enabled_local_ocr_requires_command(

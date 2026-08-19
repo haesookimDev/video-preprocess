@@ -41,6 +41,7 @@ AUDIO_EVENT_LABELS = (
     "noise",
 )
 AUDIO_EVENT_OVERLAP_POLICY = "merge-same-label-overlap-v1"
+DEFAULT_AUDIO_EVENT_MODEL = "MIT/ast-finetuned-audioset-10-10-0.4593"
 _LABEL_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
 
 

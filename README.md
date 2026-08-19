@@ -32,14 +32,14 @@ flowchart LR
 
 - 14단계 DAG의 dependency-ready scheduling과 bounded `LocalExecutor` 실행
 - 입력·설정·모델 binding·산출물 checksum 기반 manifest cache
-- VAD, STT, diarization, caption, OCR, embedding Local Inference Provider
+- VAD, STT, diarization, caption, OCR, audio event, embedding Local Inference Provider
 - 전체·단계별·from/to 선택 실행과 같은 local run 재개
 - 같은 output workspace의 run 간 content-addressed cache 재사용
 - Stage별 cache 상태·실행 예상·stable reason을 제공하는 read-only dry-run
 - offline snapshot·immutable revision·VAD asset 기반 local model fingerprint 확인
 - Stage timeout, cooperative cancellation과 분류된 bounded retry
 - HTTP Inference v1 client, async job submit/poll/cancel, retry와 circuit breaker
-- embedding/OCR local·HTTP와 audio-event HTTP alias 배포 설정, 원격 effective model fingerprint
+- embedding/OCR/audio-event local·HTTP alias 배포 설정과 원격 effective model fingerprint
 - LocalEmbeddingProvider를 공개하는 production HTTP server adapter와 실행 CLI
 - 영속 run 상태, 멱등성, 취소, artifact와 query를 공개하는 Pipeline REST API v1
 - 반개구간·최대 겹침 기반 timeline 단일 배정과 source/confidence 보존
@@ -50,13 +50,12 @@ flowchart LR
 - local caption의 CUDA→MPS→CPU 자동 선택과 capability 기반 ordered batch 처리
 - 기본 disabled의 독립 OCR Stage, Tesseract text/word box/confidence와 timeline·검색·context 병합
 - FFmpeg 기반 text subtitle cue·chapter Artifact와 timeline·검색·context 병합
-- 기본 disabled의 오디오 이벤트 Stage, canonical taxonomy와 HTTP Inference v1·downstream 병합
+- 기본 disabled의 오디오 이벤트 Stage, local AudioSet AST/HTTP 전환과 downstream 병합
 - 기존 JSON·Markdown·SQLite 출력 구조와 공통 QueryService 기반 query CLI
 
 아직 구현되지 않은 범위:
 
 - caption/STT/diarization/VAD alias의 HTTP 배포 연결
-- `audio_event.default`의 local model Provider와 label mapping
 - 직접 media upload, queue adapter와 RemoteExecutor
 
 정확한 완료 상태와 다음 작업은 [docs/STATUS.md](docs/STATUS.md)를 기준으로 한다.
@@ -185,7 +184,8 @@ curl -sS -X DELETE \
 | `--executor-max-concurrency N` | run 내부에서 동시에 실행할 local Stage 수. 기본값 1 |
 | `--caption-device DEVICE` | local caption 장치. 기본값 `auto`(CUDA→MPS→CPU) |
 | `--caption-batch-size N` | local caption ordered chunk 크기. 기본값 4 |
-| `--audio-event-batch-size N` | 원격 오디오 이벤트 ordered chunk 크기. 기본값 8 |
+| `--audio-event-device DEVICE` | local 오디오 이벤트 장치. 기본값 `auto`(CUDA→MPS→CPU) |
+| `--audio-event-batch-size N` | 오디오 이벤트 ordered chunk 크기. 기본값 8 |
 | `--audio-event-endpoint URL` | `audio_event.default` HTTP Inference v1 endpoint |
 | `--audio-event-token-env NAME` | 오디오 이벤트 endpoint bearer token 환경변수 이름 |
 | `--audio-event-artifact-namespace NAME` | 원격 Provider가 읽을 Artifact namespace. 반복 가능 |
@@ -241,7 +241,13 @@ bind할 때는 Bearer 인증과 reverse proxy/service mesh의 TLS 종료를 사�
   --ocr-language eng \
   --force-stage 08_ocr
 
-# compatible HTTP Provider로 비음성 오디오 이벤트 검출
+# 기본 MIT AudioSet AST Local Provider로 비음성 오디오 이벤트 검출
+.venv/bin/python src/run_pipeline.py samples/sample.mp4 \
+  --audio-event-mode all \
+  --audio-event-device auto \
+  --force-stage 05_audio_events
+
+# 같은 Stage를 compatible HTTP Provider로 전환
 .venv/bin/python src/run_pipeline.py samples/sample.mp4 \
   --audio-event-mode all \
   --audio-event-endpoint http://127.0.0.1:8082 \
@@ -266,12 +272,13 @@ bind할 때는 Bearer 인증과 reverse proxy/service mesh의 TLS 종료를 사�
 | `--caption-device DEVICE` | local caption 장치. `auto`는 CUDA→MPS→CPU 순서, 기본값은 `auto` |
 | `--caption-batch-size N` | Provider 최대값 이하로 나눌 ordered chunk 크기. 기본값은 4 |
 | `--audio-event-mode MODE` | `disabled` 또는 `all`. 기본값은 `disabled` |
-| `--audio-event-model MODEL` | endpoint에 요청할 model 이름 |
+| `--audio-event-model MODEL` | Provider model 이름. 기본값은 MIT AudioSet AST |
 | `--audio-event-label LABEL` | `audio-events-v1` label. 반복 가능, 기본값은 전체 |
 | `--audio-event-min-confidence N` | event confidence 하한 0~1. 기본값은 0.5 |
 | `--audio-event-window-sec N` | 분류 window 초. 기본값은 5.0 |
 | `--audio-event-hop-sec N` | 분류 hop 초. 기본값은 2.5 |
-| `--audio-event-batch-size N` | HTTP ordered chunk 크기. 기본값은 8 |
+| `--audio-event-device DEVICE` | local 장치. `auto`는 CUDA→MPS→CPU 순서, 기본값은 `auto` |
+| `--audio-event-batch-size N` | Provider 최대값 이하 ordered chunk 크기. 기본값은 8 |
 | `--audio-event-endpoint URL` | `audio_event.default` HTTP Inference v1 endpoint |
 | `--audio-event-token-env NAME` | endpoint bearer token 환경변수 이름 |
 | `--audio-event-artifact-namespace NAME` | endpoint가 읽을 Artifact namespace. 반복 가능 |
@@ -417,9 +424,11 @@ ordered frame text와 word confidence/pixel bbox를 기록한다. timeline은 `o
 stream을 반개구간 WebVTT cue로 정규화하고 language/source ID와 챕터를 보존한다. bitmap subtitle은
 `UNSUPPORTED_SUBTITLE_CODEC`, 내장 텍스트가 없으면 `NO_EMBEDDED_TEXT`로 스킵한다. timeline은 cue를
 최대 겹침 씬 하나에 배정하고 scene별 chapter 하나를 선택해 index/context/query로 전달한다.
-`audio_events.json`은 기본 `AUDIO_EVENTS_DISABLED` sentinel이며 explicit HTTP endpoint가 있을 때
-16 kHz WAV ArtifactRef window를 canonical label로 분류한다. timeline의 전체 event는 confidence와
-source window ID를 유지하고 index/context/query가 label과 confidence를 소비한다. 정확한
+`audio_events.json`은 기본 `AUDIO_EVENTS_DISABLED` sentinel이다. 활성화하면 endpoint 유무에 따라
+local MIT AudioSet AST 또는 HTTP Provider가 16 kHz WAV ArtifactRef window를 canonical label로
+분류한다. local Provider는 `ast-audioset-527-to-audio-events-v1` 매핑과 softmax source score의
+canonical별 최댓값을 사용하고 실제 device·model commit을 runtime에 기록한다. timeline의 전체 event는
+confidence와 source window ID를 유지하고 index/context/query가 label과 confidence를 소비한다. 정확한
 버전·호환 계약은
 [ADR-0030](docs/adr/0030-duration-adaptive-keyframes-and-scene-caption-summary.md)과
 [ADR-0031](docs/adr/0031-within-scene-perceptual-keyframe-deduplication.md),
@@ -587,7 +596,6 @@ ffmpeg -v error \
 
 ## 아직 없는 것 (다음 단계 후보)
 
-- 오디오 이벤트 local model Provider와 AudioSet→canonical label mapping
 - 한국어 캡셔닝 VLM 교체 (현재 BLIP은 영어 캡션)
 - 질의 기반 2-pass 고품질 재처리
 

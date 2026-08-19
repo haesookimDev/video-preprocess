@@ -67,6 +67,8 @@ def test_cli_composes_server_without_printing_token(monkeypatch, capsys) -> None
             "cpu",
             "--caption-batch-size",
             "3",
+            "--audio-event-device",
+            "cpu",
             "--ocr-command",
             "custom-tesseract",
             "--ocr-batch-size",
@@ -87,6 +89,7 @@ def test_cli_composes_server_without_printing_token(monkeypatch, capsys) -> None
     assert seen["runtime_factory"]["executor_max_concurrency"] == 2
     assert seen["runtime_factory"]["caption_device"] == "cpu"
     assert seen["runtime_factory"]["caption_batch_size"] == 3
+    assert seen["runtime_factory"]["audio_event_device"] == "cpu"
     assert seen["runtime_factory"]["ocr_command"] == "custom-tesseract"
     assert seen["runtime_factory"]["ocr_batch_size"] == 2
     deployments = seen["run_service"]["deployments"]

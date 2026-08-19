@@ -1,6 +1,6 @@
 # 엔진·실행기 분리 개발 로드맵
 
-상태: **Phase 7 진행 중 — 오디오 이벤트 계약·HTTP Stage 통합 완료, 다음 local Provider**
+상태: **Phase 7 진행 중 — 오디오 이벤트 local/HTTP Provider 완료, 다음 2-pass 재처리**
 기준일: 2026-08-19
 대상 설계: [`06-target-architecture.md`](./06-target-architecture.md)  
 공개 계약: [`07-execution-inference-contracts.md`](./07-execution-inference-contracts.md)
@@ -395,7 +395,7 @@ static/API query context가 지정한 256 token 예산을 넘지 않음을 확�
 4. [x] caption device 자동 선택과 batch 크기 tuning
 5. [x] OCR provider
 6. [x] 내장 자막·챕터 활용
-7. [ ] 오디오 이벤트 provider — 공통 계약·HTTP/disabled Stage 완료, local Provider 남음
+7. [x] 오디오 이벤트 provider — 공통 계약·local AST/HTTP/disabled Stage 완료
 8. [ ] 질의 기반 2-pass 고품질 재처리
 9. [ ] 필요 시 RemoteExecutor와 분산 worker
 
@@ -453,10 +453,18 @@ HTTP Inference v1로 호출한다. 09 version `1.5.0`, 10/11 version `1.4.0`은 
 보존해 timeline·index·static/query context에 additive하게 전달하고 기본 DAG는 14개 Stage다. 결정은
 [`ADR-0035`](./adr/0035-optional-audio-event-provider-and-stage.md)에 기록한다.
 
-다음 slice는 같은 계약의 local audio event Provider다. 후보 모델의 라이선스·AudioSet label mapping,
-16 kHz WAV decode, device/resource profile과 effective revision을 먼저 검증하고 lazy load·offline fake와
-명시적 model integration test를 추가한다. local/HTTP 선택은 composition root에만 두며 기본 disabled를
-유지한다.
+일곱 번째 slice의 local 부분도 완료했다. BSD-3-Clause의
+`MIT/ast-finetuned-audioset-10-10-0.4593`을 reference model로 선택하고 527개 label index를 검증하는
+`ast-audioset-527-to-audio-events-v1` mapping을 추가했다. LocalAudioEventProvider는 PCM16 mono
+16 kHz decode, 짧은 tail padding, decoded audio/model lazy reuse, CUDA→MPS→CPU 선택, cache-first load와
+resolved Hub commit을 소유한다. composition root는 endpoint가 없으면 local, 있으면 HTTP를 고르며
+기본 disabled는 모델을 구성하거나 다운로드하지 않는다. fake·실제 CPU model과 local/HTTP Stage,
+14-stage sample/query 경계로 검증했다.
+
+다음 slice는 8번 질의 기반 2-pass 고품질 재처리다. 먼저 QueryService 결과가 재처리 후보 scene과
+요청 품질 profile을 표현하는 Application 계약, 1-pass artifact provenance, 재실행 가능한 Stage 범위와
+cache/version 정책을 ADR/fake test로 고정한다. 기존 query는 read-only를 유지하고 명시적인 재처리
+command/API만 mutation을 일으켜야 한다.
 
 ## 12. 테스트 전략
 

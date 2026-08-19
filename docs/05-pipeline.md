@@ -28,7 +28,7 @@ flowchart TD
         S05["<b>05_vad</b><br/>음성 확률로 발화 구간만 검출<br/>무음·비음성 제거 → STT 대상 축소<br/><i>모델: Silero VAD (ONNX)</i>"]
         S06["<b>06_stt</b><br/>VAD 구간을 병합(gap≤0.5s) 후<br/>구간별 전사, 타임스탬프 원본 보정<br/><i>모델: faster-whisper base/small</i>"]
         S07["<b>07_diarize</b><br/>화자 임베딩 클러스터링으로<br/>발화 턴별 화자 라벨 부여<br/><i>모델: pyannote community-1</i>"]
-        S05E["<b>05_audio_events</b><br/>선택적 비음성 event window 분류<br/><i>HTTP audio_event.default, 기본 disabled</i>"]
+        S05E["<b>05_audio_events</b><br/>선택적 비음성 event window 분류<br/><i>local AST 또는 HTTP, 기본 disabled</i>"]
         S04 --> S05 --> S06
         S04 --> S05E
         S04 --> S07
@@ -72,7 +72,7 @@ flowchart TD
 | 03_keyframes | 8초·20초 경계로 1~3개 내부 균등 후보를 추출하고 같은 scene의 64-bit DCT pHash 거리가 6 이하면 제거. 최소 1장 보존 | ffmpeg `-ss`, Pillow | sample 후보 6장→4장 |
 | 04_audio | 오디오 트랙 분리 후 모든 음성 모델의 공통 입력인 16kHz mono PCM으로 정규화 | ffmpeg | 0.1s |
 | 04_embedded_text | text subtitle stream을 WebVTT cue로 변환하고 `[start,end)`·언어·source ID와 chapter를 정규화. bitmap/없음은 stable skip | ffmpeg, ffprobe metadata | 합성 MP4 cue 2·chapter 2 추출 |
-| 05_audio_events | 기본 disabled. WAV ArtifactRef와 ordered window batch로 canonical 비음성 event 검출·병합 | 주입된 `audio_event.default` HTTP Provider | disabled 0s |
+| 05_audio_events | 기본 disabled. WAV ArtifactRef와 ordered window batch로 canonical 비음성 event 검출·병합 | 주입된 local AST/HTTP `audio_event.default` | disabled 0s |
 | 05_vad | WAV ArtifactRef와 silence/padding option을 VAD Provider에 전달. 음성 구간만 추출해 Whisper 무음 환각 방지 | Local Silero VAD Provider (faster-whisper 내장 ONNX) | 0.1s (+ 첫 session load) |
 | 06_stt | 인접 VAD 구간 병합(gap ≤ 0.5s) 후 WAV ArtifactRef와 구간을 STT Provider에 전달. Provider가 원본 시간축으로 보정 | Local faster-whisper Provider `base`(기본)/`small` (CTranslate2 int8) | 5.6s / 13.9s |
 | 07_diarize | WAV ArtifactRef를 Diarization Provider에 전달. Provider가 화자 임베딩·클러스터링 후 발화 턴별 라벨 반환 | Local pyannote Provider `speaker-diarization-community-1` (HF 게이트) | 27.9s |
@@ -130,8 +130,12 @@ language와 구간을 보존한다. bitmap/unknown codec은 `UNSUPPORTED_SUBTITL
 `05_audio_events/audio_events.json`은 기본 `disabled`에서 `AUDIO_EVENTS_DISABLED` sentinel을
 publish한다. 활성화하면 16 kHz WAV ArtifactRef와 반개구간 window batch를 `audio_event.default`에
 전달한다. `audio-events-v1` canonical label/confidence 응답에서 동일 label의 겹치거나 맞닿은 window만
-합치고 source window ID를 보존한다. 현재 활성화에는 explicit HTTP endpoint가 필요하며 local model은
-후속 구현이다. 상세 결정은
+합치고 source window ID를 보존한다. endpoint가 없으면 BSD-3-Clause의
+`MIT/ast-finetuned-audioset-10-10-0.4593`, 있으면 HTTP Inference v1을 사용하며 자동 fallback은 없다.
+local Provider는 mono PCM16 16 kHz를 검증하고 AudioSet 527개 class를
+`ast-audioset-527-to-audio-events-v1`로 변환한다. metadata/WAV 끝점은 10ms 안에서만 clamp하고
+400 sample보다 짧은 마지막 window는 feature extraction을 위해 zero padding한다. 기본 mode는 계속
+disabled이므로 모델을 load하거나 download하지 않는다. 상세 결정은
 [`ADR-0035`](./adr/0035-optional-audio-event-provider-and-stage.md)를 따른다.
 
 `06_stt/transcript.json`은 기존 segment 구조를 유지하며 실제 `provider`, model `revision`,

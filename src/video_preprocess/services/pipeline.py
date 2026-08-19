@@ -21,6 +21,7 @@ from video_preprocess.engine import (
 from video_preprocess.executors import CancellationToken
 from video_preprocess.inference import (
     AUDIO_EVENT_LABELS,
+    DEFAULT_AUDIO_EVENT_MODEL,
     InferenceDeploymentSettings,
 )
 from video_preprocess.engine.planner import ExecutionPlan
@@ -44,7 +45,7 @@ class PipelineSettings:
     vad_min_silence_ms: int = 500
     vad_speech_pad_ms: int = 200
     audio_event_mode: str = "disabled"
-    audio_event_model: str = "audio-event-classifier"
+    audio_event_model: str = DEFAULT_AUDIO_EVENT_MODEL
     audio_event_labels: tuple[str, ...] = AUDIO_EVENT_LABELS
     audio_event_min_confidence: float = 0.5
     audio_event_window_sec: float = 5.0

@@ -91,8 +91,8 @@ def main() -> int:
     )
     parser.add_argument(
         "--audio-event-model",
-        default="audio-event-classifier",
-        help="audio_event.default가 제공할 model 이름",
+        default="MIT/ast-finetuned-audioset-10-10-0.4593",
+        help="audio_event.default model 이름 (기본: MIT AudioSet AST)",
     )
     parser.add_argument(
         "--audio-event-label",
@@ -119,10 +119,15 @@ def main() -> int:
         help="오디오 이벤트 분류 hop 초 (기본: 2.5)",
     )
     parser.add_argument(
+        "--audio-event-device",
+        default="auto",
+        help="local audio event device: auto, cpu, cuda, mps 등 (기본: auto)",
+    )
+    parser.add_argument(
         "--audio-event-batch-size",
         type=int,
         default=8,
-        help="오디오 이벤트 HTTP ordered chunk 크기 (기본: 8)",
+        help="오디오 이벤트 ordered chunk 크기 (기본: 8)",
     )
     parser.add_argument("--audio-event-endpoint", default=None,
                         help="audio_event.default HTTP Inference v1 endpoint")
@@ -226,16 +231,6 @@ def main() -> int:
     if not args.video.exists():
         print(f"오류: 영상 파일이 없습니다: {args.video}", file=sys.stderr)
         return 1
-    if args.audio_event_mode != "disabled" and (
-        args.audio_event_endpoint is None
-    ):
-        print(
-            "오류: 오디오 이벤트 활성화에는 "
-            "--audio-event-endpoint가 필요합니다",
-            file=sys.stderr,
-        )
-        return 2
-
     # 무거운 단계 모듈은 runtime factory가 실제 실행 시점에만 로드한다.
     from video_preprocess.engine import DAGPlanner, create_default_registry
     from video_preprocess.inference import AUDIO_EVENT_LABELS
@@ -317,6 +312,7 @@ def main() -> int:
                 executor_max_concurrency=args.executor_max_concurrency,
                 caption_device=args.caption_device,
                 caption_batch_size=args.caption_batch_size,
+                audio_event_device=args.audio_event_device,
                 audio_event_batch_size=args.audio_event_batch_size,
                 ocr_command=args.ocr_command,
                 ocr_batch_size=args.ocr_batch_size,
@@ -348,6 +344,7 @@ def main() -> int:
                     "local_inference": {
                         "caption_device": args.caption_device,
                         "caption_batch_size": args.caption_batch_size,
+                        "audio_event_device": args.audio_event_device,
                         "audio_event_batch_size": (
                             args.audio_event_batch_size
                         ),

@@ -43,12 +43,30 @@ context에 전달하지 못했다. 모델마다 label 집합과 시간 해상도
   `audio_events` JSON을 publish한다.
 - 기본 `audio_event_mode=disabled`는 Provider를 만들거나 호출하지 않고
   `AUDIO_EVENTS_DISABLED` sentinel을 publish한다. audio stream이 없으면 `NO_AUDIO`다.
-- mode `all`은 explicit `audio_event.default` HTTP endpoint가 있을 때만 활성화된다. 자동 local/HTTP
-  fallback은 없다. local Provider는 같은 AudioEventService/Gateway port에 이후 추가한다.
-- pipeline CLI와 server는 endpoint, bearer-token 환경변수, 허용 Artifact namespace와 service batch를
-  composition root에 전달한다. Stage는 이를 알지 못한다.
+- mode `all`은 endpoint가 없으면 LocalAudioEventProvider, 있으면 `HTTPInferenceProvider`를 사용한다.
+  양쪽 사이의 자동 fallback은 없다.
+- pipeline CLI와 server는 local device, endpoint, bearer-token 환경변수, 허용 Artifact namespace와
+  service batch를 composition root에 전달한다. Stage는 이를 알지 못한다.
 - 기본 DAG는 14개 Stage다. 09 version `1.5.0`, 10/11 version `1.4.0`이 event label과 confidence를
   timeline, index, static/query context에 additive하게 전달한다.
+
+### Local reference Provider
+
+- reference model은 BSD-3-Clause
+  [`MIT/ast-finetuned-audioset-10-10-0.4593`](https://huggingface.co/MIT/ast-finetuned-audioset-10-10-0.4593)이다.
+  86.6M parameter·F32 weight 약 346MB이고 Transformers AST/AutoFeatureExtractor를 사용한다.
+- AudioSet의 527개 class와 index 순서를 load 시 검증하고
+  `ast-audioset-527-to-audio-events-v1`로 canonical taxonomy에 매핑한다. ontology와 label 의미는
+  [AudioSet 공식 자료](https://research.google.com/audioset/download.html)를 기준으로 한다.
+- AST logits에는 softmax를 적용한다. 한 canonical label의 confidence는 그 label로 매핑된 source
+  class 확률 중 최댓값이다. model 고유 세부 label은 public output에 노출하지 않는다.
+- 입력은 uncompressed signed PCM16 mono 16 kHz WAV다. metadata와 실제 sample 길이 차이는 10ms까지만
+  끝점을 clamp하고 400 sample 미만의 유효 tail은 feature frame 생성을 위해 zero padding한다.
+- model과 같은 checksum의 decoded audio는 process 안에서 lazy reuse한다. batch 최대값은 8이고
+  `auto` device는 CUDA→MPS→CPU 순서다. 실제 device, mapping version과 resolved Hub commit을 effective
+  model에 기록한다.
+- 로컬 cache에 model config가 있으면 `local_files_only` load를 먼저 시도한다. cache가 불완전한 경우에만
+  Hub load를 재시도하며, 기본 disabled 경로는 cache 확인이나 download를 하지 않는다.
 
 ## 고려한 대안
 
@@ -65,10 +83,11 @@ context에 전달하지 못했다. 모델마다 label 집합과 시간 해상도
 
 Provider별 최대 길이와 시간 위치가 불명확하다. ArtifactRef 하나와 inline window batch를 분리했다.
 
-### 기본 local 모델을 즉시 선택
+### 계약과 local 모델을 한 번에 도입
 
-모델 정확도, 라이선스, taxonomy mapping과 resource profile 검증이 아직 없다. 기본 비용을 늘리지 않는
-disabled sentinel과 HTTP 계약을 먼저 고정하고 local 구현을 다음 slice로 둔다.
+모델 정확도, 라이선스, taxonomy mapping과 resource profile 검증 전에 Stage 계약이 모델에 종속될 수
+있었다. 기본 비용을 늘리지 않는 disabled sentinel과 HTTP 계약을 먼저 고정하고 local 구현을 후속
+slice로 검증하는 단계적 도입을 선택했다.
 
 ## 결과
 
@@ -80,7 +99,8 @@ disabled sentinel과 HTTP 계약을 먼저 고정하고 local 구현을 다음 s
 
 비용과 제약:
 
-- 활성화에는 현재 HTTP endpoint가 필요하며 repository 자체 reference local model은 아직 없다.
+- local 활성화의 첫 실행은 약 346MB model weight download와 AST 메모리·연산 비용이 필요하다.
+- AudioSet 세부 class를 10개 canonical label로 축약하므로 source class별 설명 가능성은 제한된다.
 - 긴 event도 timeline version 1에서는 scene 하나에만 배정된다.
 - 새 Stage와 09/10/11 version 상승으로 관련 cache가 한 번 무효화된다.
 
@@ -93,10 +113,17 @@ disabled sentinel과 HTTP 계약을 먼저 고정하고 local 구현을 다음 s
   검증했다.
 - timeline 단일 배정, unassigned ID, provenance/confidence, index와 static/query context 전파를
   network-free 테스트로 검증했다.
+- fake local Provider에서 527-label mapping, ordered chunk, PCM16 decode, 10ms end clamp, short-tail padding,
+  artifact 오류, OOM, lazy health/warmup/effective revision과 device 우선순위를 검증했다.
+- 실제 CPU AST smoke test는 1개 window를 35.47초(cold download 포함)에 처리했고 resolved revision
+  `f826b80d28226b62986cc218e5cec390b1096902`를 기록했다.
+- `sample.mp4`는 13개 window를 `[8,5]`로 처리해 confidence 0.5에서 event 0개를 정상 publish했고,
+  local AST를 포함한 14-stage 전체 pipeline과 query 회귀가 성공했다.
 
 ## 구현 위치
 
 - contract/service: `src/video_preprocess/inference/audio_event.py`
+- local Provider: `src/video_preprocess/inference/local/audio_event.py`
 - Stage: `src/pipeline/stages/s05_audio_events.py`
 - DAG/binding/composition: `src/video_preprocess/engine/defaults.py`,
   `src/video_preprocess/adapters/legacy_stages.py`, `src/video_preprocess/services/local.py`

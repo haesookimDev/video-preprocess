@@ -82,6 +82,7 @@ def test_audio_event_stage_runs_unchanged_with_remote_provider(
             audio_event_labels=("music",),
             audio_event_service=create_configured_audio_event_service(
                 "example/audio-event",
+                store,
                 deployments=deployments,
                 max_batch_size=2,
             ),

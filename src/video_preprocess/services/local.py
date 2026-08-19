@@ -78,6 +78,7 @@ class LocalPipelineRuntimeFactory:
         executor_max_concurrency: int = 1,
         caption_device: str = "auto",
         caption_batch_size: int = 4,
+        audio_event_device: str = "auto",
         audio_event_batch_size: int = 8,
         ocr_command: str = "tesseract",
         ocr_batch_size: int = 4,
@@ -111,6 +112,12 @@ class LocalPipelineRuntimeFactory:
             raise ValueError("caption_batch_size must be a positive integer")
         self.caption_device = caption_device.strip().lower()
         self.caption_batch_size = caption_batch_size
+        if (
+            not isinstance(audio_event_device, str)
+            or not audio_event_device.strip()
+        ):
+            raise ValueError("audio_event_device must be a non-empty string")
+        self.audio_event_device = audio_event_device.strip().lower()
         if (
             isinstance(audio_event_batch_size, bool)
             or not isinstance(audio_event_batch_size, int)
@@ -265,6 +272,7 @@ class LocalPipelineRuntimeFactory:
             settings = request.settings
             audio_event_service = self._audio_event_service(
                 settings,
+                artifact_store,
                 request.deployments,
             )
             model_resolver = self._model_resolver(
@@ -319,6 +327,7 @@ class LocalPipelineRuntimeFactory:
         )
         context.audio_event_service = self._audio_event_service(
             context,
+            artifact_store,
             deployments,
         )
         context.ocr_service = create_configured_ocr_service(
@@ -343,12 +352,14 @@ class LocalPipelineRuntimeFactory:
             deployments=deployments,
         )
 
-    def _audio_event_service(self, settings, deployments):
+    def _audio_event_service(self, settings, artifact_store, deployments):
         if settings.audio_event_mode == "disabled":
             return None
         return create_configured_audio_event_service(
             settings.audio_event_model,
+            artifact_store,
             deployments=deployments,
+            device=self.audio_event_device,
             max_batch_size=self.audio_event_batch_size,
         )
 

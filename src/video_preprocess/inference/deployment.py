@@ -11,7 +11,6 @@ from video_preprocess.storage import ArtifactStore
 
 from .audio_event import AudioEventService
 from .embedding import EmbeddingService
-from .errors import ProviderConfigurationError
 from .gateway import InferenceGateway
 from .http import HTTPInferenceProvider, HTTPRetryPolicy
 from .ocr import OCRService
@@ -239,27 +238,30 @@ def create_configured_ocr_service(
 
 def create_configured_audio_event_service(
     model_name: str,
+    artifact_store: ArtifactStore,
     *,
     deployments: InferenceDeploymentSettings | None = None,
     alias: str = "audio_event.default",
     revision: str | None = None,
-    max_batch_size: int | None = None,
+    device: str | None = "auto",
+    max_batch_size: int = 8,
 ) -> AudioEventService:
-    """Compose the current HTTP audio-event alias.
-
-    The service boundary is also valid for an in-process Provider. The default
-    runtime intentionally requires an explicit endpoint until a local model and
-    its taxonomy mapping are implemented.
-    """
+    """Compose the audio-event alias locally or through its HTTP endpoint."""
 
     selected = deployments or InferenceDeploymentSettings()
     if not isinstance(selected, InferenceDeploymentSettings):
         raise TypeError("deployments must be InferenceDeploymentSettings")
     remote = selected.http_provider(alias)
     if remote is None:
-        raise ProviderConfigurationError(
-            "audio_event.default requires an HTTP endpoint until a local "
-            "audio event provider is configured"
+        from .local import create_local_audio_event_service
+
+        return create_local_audio_event_service(
+            model_name,
+            artifact_store,
+            alias=alias,
+            revision=revision,
+            device=device,
+            max_batch_size=max_batch_size,
         )
     provider = HTTPInferenceProvider(
         alias=alias,

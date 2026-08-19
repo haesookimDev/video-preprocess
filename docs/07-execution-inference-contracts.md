@@ -482,8 +482,9 @@ Artifact namespace는 composition 배포 설정이며 PipelineSettings에 넣지
 
 `PipelineSettings.audio_event_mode`은 `disabled|all`, label은 `audio-events-v1`의 중복 없는 부분집합,
 confidence는 0~1이며 positive `hop_sec <= window_sec`를 요구한다. 이 값과 model은 task/cache 의미다.
-service batch, endpoint, token과 Artifact namespace는 composition 배포 설정이다. 활성화에는 현재
-endpoint가 필수이고 기본 disabled에서는 local Provider나 모델 다운로드가 필요 없다.
+service batch, local device, endpoint, token과 Artifact namespace는 composition 배포 설정이다.
+endpoint가 없으면 local, 있으면 HTTP binding을 선택한다. 기본 disabled에서는 어느 Provider도
+구성하지 않으며 local 모델 다운로드도 필요 없다.
 
 local runtime은 video bytes를 `00_input/`에 원자적으로 publish하고 output root별 stable artifact
 namespace를 사용한다. 부분 실행 boundary는 명시한 같은 `run_id`의 RunManifest와 StageManifest에서
@@ -867,7 +868,25 @@ command 누락과 language data 누락은 각각 stable detail `OCR_COMMAND_NOT_
   deadline, effective model 일치와 all-or-nothing aggregate를 적용한다. 최종 event는
   `(start_sec, end_sec, label)` 순서와 1부터 연속인 `event_id`를 사용한다.
 - 이 계약과 HTTP alias 경계는 구현됐지만 기본 pipeline mode는 disabled이며 local model
-  Provider는 아직 연결하지 않는다. 따라서 새 모델 다운로드나 기본 실행 비용은 없다.
+  Provider도 같은 Gateway port에 연결된다. 따라서 새 모델 다운로드나 기본 실행 비용은 없다.
+
+LocalAudioEventProvider 규칙:
+
+- 기본 model은 BSD-3-Clause의 `MIT/ast-finetuned-audioset-10-10-0.4593`이고, model card가 고정한
+  527개 AudioSet index와 sentinel display name을 load 시 검증한다.
+- `ast-audioset-527-to-audio-events-v1`은 laughter 16~21, applause 63/67, singing/music
+  27~37·137~282, animal 72~136, alarm 310/388/395/398~400, siren 323~325/396~397,
+  vehicle 300~342, door 354~363, impact 419/426~443/460~461/465~470, noise 513~523을
+  canonical label에 연결한다. 범위가 겹칠 때 alarm/siren을 vehicle보다 먼저 적용한다.
+- AST logits에는 softmax를 적용하고 같은 canonical label로 연결된 source class 확률의 최댓값을
+  confidence로 사용한다. 요청 label과 설정 confidence 아래 결과는 반환하지 않는다.
+- 입력은 uncompressed signed PCM16 mono 16 kHz WAV다. metadata와 실제 WAV 끝점 차이는 최대
+  10ms만 clamp하고 그보다 큰 범위 초과는 거부한다. 400 sample보다 짧은 유효 window는 Kaldi
+  feature frame 생성을 위해 뒤에 zero padding한다.
+- model·decoded audio는 process 안에서 lazy reuse한다. 기본 batch 최대값은 8이고 local `auto` device는
+  CUDA→MPS→CPU 순서다. effective runtime에는 실제 device와 mapping version, model에는 resolved
+  Hub commit을 기록한다. cache에 model 파일이 있으면 network probe 없이 먼저 읽고 cache가
+  불완전할 때만 Hub load를 시도한다.
 
 ## 7. Provider 계약
 
@@ -964,8 +983,8 @@ network-free suite와 분리한다.
 `PipelineSettings`의 model 이름은 Stage 알고리즘 설정이고 `PipelineRunRequest.deployments`는 실행
 환경 설정이다. `InferenceDeploymentSettings.http_providers`에 alias가 있으면 HTTP, 없으면 local
 binding을 조합한다. 현재 pipeline composition에 적용한 alias는 `embedding.default`,
-`ocr.default`, `audio_event.default`다. 다만 audio event는 local Provider가 아직 없어 mode를
-활성화할 때 explicit HTTP endpoint가 필수다.
+`ocr.default`, `audio_event.default`다. audio event mode를 활성화하고 endpoint가 없으면 local AST,
+endpoint가 있으면 HTTP Provider를 선택한다.
 
 `HTTPProviderSettings`는 endpoint, remote Artifact namespace allowlist, request/operation timeout,
 poll 간격, capability TTL과 retry policy를 가진다. bearer token은 runtime field로만 주입하며

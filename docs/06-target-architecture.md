@@ -276,9 +276,11 @@ models:
       batch_size: 4
 
   audio_event:
-    provider: http
-    model: audio-event-classifier
-    endpoint: http://audio-event-service:8080
+    provider: local
+    model: MIT/ast-finetuned-audioset-10-10-0.4593
+    options:
+      device: auto
+      batch_size: 8
 
   embedding:
     provider: local
@@ -333,12 +335,15 @@ ffprobe stream metadata와 video Artifact를 받아 지원 text subtitle codec�
 scene, scene과 chapter의 최대 겹침 단일 배정 및 downstream additive text 계약은
 [`ADR-0034`](./adr/0034-embedded-subtitle-and-chapter-artifact.md)에 기록한다.
 
-`audio_event.default`는 현재 explicit endpoint가 있을 때만 `HTTPInferenceProvider`에 연결된다.
+`audio_event.default`는 endpoint가 없으면 `LocalAudioEventProvider`, 있으면
+`HTTPInferenceProvider`에 연결된다.
 `s05_audio_events`는 16 kHz WAV ArtifactRef와 pipeline의 taxonomy label·confidence·window 의미만
 AudioEventService에 전달하며 endpoint와 실행 위치를 알지 못한다. Service가 windowing, capability
 chunking과 같은-label overlap aggregate를, Provider가 한 window의 추론과 model label→canonical
 taxonomy mapping을 소유한다. 기본 disabled는 Provider를 구성하지 않고 stable sentinel을 publish한다.
-local Provider는 같은 Gateway port에 후속 추가하며 결정은
+local 구현은 lazy AST lifecycle, PCM16 decode, AudioSet 527-label 검증·versioned mapping과
+CUDA→MPS→CPU device 선택을 소유한다. HTTP 설정은 명시적으로 local binding을 대체하며 어느 방향으로도
+조용한 fallback은 하지 않는다. 결정은
 [`ADR-0035`](./adr/0035-optional-audio-event-provider-and-stage.md)에 기록한다.
 
 `stt.default`는 `LocalSTTProvider`에 연결되어 있다. `s06_stt`는 16kHz WAV ArtifactRef와

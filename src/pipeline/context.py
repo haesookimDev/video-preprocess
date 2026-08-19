@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from video_preprocess.inference.audio_event import DEFAULT_AUDIO_EVENT_MODEL
+
 if TYPE_CHECKING:
     from video_preprocess.tokenization import TokenCounter
     from video_preprocess.inference import (
@@ -34,7 +36,7 @@ class PipelineContext:
     vad_min_silence_ms: int = 500
     vad_speech_pad_ms: int = 200
     audio_event_mode: str = "disabled"
-    audio_event_model: str = "audio-event-classifier"
+    audio_event_model: str = DEFAULT_AUDIO_EVENT_MODEL
     audio_event_labels: tuple[str, ...] = (
         "music",
         "applause",

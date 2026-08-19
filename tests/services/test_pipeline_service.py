@@ -406,6 +406,12 @@ def test_local_runtime_rejects_invalid_caption_device(device) -> None:
         LocalPipelineRuntimeFactory(caption_device=device)
 
 
+@pytest.mark.parametrize("device", ["", "   ", None, 1])
+def test_local_runtime_rejects_invalid_audio_event_device(device) -> None:
+    with pytest.raises(ValueError, match="audio_event_device"):
+        LocalPipelineRuntimeFactory(audio_event_device=device)
+
+
 def test_local_runtime_keeps_caption_tuning_in_composition() -> None:
     factory = LocalPipelineRuntimeFactory(
         caption_device="MPS",
@@ -414,6 +420,16 @@ def test_local_runtime_keeps_caption_tuning_in_composition() -> None:
 
     assert factory.caption_device == "mps"
     assert factory.caption_batch_size == 2
+
+
+def test_local_runtime_keeps_audio_event_tuning_in_composition() -> None:
+    factory = LocalPipelineRuntimeFactory(
+        audio_event_device="CPU",
+        audio_event_batch_size=3,
+    )
+
+    assert factory.audio_event_device == "cpu"
+    assert factory.audio_event_batch_size == 3
 
 
 def test_local_runtime_keeps_ocr_tuning_in_composition() -> None:

@@ -47,6 +47,7 @@ def main() -> int:
     parser.add_argument("--executor-max-concurrency", type=int, default=1)
     parser.add_argument("--caption-device", default="auto")
     parser.add_argument("--caption-batch-size", type=int, default=4)
+    parser.add_argument("--audio-event-device", default="auto")
     parser.add_argument("--audio-event-batch-size", type=int, default=8)
     parser.add_argument("--audio-event-endpoint", default=None)
     parser.add_argument("--audio-event-token-env", default=None)
@@ -110,6 +111,7 @@ def main() -> int:
                 executor_max_concurrency=args.executor_max_concurrency,
                 caption_device=args.caption_device,
                 caption_batch_size=args.caption_batch_size,
+                audio_event_device=args.audio_event_device,
                 audio_event_batch_size=args.audio_event_batch_size,
                 ocr_command=args.ocr_command,
                 ocr_batch_size=args.ocr_batch_size,

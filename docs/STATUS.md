@@ -1,8 +1,8 @@
 # 개발 상태와 세션 인수인계
 
 - 마지막 갱신: **2026-08-19**
-- 현재 단계: **Phase 7 진행 중 — 오디오 이벤트 계약·HTTP/disabled Stage 통합 완료**
-- 다음 작업: **같은 계약의 local 오디오 이벤트 Provider·label mapping 구현**
+- 현재 단계: **Phase 7 진행 중 — 오디오 이벤트 local/HTTP Provider 완료**
+- 다음 작업: **질의 기반 2-pass 고품질 재처리 계약·범위 설계**
 
 이 문서는 개발 진행 상황의 단일 진입점이다. 새로운 세션은 이 문서를 먼저 읽고, 실제 코드와
 Git 상태를 확인한 뒤 작업을 시작한다.
@@ -27,7 +27,7 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - VAD, STT, diarization, caption, OCR과 embedding이 `InferenceGateway`와 Local Provider로 실행
 - 모든 모델 Stage에서 구체 ML library import와 model lifecycle 제거 완료
 - 기본 CLI는 Application Service를 통해 새 Engine과 14개 binding을 실행
-- embedding/OCR은 local 또는 HTTP, audio event는 현재 explicit HTTP provider client를 사용
+- embedding/OCR/audio event는 alias 설정으로 local 또는 HTTP Provider를 선택
 - production embedding inference server adapter와 실행 CLI 구현 완료
 - pipeline REST API와 durable control snapshot, QueryService 구현 완료
 - timeline 반개구간·단일 배정과 source/confidence 보존 구현 완료
@@ -40,8 +40,7 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - local caption CUDA→MPS→CPU 자동 선택과 capability 기반 ordered chunking 구현 완료
 - 기본 disabled의 독립 OCR Stage, local Tesseract/HTTP alias와 timeline/index/context 병합 완료
 - FFmpeg text subtitle·chapter Artifact와 timeline/index/static·query context 병합 완료
-- 오디오 이벤트 공통 계약, HTTP alias와 기본 disabled Stage·downstream 병합 완료
-- `audio_event.default` local model Provider는 아직 미구현
+- 오디오 이벤트 공통 계약, local AudioSet AST/HTTP alias와 기본 disabled Stage·downstream 병합 완료
 - queue consumer, direct upload와 RemoteExecutor는 아직 미구현
 - Local Store가 input copy, 단계 산출물과 run/stage manifest를 관리
 
@@ -180,6 +179,7 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - [x] duration-adaptive keyframe·다중 caption·timeline 호환 summary
 - [x] 장면 내부 perceptual hash keyframe 중복 제거
 - [x] caption device 자동 선택과 capability 기반 ordered batch tuning
+- [x] local AudioSet audio event Provider와 local/HTTP composition
 
 ## 4. 아직 구현되지 않은 작업
 
@@ -216,6 +216,7 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - [x] caption device 자동 선택과 provider batch tuning
 - [x] OCR Provider와 pipeline/timeline/index/context 통합
 - [x] 내장 자막·챕터 Artifact와 timeline/index/context 통합
+- [x] 오디오 이벤트 Provider와 pipeline/timeline/index/context 통합
 
 문서가 존재한다고 구현된 것으로 간주하지 않는다. 완료 여부는 코드와 자동 테스트를 기준으로
 이 체크리스트에서 갱신한다.
@@ -332,21 +333,22 @@ stable skipped Artifact를 만든다. 09 version `1.4.0`은 subtitle cue와 chap
 겹침·중점 규칙으로 scene에 단일 배정하고, 10/11 version `1.3.0`과 QueryService가 additive하게
 검색·context에 전달한다. 기본 DAG는 13개 Stage다.
 
-Phase 7 일곱 번째 slice의 첫 부분은 `audio_event_detection`, `audio-events-v1` taxonomy와
+Phase 7 일곱 번째 slice는 `audio_event_detection`, `audio-events-v1` taxonomy와
 `merge-same-label-overlap-v1`을 고정했다. `05_audio_events`는 기본 disabled이며 explicit HTTP
-endpoint로만 활성화되고, 09/10/11과 QueryService가 source window/confidence를 보존해 소비한다.
-기본 DAG는 14개 Stage다.
+endpoint 또는 local MIT AudioSet AST로 활성화된다. local Provider는 527-label mapping, PCM16 decode,
+device/effective revision과 cache-first lazy lifecycle을 소유한다. 09/10/11과 QueryService가 source
+window/confidence를 보존해 소비하고 기본 DAG는 14개 Stage다.
 
-다음 slice는 같은 계약의 local Provider다. 후보 모델의 라이선스·AudioSet→canonical mapping,
-WAV decode, device/resource profile과 effective revision을 검증하고 lazy load·offline 단위 테스트와
-명시적 실제 모델 통합 테스트를 추가한다. 기본 disabled 정책은 유지한다.
+다음 slice는 질의 결과를 선택 scene의 고품질 재처리 요청으로 바꾸는 2-pass 계약이다. read-only query와
+명시적 mutation command/API 경계, 대상 Stage·artifact provenance, quality profile, cache/version 정책을
+ADR과 fake Application Service test로 먼저 고정한다.
 
 ## 6. 알려진 중요 문제
 
 | 우선순위 | 문제 | 영향 |
 |---|---|---|
 | P1 | 별도 query CLI 프로세스는 embedding 모델을 매번 로드 | 프로세스 간 cold query 지연 |
-| P1 | cached Hugging Face 모델도 metadata HEAD 요청 | offline 환경에서 모델 로드 실패 가능 |
+| P1 | 일부 cached Hugging Face 모델(BLIP/embedding)도 metadata HEAD 요청 | offline 환경에서 모델 로드 실패 가능; AST는 cache-first 적용 |
 | P2 | macOS에서 OpenCV·PyAV FFmpeg dylib 중복 경고 | 환경에 따라 충돌 또는 불안정 가능 |
 | P2 | Homebrew Tesseract 기본 language data는 eng/osd/snum만 포함 | 한국어 OCR은 `tesseract-lang` 추가 설치 필요 |
 
@@ -443,6 +445,36 @@ WAV decode, device/resource profile과 effective revision을 검증하고 lazy l
 
 최신 기록을 위에 추가한다. 긴 구현 설명은 PR이나 ADR에 두고 여기에는 다음 세션이 재개하는 데
 필요한 정보만 적는다.
+
+### 2026-08-19 — Phase 7 local AudioSet 오디오 이벤트 Provider
+
+- 목표: 이미 고정한 `audio_event_detection` 계약에 reference local model을 연결해 Stage 변경 없이
+  local/HTTP 배포 전환을 완성하고 기본 disabled 비용 정책 유지
+- 모델 결정: BSD-3-Clause `MIT/ast-finetuned-audioset-10-10-0.4593`, 86.6M F32/약 346MB;
+  `ast-audioset-527-to-audio-events-v1`이 527개 index·sentinel display label을 검증하고 softmax source
+  class의 canonical별 최대 확률을 confidence로 사용; ADR-0035 갱신
+- Provider: signed PCM16 mono 16 kHz WAV 검증, 최대 10ms metadata 끝점 clamp, 400-sample short-tail
+  zero padding, checksum별 decoded audio/model lazy reuse, 기본 batch 8, CUDA→MPS→CPU auto device,
+  resolved Hub commit·device·mapping runtime과 artifact/load/inference/OOM stable 오류
+- 배포: endpoint가 없으면 LocalAudioEventProvider, 있으면 기존 HTTPInferenceProvider를 composition
+  root에서 선택한다. local/HTTP 자동 fallback은 없고 disabled Stage는 Provider를 구성하지 않는다.
+  CLI/server에 `audio_event_device`를 추가하고 기본 model 이름을 MIT AST로 변경했다.
+- 계약 검증: 527-label mapping, `[2,1]` ordered chunk와 result reuse, decode cache, artifact/decode/load/OOM,
+  WAV 정밀도 clamp/범위 거부/short tail, lazy capability/health/warmup/effective revision과 device 우선순위;
+  local/HTTP composition 및 기존 loopback Stage 경계
+- 회귀: default 488 passed/20 deselected; 실제 AST model+HTTP loopback integration 2 passed;
+  `git diff --check` 성공
+- 실제 검증: 실제 CPU AST 1-window model test 성공(35.47초, 첫 download 포함), resolved revision
+  `f826b80d28226b62986cc218e5cec390b1096902`; sample Stage는 13 windows `[8,5]`, confidence 0.5에서
+  event 0개를 정상 publish; local AST 포함 14-stage pipeline `ok`, query `음성 구간 검출 --topk 2` 성공
+- 호환성: 기본 mode는 계속 disabled라 기존 실행에서 346MB download/load가 없다. 활성 local 실행은
+  최초 weight download와 AST resource가 필요하다. HTTP endpoint를 설정한 기존 실행은 같은 계약을
+  유지한다. 모델·mapping/device가 effective runtime에 들어가므로 서로 다른 실행 cache가 섞이지 않는다.
+- 관찰: FFmpeg audio metadata 30.001초와 실제 WAV 30.0001875초 차이 및 0.001초 tail window를 실제
+  sample에서 발견해 제한 clamp/padding으로 처리했다. sandbox에서 기존 BLIP/embedding Hub HEAD가
+  차단되어 전체/query 검증은 허용된 network로 완료했다. macOS dylib/font cache warning은 비치명적이다.
+- 다음 작업: 2-pass 재처리 Application 계약을 설계한다. QueryService는 read-only로 유지하고 별도
+  command/API가 scene 후보, quality profile, 대상 Stage 범위와 1-pass Artifact provenance를 명시해야 한다.
 
 ### 2026-08-19 — Phase 7 오디오 이벤트 공통 계약·HTTP/disabled Stage 통합
 

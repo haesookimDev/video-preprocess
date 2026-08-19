@@ -12,12 +12,12 @@ from video_preprocess.inference import (
     HTTPInferenceProvider,
     HTTPProviderSettings,
     InferenceDeploymentSettings,
-    ProviderConfigurationError,
     create_configured_audio_event_service,
     create_configured_embedding_service,
     create_configured_ocr_service,
 )
 from video_preprocess.inference.local import (
+    LocalAudioEventProvider,
     LocalEmbeddingProvider,
     LocalOCRProvider,
 )
@@ -84,9 +84,13 @@ def test_ocr_alias_selects_local_or_http_provider(tmp_path: Path) -> None:
     assert remote.timeout_sec == 15
 
 
-def test_audio_event_alias_requires_endpoint_and_selects_http() -> None:
-    with pytest.raises(ProviderConfigurationError, match="HTTP endpoint"):
-        create_configured_audio_event_service("example/audio-event")
+def test_audio_event_alias_selects_local_or_http(tmp_path: Path) -> None:
+    store = LocalArtifactStore(tmp_path, namespace="test")
+    local = create_configured_audio_event_service(
+        "example/audio-event",
+        store,
+        device="cpu",
+    )
     deployments = InferenceDeploymentSettings(
         http_providers={
             "audio_event.default": HTTPProviderSettings(
@@ -98,10 +102,16 @@ def test_audio_event_alias_requires_endpoint_and_selects_http() -> None:
 
     service = create_configured_audio_event_service(
         "example/audio-event",
+        store,
         deployments=deployments,
         max_batch_size=6,
     )
 
+    assert isinstance(
+        bound_provider(local, "audio_event.default"),
+        LocalAudioEventProvider,
+    )
+    assert local.batch_size == 8
     assert isinstance(
         bound_provider(service, "audio_event.default"),
         HTTPInferenceProvider,
