@@ -1,8 +1,8 @@
 # 개발 상태와 세션 인수인계
 
-- 마지막 갱신: **2026-08-12**
-- 현재 단계: **Phase 7 진행 중 — ready-set local 병렬 실행 완료**
-- 다음 작업: **씬 길이 기반 1~3장 adaptive keyframe과 다중 caption 계약**
+- 마지막 갱신: **2026-08-19**
+- 현재 단계: **Phase 7 진행 중 — adaptive keyframe·다중 caption 완료**
+- 다음 작업: **perceptual hash 기반 keyframe 중복 제거**
 
 이 문서는 개발 진행 상황의 단일 진입점이다. 새로운 세션은 이 문서를 먼저 읽고, 실제 코드와
 Git 상태를 확인한 뒤 작업을 시작한다.
@@ -35,6 +35,7 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - 실제 tokenizer 기반 static/query context 예산과 포함·제외 통계 구현 완료
 - Engine dependency-ready scheduling, plan-order manifest와 branch fail/cancel 전파 구현 완료
 - 기본 1·설정 가능 bounded LocalExecutor와 legacy Stage 실제 병렬 실행 구현 완료
+- 씬 길이 기반 1~3장 adaptive keyframe, 씬별 다중 caption과 호환 timeline 요약 구현 완료
 - queue consumer, direct upload와 RemoteExecutor는 아직 미구현
 - Local Store가 input copy, 단계 산출물과 run/stage manifest를 관리
 
@@ -109,6 +110,8 @@ Git 상태를 확인한 뒤 작업을 시작한다.
   [`ADR-0028`](./adr/0028-tokenizer-bounded-context-selection.md)
 - dependency-ready·bounded local concurrency 결정:
   [`ADR-0029`](./adr/0029-dependency-ready-bounded-local-concurrency.md)
+- adaptive keyframe·다중 caption scene summary 결정:
+  [`ADR-0030`](./adr/0030-duration-adaptive-keyframes-and-scene-caption-summary.md)
 
 ## 3. 완료된 작업
 
@@ -116,7 +119,7 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 
 - [x] ffprobe 메타데이터
 - [x] 씬 검출
-- [x] 중앙 키프레임 추출
+- [x] 씬 길이 기반 1~3장 adaptive 키프레임 추출
 - [x] 오디오 정규화와 VAD
 - [x] faster-whisper 전사
 - [x] pyannote 화자 분리
@@ -158,6 +161,7 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - [x] Executor `ExecutionControl`과 cooperative cancellation token 전달
 - [x] Engine Stage timeout·run cancellation·bounded retry policy
 - [x] dependency-ready Engine·bounded LocalExecutor와 branch fail/cancel 전파
+- [x] duration-adaptive keyframe·다중 caption·timeline 호환 summary
 
 ## 4. 아직 구현되지 않은 작업
 
@@ -189,7 +193,8 @@ Git 상태를 확인한 뒤 작업을 시작한다.
 - [x] 한국어 검색과 평가 체계
 - [x] 실제 token budget
 - [x] visual/audio·index/context 분기 병렬 실행
-- [ ] 씬 길이 기반 adaptive keyframe 1~3장과 다중 caption
+- [x] 씬 길이 기반 adaptive keyframe 1~3장과 다중 caption
+- [ ] perceptual hash keyframe 중복 제거
 
 문서가 존재한다고 구현된 것으로 간주하지 않는다. 완료 여부는 코드와 자동 테스트를 기준으로
 이 체크리스트에서 갱신한다.
@@ -267,16 +272,26 @@ binding의 pipeline-wide lock도 Stage별 config guard로 바꿔 실제 Stage �
 늘린다. sample concurrency 2 로그에서 02/04, 05/07, 06/08, 10/11 분기 겹침과
 09 join을 확인했다.
 
-다음 slice는 `s03_keyframes.py`의 씬 길이 기반 1~3장 timestamp·filename 계약을
-고정하고, deterministic `keyframe_images` ZIP과 Stage version, `s08_captions.py`의 씬별
-다중 caption, `s09_timeline.py`의 시각 요약 호환성을 fixture로 검증한 뒤 구현하는 것이다.
+두 번째 slice의 범위는 `s03_keyframes.py`의 씬 길이 기반 1~3장 timestamp·filename 계약,
+deterministic `keyframe_images` ZIP과 Stage version, `s08_captions.py`의 씬별 다중 caption,
+`s09_timeline.py`의 시각 요약 호환성을 fixture로 고정하는 것이었고 아래와 같이 완료했다.
+
+Phase 7 두 번째 slice는 8초·20초 길이 경계와 설정 상한 1~3, 내부 균등 timestamp를 사용하는
+`duration-adaptive-v1`을 구현했다. 단일 frame은 기존 중앙 시각·filename을 유지하고 다중 frame은
+index/count와 `scene_NNN_II.jpg`를 사용한다. 성공한 선택 집합 밖의 stale JPEG를 정리하고 JSON과
+deterministic ZIP member를 일치시킨다. 08은 flat caption과 `scene_captions`를 함께 제공하며 09는
+기존 scalar `keyframe`·`caption`과 전체 `keyframes`·`visual_captions`를 함께 제공한다.
+
+다음 slice는 시간 기반으로 선택된 frame의 perceptual hash 중복 제거 정책을 고정하는 것이다.
+hash·distance threshold, 동일 scene 내 비교 순서, 최소 1장 보장, 제거 통계/근거 schema와 Stage version,
+ZIP·caption batch 제외를 network-free fixture와 실제 sample에서 검증한다.
 
 ## 6. 알려진 중요 문제
 
 | 우선순위 | 문제 | 영향 |
 |---|---|---|
 | P1 | 별도 query CLI 프로세스는 embedding 모델을 매번 로드 | 프로세스 간 cold query 지연 |
-| P1 | `keyframes_per_scene` 미사용 | 설정과 실제 동작 불일치 |
+| P1 | adaptive frame 사이 시각적 중복 미제거 | 불필요한 JPEG·caption 추론 증가 |
 | P1 | cached Hugging Face 모델도 metadata HEAD 요청 | offline 환경에서 모델 로드 실패 가능 |
 | P2 | macOS에서 OpenCV·PyAV FFmpeg dylib 중복 경고 | 환경에 따라 충돌 또는 불안정 가능 |
 
@@ -373,6 +388,24 @@ binding의 pipeline-wide lock도 Stage별 config guard로 바꿔 실제 Stage �
 
 최신 기록을 위에 추가한다. 긴 구현 설명은 PR이나 ADR에 두고 여기에는 다음 세션이 재개하는 데
 필요한 정보만 적는다.
+
+### 2026-08-19 — Phase 7 adaptive keyframe·다중 caption
+
+- 목표: 긴 씬의 시각 변화를 최대 3장에서 보존하면서 기본 1장 출력과 downstream 소비자 호환 유지
+- 완료: 8초·20초 경계/상한 1~3, 내부 균등 timestamp, single/multi filename, stale JPEG 정리,
+  deterministic ZIP, flat+scene caption, timeline scalar+array summary, Stage 03/08/09 version 1.2.0;
+  ADR-0030
+- 계약 검증: 정책 경계·설정/CLI/OpenAPI 범위, filename/index/count, legacy single output,
+  frame별 unique ArtifactRef, fixed multi-visual fixture와 adapter/planner/downstream 회귀
+- 실제 검증: offline `sample.mp4 --force --keyframes-per-scene 3` 11/11 `ok`; 10초 씬 3개가
+  각 2장·총 6장, ZIP exact 6 member, caption 6개와 scene group `[2,2,2]`, timeline visual 2개씩;
+  query `음성 구간 검출` top-1 scene 02, 168/4096 token, SQLite integrity `ok`
+- 회귀: default 382 passed/16 deselected; stale cleanup 관련 15 passed; diff/compile 검증 성공
+- 호환성: 기본 상한 1은 중앙 timestamp와 `scene_NNN.jpg`, flat caption과 scalar timeline 필드를 유지;
+  다중 frame 설정은 JPEG·caption 비용을 늘리고 03/08/09 cache를 version으로 무효화
+- 관찰: macOS FFmpeg dylib 중복·Matplotlib cache fallback·pyannote 짧은 입력 warning은 기존과
+  동일하며 실패로 이어지지 않음
+- 다음 작업: perceptual hash 알고리즘·거리 threshold·대표 선택·최소 1장·제거 근거 schema fixture
 
 ### 2026-08-12 — Phase 7 dependency-ready·bounded local concurrency
 

@@ -30,6 +30,13 @@
 - 원본 대용량 데이터(프레임 이미지, WAV)는 참조(경로)만 저장 — 인덱스는 가볍게 유지
 - 증분 병합 가능: 2-pass 심화 분석 결과가 나중에 추가되어도 스키마 변경 없이 삽입
 
+현재 09 scene card는 legacy scalar `keyframe`·`caption`과 함께 다중 시각 정보를 additive 배열로
+보존한다. `keyframes`는 path 순서, `visual_captions`는 각 frame의 one-based index/count,
+timestamp, path와 caption을 가진다. scalar `keyframe`은 scene midpoint에 가장 가까운 대표이고,
+scalar `caption`은 순서대로 중복 제거한 caption summary라 기존 검색·context 소비자가 계속 읽을 수
+있다. 정확한 Stage schema/version은
+[`ADR-0030`](./adr/0030-duration-adaptive-keyframes-and-scene-caption-summary.md)을 따른다.
+
 ### 통합 이벤트 스키마
 
 ```json

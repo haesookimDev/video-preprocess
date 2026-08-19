@@ -1,7 +1,7 @@
 # 엔진·실행기 분리 개발 로드맵
 
-상태: **Phase 7 진행 중 — ready-set 병렬 완료, 다음 adaptive keyframe**
-기준일: 2026-08-12
+상태: **Phase 7 진행 중 — adaptive keyframe 완료, 다음 perceptual hash**
+기준일: 2026-08-19
 대상 설계: [`06-target-architecture.md`](./06-target-architecture.md)  
 공개 계약: [`07-execution-inference-contracts.md`](./07-execution-inference-contracts.md)
 
@@ -390,7 +390,7 @@ static/API query context가 지정한 256 token 예산을 넘지 않음을 확�
 후속 우선순위:
 
 1. [x] Executor의 비주얼·오디오 분기 병렬 실행
-2. [ ] 씬 길이에 따른 키프레임 1~3장 추출
+2. [x] 씬 길이에 따른 키프레임 1~3장 추출
 3. [ ] perceptual hash 중복 제거
 4. [ ] caption device 자동 선택과 batch 크기 tuning
 5. [ ] OCR provider
@@ -405,9 +405,17 @@ static/API query context가 지정한 256 token 예산을 넘지 않음을 확�
 경계에서 검증했다. 결정은
 [`ADR-0029`](./adr/0029-dependency-ready-bounded-local-concurrency.md)에 기록한다.
 
-다음 slice는 `s03_keyframes.py`의 씬 길이 기반 1~3장 deterministic timestamp·filename
-계약, keyframe ZIP member와 Stage version, `s08_captions.py`의 씬별 다중 caption 정규화,
-`s09_timeline.py`의 시각 요약 호환성을 fixture로 먼저 고정하는 것이다.
+두 번째 slice도 완료했다. `duration-adaptive-v1`은 8초·20초 경계와 설정 상한 1~3으로 frame 수를
+정하고 내부 균등 timestamp, single/multi filename, stale JPEG 정리와 deterministic ZIP을 사용한다.
+08은 기존 flat caption과 씬별 group을 함께 제공하고, 09는 전체 `keyframes`·`visual_captions`와
+기존 scalar summary를 함께 제공한다. Stage 03/08/09는 version `1.2.0`이며 고정 fixture와 실제
+sample의 씬별 2장·총 6장 E2E를 검증했다. 결정은
+[`ADR-0030`](./adr/0030-duration-adaptive-keyframes-and-scene-caption-summary.md)에 기록한다.
+
+다음 slice는 `s03_keyframes.py`의 선택 집합에 perceptual hash를 적용해 시간상 다른 frame이
+시각적으로 같은 경우를 제거하는 것이다. hash 알고리즘·거리 threshold·대표 선택·최소 1장 보장,
+JSON에 제거 근거와 통계를 기록하는 계약을 fixture로 먼저 고정한다. 제거된 frame은 ZIP과 caption
+batch에 들어가지 않아야 하며 Stage version과 cache 영향을 함께 검증한다.
 
 ## 12. 테스트 전략
 

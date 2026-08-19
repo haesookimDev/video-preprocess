@@ -21,7 +21,10 @@ python3 -m venv .venv
 .venv/bin/python src/query.py output/sample "음성 구간 검출" --topk 2
 ```
 
-Add `--force` to rerun completed stages. Use `--language ko`, `--whisper-model base`, or `--scene-threshold 27` when validating configuration changes. Inspect `output/<name>/run_summary.json` and the timestamped files in `logs/` after a run.
+Add `--force` to rerun completed stages. Use `--language ko`, `--whisper-model base`,
+`--scene-threshold 27`, or `--keyframes-per-scene 3` when validating configuration
+changes. Inspect `output/<name>/run_summary.json` and the timestamped files in `logs/`
+after a run.
 
 ## Coding Style & Naming Conventions
 

@@ -282,6 +282,10 @@ adapter이며 durable queue나 multi-replica scheduler를 대신하지 않는다
 Caption Service와 legacy artifact registrar를 주입하고, `s08_captions`는 keyframe을
 ArtifactRef batch로 전달한다. 중첩 ArtifactRef 계약과 로컬 provider 결정은
 [`ADR-0005`](./adr/0005-artifact-batched-local-caption-provider.md)에 기록한다.
+03은 씬 길이와 task config 상한으로 1~3개의 keyframe ArtifactRef를 결정하지만 deployment 위치를
+선택하지 않는다. 08은 ordered inference 결과를 씬별로 그룹화하고 09가 호환 scalar summary와 전체
+visual 배열을 만든다. 이 Stage 간 의미와 version은
+[`ADR-0030`](./adr/0030-duration-adaptive-keyframes-and-scene-caption-summary.md)에 기록한다.
 
 `stt.default`는 `LocalSTTProvider`에 연결되어 있다. `s06_stt`는 16kHz WAV ArtifactRef와
 병합된 VAD chunk를 전달하며 faster-whisper model lifecycle과 audio decode는 Provider가 맡는다.

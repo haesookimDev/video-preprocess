@@ -14,8 +14,8 @@ flowchart TD
 
     subgraph VIDEO ["비주얼 경로"]
         S02["<b>02_scenes</b><br/>인접 프레임 색상 변화량(content_val)이<br/>임계값(27.0)을 넘는 지점을 씬 경계로 검출<br/><i>도구: PySceneDetect ContentDetector</i>"]
-        S03["<b>03_keyframes</b><br/>씬 중앙 시각으로 시크해<br/>씬당 대표 프레임 1장 추출<br/><i>도구: ffmpeg seek</i>"]
-        S08["<b>08_captions</b><br/>키프레임을 VLM에 넣어<br/>영어 캡션 생성 (이미지→텍스트 압축)<br/><i>모델: BLIP image-captioning-base</i>"]
+        S03["<b>03_keyframes</b><br/>씬 길이별 내부 균등 시각으로 시크해<br/>대표 프레임 1~3장 추출<br/><i>도구: ffmpeg seek</i>"]
+        S08["<b>08_captions</b><br/>모든 키프레임을 VLM에 넣어<br/>프레임 캡션 + 씬별 그룹 생성<br/><i>모델: BLIP image-captioning-base</i>"]
         S02 --> S03 --> S08
     end
 
@@ -32,7 +32,7 @@ flowchart TD
     S07 --> S09
     S06 --> S09
 
-    S09["<b>09_timeline</b><br/>씬을 골격으로 전사·캡션·화자를<br/>반개구간 최대 겹침으로 단일 배정 → 씬 카드<br/><i>규칙 기반 (모델 없음)</i>"]
+    S09["<b>09_timeline</b><br/>씬을 골격으로 전사·다중 캡션·화자를<br/>호환 요약과 전체 배열로 병합 → 씬 카드<br/><i>규칙 기반 (모델 없음)</i>"]
 
     S09 --> S10
     S09 --> S11
@@ -61,13 +61,13 @@ flowchart TD
 |---|---|---|---|
 | 01_probe | 컨테이너 메타데이터 추출. 챕터·내장 자막 유무를 감지해 후속 단계 최적화 근거 제공 | ffprobe | 0.02s |
 | 02_scenes | 인접 프레임 간 HSV 색상 변화량이 임계값(27.0)을 넘으면 씬 경계로 판정. 프레임별 통계를 CSV로 저장해 임계값 튜닝 지원 | PySceneDetect `ContentDetector` | 0.9s |
-| 03_keyframes | 씬 중앙 타임스탬프로 입력 시크 후 1프레임만 디코딩 (전체 디코딩 회피) | ffmpeg `-ss` | 0.3s |
+| 03_keyframes | 8초·20초 경계로 1~3장을 고르고 씬 내부 균등 timestamp만 시크. 설정 1~3은 상한이며 기본 1은 중앙 프레임 | ffmpeg `-ss` | sample 6장 기준 0.3s 미만 |
 | 04_audio | 오디오 트랙 분리 후 모든 음성 모델의 공통 입력인 16kHz mono PCM으로 정규화 | ffmpeg | 0.1s |
 | 05_vad | WAV ArtifactRef와 silence/padding option을 VAD Provider에 전달. 음성 구간만 추출해 Whisper 무음 환각 방지 | Local Silero VAD Provider (faster-whisper 내장 ONNX) | 0.1s (+ 첫 session load) |
 | 06_stt | 인접 VAD 구간 병합(gap ≤ 0.5s) 후 WAV ArtifactRef와 구간을 STT Provider에 전달. Provider가 원본 시간축으로 보정 | Local faster-whisper Provider `base`(기본)/`small` (CTranslate2 int8) | 5.6s / 13.9s |
 | 07_diarize | WAV ArtifactRef를 Diarization Provider에 전달. Provider가 화자 임베딩·클러스터링 후 발화 턴별 라벨 반환 | Local pyannote Provider `speaker-diarization-community-1` (HF 게이트) | 27.9s |
-| 08_captions | keyframe ArtifactRef batch를 VLM Provider에 입력해 캡션 생성. 이미지(수백~수천 토큰)를 텍스트(수십 토큰)로 압축 | Local BLIP Provider `image-captioning-base` | 3.0s |
-| 09_timeline | `[start,end)` 씬을 골격으로 병합. 전사→씬은 최대 겹침 단일 배정, 동률은 중점 포함 구간, 전사→화자도 같은 규칙 적용 | 규칙 기반 | 0.0s |
+| 08_captions | ordered keyframe ArtifactRef batch를 VLM Provider에 입력하고 flat frame caption과 씬별 group을 함께 생성 | Local BLIP Provider `image-captioning-base` | sample 6장 4.3s |
+| 09_timeline | `[start,end)` 씬에 전사·화자를 단일 배정하고 모든 visual caption을 보존. 기존 scalar caption은 ordered unique join | 규칙 기반 | 0.0s |
 | 10_index | 씬 카드 텍스트(캡션+전사)를 ① NFKC 정규화 단어·문자 2~3-gram FTS5 역색인 ② 정규화 벡터로 이중 저장 | 주입된 `embedding.default` Local/HTTP Provider, SQLite FTS5 | local 기준 0.2s |
 | 11_context | 포맷 규칙·메타데이터·씬 카드를 조립하고 설정 시 target tokenizer 실제 token budget에 맞춰 축약·제외 | 규칙 기반 + tokenizer | 0.0s (+ 첫 tokenizer load) |
 | query.py | hybrid top-k/no-answer 뒤 인접 씬을 dedup 확장하고 실제 token budget에서 우선순위별 축약·제외 | index와 같은 `embedding.default` Local/HTTP Provider + target tokenizer | local cold start ~10s |
@@ -80,8 +80,14 @@ flowchart TD
 - **우아한 성능 저하**: 07_diarize는 토큰/오디오가 없으면 사유를 기록하고 스킵,
   나머지 파이프라인은 화자 라벨 없이 계속 동작
 
-`08_captions/captions.json`은 기존 `model`, `captions`를 유지하며 실제 실행 정보를 나타내는
-`provider`, `revision`, `runtime` 필드를 추가로 기록한다.
+`03_keyframes/keyframes.json`은 `duration-adaptive-v1`, 설정 상한, `[8.0, 20.0]` 경계와
+내부 균등 timestamp 전략을 기록한다. 각 항목의 `keyframe_index`·`keyframe_count`는 1부터 시작한다.
+단일 파일은 기존 `scene_NNN.jpg`, 다중 파일은 `scene_NNN_II.jpg`이며 JSON에 없는 이전 JPEG는
+새 집합 추출 성공 후 정리된다. JSON에 열거된 파일만 deterministic ZIP에 들어간다.
+
+`08_captions/captions.json`은 기존 `model`, flat `captions`와 실제 실행 정보를 나타내는
+`provider`, `revision`, `runtime`을 유지한다. `caption_policy`, `scene_count`와
+`scene_captions[{scene_id,caption_count,captions}]`를 추가해 같은 씬의 여러 frame caption을 잃지 않는다.
 
 `06_stt/transcript.json`은 기존 segment 구조를 유지하며 실제 `provider`, model `revision`,
 `runtime`, 감지 언어 확률인 `language_probability`를 추가로 기록한다.
@@ -89,7 +95,10 @@ flowchart TD
 `09_timeline/timeline.json`은 모든 시간 구간을 `[start_sec,end_sec)`로 해석한다. 전사 세그먼트는
 양의 겹침이 가장 큰 씬 하나에만 들어가며 정확한 동률에서는 세그먼트 중점을 포함하는 씬을 택한다.
 씬 카드의 전사 줄에는 `source_segment_id`, `vad_source_ids`, `avg_logprob`, `no_speech_prob`를 가능한
-범위에서 보존하고, 씬과 전혀 겹치지 않은 source ID는 최상위 통계에 기록한다.
+범위에서 보존하고, 씬과 전혀 겹치지 않은 source ID는 최상위 통계에 기록한다. scene card의
+`keyframes`·`visual_captions`는 모든 시각 항목을 보존한다. 기존 `keyframe`은 중점에 가장 가까운
+frame, `caption`은 frame 순서의 중복 제거 문자열을 ` | `로 연결한 호환 요약이다. 단일 frame의
+기존 값은 바뀌지 않는다.
 
 `07_diarize/diarization.json`은 기존 speaker·turn 구조를 유지하며 실제 `provider`, model
 `revision`, `runtime`을 추가로 기록한다. HF token은 Provider 설정에만 존재하며 산출물이나
@@ -124,6 +133,10 @@ PipelineEngine→LocalExecutor에서 실행한다. 입력 영상은 cache integr
 # visual/audio 독립 분기를 최대 2개 local Stage로 병렬 실행
 .venv/bin/python src/run_pipeline.py samples/sample.mp4 \
   --executor-max-concurrency 2
+
+# 씬 길이에 따른 adaptive keyframe을 최대 3장까지 허용
+.venv/bin/python src/run_pipeline.py samples/sample.mp4 \
+  --keyframes-per-scene 3
 
 # target tokenizer의 실제 2048 token 이하로 final context 제한
 .venv/bin/python src/run_pipeline.py samples/sample.mp4 \

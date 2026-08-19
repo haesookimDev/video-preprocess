@@ -336,8 +336,19 @@ task의 Stage/version, logical input, config와 model binding key를 exact match
 
 no-audio에서는 `audio`가 `audio_metadata` JSON sentinel과 같은 ArtifactRef를 사용한다. 03의 가변
 JPEG sidecar는 정렬·고정 metadata ZIP으로 묶어 manifest에서 누락/변조를 검증한다. 이 계약
-추가로 03과 해당 bundle을 required input으로 받는 08의 Stage version은 `1.1.0`이다. 결정 근거는
+추가 당시 03과 해당 bundle을 required input으로 받는 08의 Stage version은 `1.1.0`이었다. 결정 근거는
 [`ADR-0014`](./adr/0014-legacy-media-stage-task-bindings.md)에 기록한다.
+
+현재 03 version `1.2.0`은 `duration-adaptive-v1`으로 씬 길이와 `keyframes_per_scene` 상한에 따라
+1~3장을 선택한다. 설정은 1~3 정수이고 기본 1이다. 8초 미만은 1장, 8초 이상 20초 미만은 2장,
+20초 이상은 3장을 후보로 정한 뒤 설정 상한을 적용한다. N장의 timestamp는
+`start + duration * i / (N + 1)`을 millisecond로 반올림한 내부 균등 지점이다.
+
+단일 frame은 기존 `scene_NNN.jpg`, 다중 frame은 `scene_NNN_II.jpg`를 사용한다. 각 JSON entry는
+`keyframe_index`와 `keyframe_count`를 추가하며 최상위 `selection_policy`가 이름, 설정 상한,
+`[8.0,20.0]` 경계와 timestamp 전략을 기록한다. 새 집합에 없는 이전 Stage 소유 JPEG는 추출 성공 후
+제거되고 deterministic ZIP은 JSON path와 정확히 같은 member만 포함한다. 결정은
+[`ADR-0030`](./adr/0030-duration-adaptive-keyframes-and-scene-caption-summary.md)에 기록한다.
 
 05~08 model Stage는 task config와 `vad.default`, `stt.default`, `diarization.default`,
 `caption.default` binding을 exact match한다. 성공 JSON의 provider/model/revision/runtime을 slot별
@@ -348,6 +359,13 @@ code로 반환한다.
 08이 실행될 때는 검증된 keyframe ZIP member 집합이 keyframes JSON의 safe path와 정확히 같은지
 확인하고 JPEG를 원자적으로 복원한 뒤 caption service를 호출한다. 상세 결정은
 [`ADR-0015`](./adr/0015-legacy-model-stage-bindings-and-sidecar-restore.md)에 기록한다.
+
+08 version `1.2.0`은 기존 ordered flat `captions`를 유지하고 각 항목에 one-based
+`keyframe_index`, `keyframe_count`를 추가한다. `scene_captions`는 처음 나타난 scene 순서로
+`{scene_id, caption_count, captions}`를 제공하고 top-level `caption_policy`는
+`per-keyframe-scene-group-v1`이다. 다중 frame ArtifactRef ID는 `keyframe_scene_NNN_II`, 단일 frame은
+기존 `keyframe_scene_NNN`이다. 전체 frame 배열을 기존 caption inference batch 한 번으로 전달하며
+응답 순서는 입력 순서와 같아야 한다.
 
 09~11은 다음 companion output을 marker와 함께 등록한다.
 
@@ -364,12 +382,18 @@ code로 반환한다.
 보호해 독립 Stage 본문을 병렬 실행할 수 있다. 상세 결정은
 [`ADR-0016`](./adr/0016-legacy-final-stage-and-pipeline-bindings.md)에 기록한다.
 
-09 timeline version 1.1.0은 scene, transcript와 speaker turn을 모두 반개구간
+09 timeline version `1.1.0`부터 scene, transcript와 speaker turn을 모두 반개구간
 `[start_sec,end_sec)`으로 해석한다. 각 transcript는 양의 overlap이 가장 큰 scene 하나에만 배정하고,
 동률이면 transcript midpoint를 포함하는 interval, 그래도 결정되지 않으면 입력 순서를 사용한다.
 speaker turn도 같은 규칙으로 하나를 고른다. timeline은 assignment policy와 assigned/unassigned 수를
 기록하며 각 transcript line에 source segment identity, VAD source ID와 STT confidence를 가능한 범위에서
 보존한다. 결정 근거는 [`ADR-0026`](./adr/0026-half-open-timeline-single-assignment.md)에 기록한다.
+
+현재 09 version `1.2.0` scene card는 모든 path를 `keyframes`, 모든 frame caption metadata를
+`visual_captions`에 보존한다. 기존 `keyframe`은 scene midpoint에 가장 가까운 path이고 거리 동률이면
+입력 순서가 빠른 frame이다. 기존 `caption`은 frame 순서에서 동일 문자열을 한 번만 남겨 ` | `로
+연결한다. 단일 frame에서는 기존 scalar 값과 Markdown 표현을 유지한다. top-level
+`visual_summary_policy`는 `ordered_unique_caption_join`이다.
 
 ### 4.7 Pipeline Application Service
 
@@ -377,6 +401,9 @@ speaker turn도 같은 규칙으로 하나를 고른다. timeline은 assignment 
 forced Stage를 표현한다. Application Service는 같은 `DAGPlanner`로 plan을 만들고 plan에 포함된
 Stage의 config/model binding만 Engine에 전달한다. runtime factory는 plan의 `boundary_inputs`를
 충족하는 ArtifactRef와 Engine을 제공해야 하며, 하나라도 빠지면 실행 전에 거부한다.
+
+`PipelineSettings.keyframes_per_scene`은 03 adaptive 정책의 최대 frame 수이며 1~3만 허용한다.
+CLI `--keyframes-per-scene`과 Pipeline OpenAPI `settings.keyframes_per_scene`도 같은 범위를 사용한다.
 
 local runtime은 video bytes를 `00_input/`에 원자적으로 publish하고 output root별 stable artifact
 namespace를 사용한다. 부분 실행 boundary는 명시한 같은 `run_id`의 RunManifest와 StageManifest에서

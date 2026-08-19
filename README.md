@@ -44,6 +44,7 @@ flowchart LR
 - 반개구간·최대 겹침 기반 timeline 단일 배정과 source/confidence 보존
 - 한국어 정규화·문자 n-gram hybrid 검색, no-answer 판정과 고정 평가 dataset
 - 실제 target tokenizer 기반 static/query context 예산·인접 scene·제외 통계
+- 씬 길이 기반 1~3장 adaptive keyframe, 씬별 다중 caption과 호환 timeline 요약
 - 기존 JSON·Markdown·SQLite 출력 구조와 공통 QueryService 기반 query CLI
 
 아직 구현되지 않은 범위:
@@ -200,6 +201,10 @@ bind할 때는 Bearer 인증과 reverse proxy/service mesh의 TLS 종료를 사�
 
 # 명시적인 run ID로 실행·재개
 .venv/bin/python src/run_pipeline.py samples/sample.mp4 --run-id experiment-01
+
+# 씬 길이에 따라 최대 3장의 adaptive keyframe 추출
+.venv/bin/python src/run_pipeline.py samples/sample.mp4 \
+  --keyframes-per-scene 3
 ```
 
 | 옵션 | 의미 |
@@ -222,6 +227,7 @@ bind할 때는 Bearer 인증과 reverse proxy/service mesh의 TLS 종료를 사�
 | `--whisper-model MODEL` | faster-whisper 모델. 기본값은 `base` |
 | `--language CODE` | STT 언어 고정. 생략하면 자동 감지 |
 | `--scene-threshold N` | 씬 변화 임계값. 낮을수록 민감 |
+| `--keyframes-per-scene N` | 씬 길이별 adaptive keyframe 상한, 1~3. 기본값은 1 |
 | `--max-context-tokens N` | 11_context의 실제 tokenizer token 상한. 생략 시 전체 context |
 | `--context-tokenizer-model MODEL` | context token을 계산할 Hugging Face tokenizer |
 | `--preflight-only` | 모델을 로드하지 않고 실행 환경만 검사 |
@@ -234,6 +240,11 @@ Engine은 dependency가 끝난 Stage만 ready로 만들고 `--executor-max-concu
 값을 2 이상으로 설정하면 visual/audio와 09 이후 index/context 분기가 겹칠 수 있지만 local 모델의
 메모리 사용도 동시에 증가한다. 기본값 1은 기존 순차 resource 동작을 유지한다. 완료 결과와 manifest는
 실제 완료 순서가 아니라 deterministic plan 순서로 기록된다.
+
+`--keyframes-per-scene`은 고정 추출 수가 아니라 상한이다. 8초 미만 씬은 1장, 8초 이상
+20초 미만은 2장, 20초 이상은 3장을 선택한 뒤 설정 상한을 적용한다. 시각은 씬 경계를 피한
+균등 내부 지점이며 기본값 1에서는 기존 중앙 프레임과 `scene_NNN.jpg`를 유지한다. 다중 프레임은
+`scene_NNN_01.jpg` 형식이고 JSON에 index/count가 기록된다.
 
 `--dry-run`은 output·manifest를 만들지 않는 read-only 경로다. 각 Stage를 `hit`, `miss`,
 `forced`, `blocked`로 표시하고 `will_execute`와 stable reason code를 출력한다. 상위 Stage가
@@ -287,17 +298,24 @@ timeout은 attempt의 cooperative cancellation을 요청하고 Stage가 안전�
 |---|---|---|
 | `01_probe` | ffprobe 메타데이터 추출 | `metadata.json` |
 | `02_scenes` | PySceneDetect 씬 경계 검출 | `scenes.json`, `scene_stats.csv` |
-| `03_keyframes` | 씬별 중앙 키프레임 추출 | `keyframes.json`, `frames/*.jpg`, `keyframe_images.zip` |
+| `03_keyframes` | 씬 길이 기반 1~3장 adaptive 키프레임 추출 | `keyframes.json`, `frames/*.jpg`, `keyframe_images.zip` |
 | `04_audio` | 오디오 디먹싱·16kHz mono 정규화 | `audio.json`, `audio_16k.wav` |
 | `05_vad` | Silero VAD 음성 구간 검출 | `vad_segments.json` |
 | `06_stt` | VAD 구간만 faster-whisper 전사 | `transcript.json` |
 | `07_diarize` | pyannote 화자 분리 | `diarization.json` |
-| `08_captions` | BLIP 키프레임 캡셔닝 | `captions.json` |
-| `09_timeline` | 씬·전사·화자·캡션을 공통 시간축으로 병합 | `timeline.json`, `timeline.md` |
+| `08_captions` | BLIP 키프레임 캡셔닝과 씬별 그룹화 | `captions.json` |
+| `09_timeline` | 씬·전사·화자·다중 시각 캡션을 공통 시간축으로 병합 | `timeline.json`, `timeline.md` |
 | `10_index` | SQLite FTS5 + embedding 검색 인덱스 | `index.db`, `index_summary.json` |
 | `11_context` | LLM 입력 컨텍스트 최종본 조립 | `context.md`, `context.json` |
 
 의존 관계와 상세 처리 규칙은 [docs/05-pipeline.md](docs/05-pipeline.md)에 정리되어 있다.
+
+`keyframes.json`은 `duration-adaptive-v1` 정책과 각 frame의 `keyframe_index`,
+`keyframe_count`를 기록한다. `captions.json`은 기존 flat `captions`에 더해 씬별
+`scene_captions`를 제공한다. timeline scene card의 기존 `keyframe`·`caption`은 대표 경로와
+중복 제거된 ordered summary로 유지하고, 전체 정보는 additive `keyframes`·`visual_captions`에
+보존한다. 정확한 버전·호환 계약은
+[ADR-0030](docs/adr/0030-duration-adaptive-keyframes-and-scene-caption-summary.md)에 있다.
 
 ## Cache와 재개
 
@@ -420,7 +438,8 @@ HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
 
 ```bash
 HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
-  .venv/bin/python src/run_pipeline.py samples/sample.mp4 --force
+  .venv/bin/python src/run_pipeline.py samples/sample.mp4 --force \
+  --keyframes-per-scene 3
 HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 \
   .venv/bin/python src/query.py output/sample "음성 구간 검출" --topk 2
 ```
@@ -456,6 +475,8 @@ ffmpeg -v error \
 
 ## 아직 없는 것 (다음 단계 후보)
 
+- adaptive keyframe의 perceptual hash 중복 제거
+- caption device 자동 선택과 provider batch tuning
 - 오디오 이벤트 태깅 (박수·음악 등)
 - 한국어 캡셔닝 VLM 교체 (현재 BLIP은 영어 캡션)
 - 긴 영상 대응: 컨텍스트 최종본의 토큰 예산 관리 (씬 수가 많을 때 목차 + 선별
